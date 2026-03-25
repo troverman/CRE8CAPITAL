@@ -1,0 +1,13 @@
+{
+  "name": "cre8capital",
+  "version": "0.1.0",
+  "description": "Capital data pipeline — provider → connection → store",
+  "main": "src/Init.js",
+  "scripts": {
+    "start": "node src/Init.js"
+  },
+  "dependencies": {
+    "ccxt": "^4.0.0",
+    "node-binance-api": "^1.0.0"
+  }
+}
