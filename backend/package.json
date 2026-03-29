@@ -1,0 +1,14 @@
+{
+  "name": "cre8capital-backend",
+  "version": "0.1.0",
+  "description": "CRE8 Capital backend pipeline and API scaffold",
+  "main": "src/Init.js",
+  "scripts": {
+    "start": "node src/Init.js",
+    "serve": "node src/server.js"
+  },
+  "dependencies": {
+    "ccxt": "^4.0.0",
+    "node-binance-api": "^1.0.0"
+  }
+}

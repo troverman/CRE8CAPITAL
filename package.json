@@ -1,13 +1,13 @@
 {
-  "name": "cre8capital",
+  "name": "cre8capital-monorepo",
   "version": "0.1.0",
-  "description": "Capital data pipeline — provider → connection → store",
-  "main": "src/Init.js",
+  "private": true,
+  "description": "CRE8 Capital frontend and backend workspace",
   "scripts": {
-    "start": "node src/Init.js"
-  },
-  "dependencies": {
-    "ccxt": "^4.0.0",
-    "node-binance-api": "^1.0.0"
+    "dev": "npm --prefix frontend run dev",
+    "build": "npm --prefix frontend run build",
+    "preview": "npm --prefix frontend run preview",
+    "backend": "npm --prefix backend run start",
+    "backend:api": "npm --prefix backend run serve"
   }
 }
