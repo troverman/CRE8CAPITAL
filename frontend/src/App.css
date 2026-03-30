@@ -411,6 +411,12 @@ a {
   grid-template-columns: repeat(4, minmax(0, 1fr));
 }
 
+.pdf-solver-control-grid {
+  display: grid;
+  gap: 0.5rem;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
 .strategy-lab-top-grid {
   display: grid;
   gap: 0.55rem;
@@ -1856,7 +1862,8 @@ th {
   }
 
   .strategy-control-grid,
-  .strategy-risk-grid {
+  .strategy-risk-grid,
+  .pdf-solver-control-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
@@ -1919,7 +1926,8 @@ th {
   }
 
   .strategy-control-grid,
-  .strategy-risk-grid {
+  .strategy-risk-grid,
+  .pdf-solver-control-grid {
     grid-template-columns: 1fr;
   }
 

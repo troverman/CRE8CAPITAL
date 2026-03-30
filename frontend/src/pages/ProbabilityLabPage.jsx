@@ -4,10 +4,13 @@ import GlowCard from '../components/GlowCard';
 import LineChart from '../components/LineChart';
 import { fmtInt, fmtNum, fmtPct, fmtTime } from '../lib/format';
 import {
+  blendColumns,
   blendPaintIntoColumns,
+  buildIndicatorLayerColumns,
   buildPdfBuckets,
   buildProbabilityColumns,
   chooseSeriesForMarket,
+  DEFAULT_PDF_LAYER_WEIGHTS,
   findNearestHorizonIndex,
   PDF_HORIZONS,
   rankMarketsByPdf,
@@ -76,6 +79,8 @@ export default function ProbabilityLabPage({ snapshot, historyByMarket }) {
   const markets = useMemo(() => rankMarkets(snapshot?.markets || []), [snapshot?.markets]);
   const [marketKey, setMarketKey] = useState('');
   const [activeHorizon, setActiveHorizon] = useState(3);
+  const [indicatorBlend, setIndicatorBlend] = useState(0.34);
+  const [layerWeights, setLayerWeights] = useState(DEFAULT_PDF_LAYER_WEIGHTS);
   const [paintStrength, setPaintStrength] = useState(0.42);
   const [brushStep, setBrushStep] = useState(0.15);
   const [paintByHorizon, setPaintByHorizon] = useState({});
@@ -130,20 +135,37 @@ export default function ProbabilityLabPage({ snapshot, historyByMarket }) {
 
   const horizons = probabilityBase.horizons.length ? probabilityBase.horizons : PDF_HORIZONS;
 
+  const indicatorModel = useMemo(() => {
+    return buildIndicatorLayerColumns({
+      series: selectedSeriesData.series,
+      horizons,
+      buckets,
+      layerWeights
+    });
+  }, [buckets, horizons, layerWeights, selectedSeriesData.series]);
+
   useEffect(() => {
     if (!horizons.length) return;
     if (horizons.includes(activeHorizon)) return;
     setActiveHorizon(horizons[0]);
   }, [activeHorizon, horizons]);
 
+  const baseWithIndicators = useMemo(() => {
+    return blendColumns({
+      baseColumns: probabilityBase.columns,
+      overlayColumns: indicatorModel.columns,
+      overlayStrength: indicatorBlend
+    });
+  }, [indicatorBlend, indicatorModel.columns, probabilityBase.columns]);
+
   const blendedColumns = useMemo(() => {
     return blendPaintIntoColumns({
-      baseColumns: probabilityBase.columns,
+      baseColumns: baseWithIndicators,
       horizons,
       paintByHorizon,
       paintStrength
     });
-  }, [horizons, paintByHorizon, paintStrength, probabilityBase.columns]);
+  }, [baseWithIndicators, horizons, paintByHorizon, paintStrength]);
 
   const horizonSummaries = useMemo(() => {
     return horizons.map((horizon, index) => {
@@ -285,11 +307,21 @@ export default function ProbabilityLabPage({ snapshot, historyByMarket }) {
       buckets,
       horizons,
       horizon: activeHorizon,
+      indicatorBlend,
+      layerWeights,
       now: snapshot?.now || Date.now()
     }).slice(0, 36);
-  }, [activeHorizon, buckets, historyByMarket, horizons, markets, snapshot?.now]);
+  }, [activeHorizon, buckets, historyByMarket, horizons, indicatorBlend, layerWeights, markets, snapshot?.now]);
 
   const topRanking = marketRankings[0] || null;
+
+  const updateLayerWeight = useCallback((key, value) => {
+    const safe = clamp((Number(value) || 0) / 100, 0, 2);
+    setLayerWeights((previous) => ({
+      ...previous,
+      [key]: safe
+    }));
+  }, []);
 
   const applyPaintToCell = useCallback(
     (horizonKey, bucketIndex, direction = 1) => {
@@ -465,6 +497,38 @@ export default function ProbabilityLabPage({ snapshot, historyByMarket }) {
               <span>Brush Step</span>
               <input type="range" min={2} max={40} step={1} value={Math.round(brushStep * 100)} onChange={(event) => setBrushStep((Number(event.target.value) || 0) / 100)} />
             </label>
+
+            <label className="control-field">
+              <span>Indicator Blend</span>
+              <input
+                type="range"
+                min={0}
+                max={95}
+                step={1}
+                value={Math.round(indicatorBlend * 100)}
+                onChange={(event) => setIndicatorBlend((Number(event.target.value) || 0) / 100)}
+              />
+            </label>
+
+            <label className="control-field">
+              <span>BBand Weight</span>
+              <input type="range" min={0} max={200} step={1} value={Math.round((layerWeights.bband || 0) * 100)} onChange={(event) => updateLayerWeight('bband', event.target.value)} />
+            </label>
+
+            <label className="control-field">
+              <span>EMA Weight</span>
+              <input type="range" min={0} max={200} step={1} value={Math.round((layerWeights.ema || 0) * 100)} onChange={(event) => updateLayerWeight('ema', event.target.value)} />
+            </label>
+
+            <label className="control-field">
+              <span>RSI Weight</span>
+              <input type="range" min={0} max={200} step={1} value={Math.round((layerWeights.rsi || 0) * 100)} onChange={(event) => updateLayerWeight('rsi', event.target.value)} />
+            </label>
+
+            <label className="control-field">
+              <span>MACD Weight</span>
+              <input type="range" min={0} max={200} step={1} value={Math.round((layerWeights.macd || 0) * 100)} onChange={(event) => updateLayerWeight('macd', event.target.value)} />
+            </label>
           </div>
 
           <div className="hero-actions">
@@ -483,6 +547,20 @@ export default function ProbabilityLabPage({ snapshot, historyByMarket }) {
             data source {selectedSeriesData.source} | history points {fmtInt(selectedSeriesData.sampleCount)} | model samples for horizon {activeHorizon}:{' '}
             {fmtInt(probabilityBase.sampleCounts[activeHorizonIndex] || 0)}
           </p>
+          <div className="ta-chip-row">
+            <span className={indicatorModel.signals?.bbandBias >= 0 ? 'status-pill up' : 'status-pill down'}>
+              BB {(indicatorModel.signals?.bbandBias || 0).toFixed(2)}
+            </span>
+            <span className={indicatorModel.signals?.emaBias >= 0 ? 'status-pill up' : 'status-pill down'}>
+              EMA {(indicatorModel.signals?.emaBias || 0).toFixed(2)}
+            </span>
+            <span className={indicatorModel.signals?.rsiBias >= 0 ? 'status-pill up' : 'status-pill down'}>
+              RSI {(indicatorModel.signals?.rsiBias || 0).toFixed(2)} ({fmtNum(indicatorModel.signals?.rsi || 50, 1)})
+            </span>
+            <span className={indicatorModel.signals?.macdBias >= 0 ? 'status-pill up' : 'status-pill down'}>
+              MACD {(indicatorModel.signals?.macdBias || 0).toFixed(2)}
+            </span>
+          </div>
         </GlowCard>
 
         <GlowCard className="panel-card">

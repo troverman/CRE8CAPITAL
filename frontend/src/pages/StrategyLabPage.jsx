@@ -1,10 +1,11 @@
-import { useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import FlashList from '../components/FlashList';
 import GlowCard from '../components/GlowCard';
 import LineChart from '../components/LineChart';
 import useStrategyLab from '../hooks/useStrategyLab';
 import { fmtInt, fmtNum, fmtPct, fmtTime } from '../lib/format';
 import { buildClassicAnalysis } from '../lib/indicators';
+import { buildPdfBuckets, createPdfPortfolioState, markPdfPortfolio, PDF_HORIZONS, rankMarketsByPdf, simulatePdfPortfolioCycle } from '../lib/probabilityLab';
 import { Link } from '../lib/router';
 import { useExecutionFeedStore } from '../store/executionFeedStore';
 
@@ -15,8 +16,8 @@ const toneClass = (value) => {
 };
 
 const actionClass = (action) => {
-  if (action === 'accumulate') return 'up';
-  if (action === 'reduce') return 'down';
+  if (action === 'accumulate' || action === 'buy') return 'up';
+  if (action === 'reduce' || action === 'sell') return 'down';
   return '';
 };
 
@@ -143,6 +144,13 @@ export default function StrategyLabPage({ snapshot, historyByMarket }) {
   const backtestSignals = backtest?.signalLog || [];
   const [newAccountName, setNewAccountName] = useState('');
   const [newAccountCash, setNewAccountCash] = useState(100000);
+  const [solverTopN, setSolverTopN] = useState(4);
+  const [solverHorizon, setSolverHorizon] = useState(3);
+  const [solverMinConfidence, setSolverMinConfidence] = useState(45);
+  const [solverFeeBps, setSolverFeeBps] = useState(8);
+  const [solverAuto, setSolverAuto] = useState(false);
+  const [solverPortfolio, setSolverPortfolio] = useState(() => createPdfPortfolioState({ startCash: 100000 }));
+  const [solverOrderLog, setSolverOrderLog] = useState([]);
 
   const handleAddAccount = () => {
     const safeName = String(newAccountName || '').trim();
@@ -225,6 +233,97 @@ export default function StrategyLabPage({ snapshot, historyByMarket }) {
         };
       });
   }, [runtimeSeries, tradeLog]);
+
+  const solverBuckets = useMemo(() => buildPdfBuckets({ minPct: -4.5, maxPct: 4.5, stepPct: 0.25 }), []);
+
+  const solverRankings = useMemo(() => {
+    return rankMarketsByPdf({
+      markets: snapshot?.markets || [],
+      historyByMarket,
+      buckets: solverBuckets,
+      horizons: PDF_HORIZONS,
+      horizon: solverHorizon,
+      now: snapshot?.now || Date.now()
+    });
+  }, [historyByMarket, snapshot?.markets, snapshot?.now, solverBuckets, solverHorizon]);
+
+  const markedSolverPortfolio = useMemo(() => {
+    return markPdfPortfolio({
+      portfolio: solverPortfolio,
+      markets: snapshot?.markets || []
+    });
+  }, [snapshot?.markets, solverPortfolio]);
+
+  const solverAllocationPreview = useMemo(() => {
+    const picks = solverRankings
+      .filter((row) => row.recommendation?.action === 'accumulate' && Number(row.confidencePct) >= Number(solverMinConfidence))
+      .slice(0, Math.max(1, Number(solverTopN) || 4));
+
+    const scoreRows = picks.map((row) => ({
+      ...row,
+      weightScore: Math.max(0.001, Number(row.upScore) * (0.6 + Number(row.confidencePct) / 100))
+    }));
+    const scoreSum = scoreRows.reduce((sum, row) => sum + row.weightScore, 0);
+    const equity = Number(markedSolverPortfolio.equity) || 0;
+
+    return scoreRows.map((row) => {
+      const weight = row.weightScore / Math.max(scoreSum, 1e-9);
+      return {
+        ...row,
+        weight,
+        targetNotional: equity * weight
+      };
+    });
+  }, [markedSolverPortfolio.equity, solverMinConfidence, solverRankings, solverTopN]);
+
+  const runPdfSolverCycle = useCallback(
+    (source = 'manual') => {
+      const timestamp = Date.now();
+      const result = simulatePdfPortfolioCycle({
+        portfolio: solverPortfolio,
+        rankings: solverRankings,
+        markets: snapshot?.markets || [],
+        topN: solverTopN,
+        minConfidencePct: solverMinConfidence,
+        feeBps: solverFeeBps,
+        timestamp
+      });
+
+      setSolverPortfolio(result.portfolio);
+      setSolverOrderLog((previous) => {
+        const cycleEvent = {
+          id: `pdf-cycle:${timestamp}`,
+          kind: 'cycle',
+          source,
+          timestamp,
+          picks: result.picked.length,
+          orders: result.orders.length,
+          equityStart: result.equityStart,
+          equityEnd: result.equityEnd
+        };
+        const orderEvents = result.orders.map((order) => ({
+          ...order,
+          kind: 'order',
+          source
+        }));
+        return [cycleEvent, ...orderEvents, ...previous].slice(0, 320);
+      });
+    },
+    [snapshot?.markets, solverFeeBps, solverMinConfidence, solverPortfolio, solverRankings, solverTopN]
+  );
+
+  useEffect(() => {
+    if (!solverAuto || !running) return undefined;
+    const timer = setInterval(() => {
+      runPdfSolverCycle('auto');
+    }, Math.max(1400, Number(intervalMs) * 2));
+    return () => clearInterval(timer);
+  }, [intervalMs, runPdfSolverCycle, running, solverAuto]);
+
+  const resetPdfSolver = useCallback(() => {
+    setSolverPortfolio(createPdfPortfolioState({ startCash: 100000 }));
+    setSolverOrderLog([]);
+  }, []);
 
   return (
     <section className="page-grid">
@@ -408,6 +507,164 @@ export default function StrategyLabPage({ snapshot, historyByMarket }) {
             tx feed {fmtInt(txEvents.length)} | position snapshots {fmtInt(positionEvents.length)} | execution rows {fmtInt(tradeLog.length)} | signal inputs{' '}
             {fmtInt(signalRows.length)}
           </p>
+        </GlowCard>
+      </div>
+
+      <GlowCard className="panel-card">
+        <div className="section-head">
+          <h2>PDF Portfolio Solver</h2>
+          <span>multimarket top-N rebalance simulation</span>
+        </div>
+        <p className="socket-status-copy">
+          Legacy-style portfolio solver over probability density rankings. Runs weighted allocation into strongest positive-PDF markets and rebalances each cycle.
+        </p>
+        <div className="pdf-solver-control-grid">
+          <label className="control-field">
+            <span>Top N Picks</span>
+            <input type="number" min={1} max={12} step={1} value={solverTopN} onChange={(event) => setSolverTopN(Math.max(1, Math.min(12, Number(event.target.value) || 4)))} />
+          </label>
+          <label className="control-field">
+            <span>Horizon (delta)</span>
+            <select value={solverHorizon} onChange={(event) => setSolverHorizon(Math.max(1, Number(event.target.value) || 3))}>
+              {PDF_HORIZONS.map((horizon) => (
+                <option key={`solver-h:${horizon}`} value={horizon}>
+                  {horizon}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="control-field">
+            <span>Min Confidence %</span>
+            <input
+              type="number"
+              min={0}
+              max={99}
+              step={1}
+              value={solverMinConfidence}
+              onChange={(event) => setSolverMinConfidence(Math.max(0, Math.min(99, Number(event.target.value) || 0)))}
+            />
+          </label>
+          <label className="control-field">
+            <span>Fee (bps)</span>
+            <input type="number" min={0} max={60} step={0.5} value={solverFeeBps} onChange={(event) => setSolverFeeBps(Math.max(0, Math.min(60, Number(event.target.value) || 0)))} />
+          </label>
+        </div>
+        <div className="hero-actions">
+          <button type="button" className="btn secondary" onClick={() => runPdfSolverCycle('manual')}>
+            Run PDF Rebalance
+          </button>
+          <button type="button" className="btn secondary" onClick={resetPdfSolver}>
+            Reset PDF Portfolio
+          </button>
+          <label className="toggle-label">
+            <input type="checkbox" checked={solverAuto} onChange={(event) => setSolverAuto(event.target.checked)} />
+            <span>Auto-cycle with realtime</span>
+          </label>
+        </div>
+        <div className="tensor-metrics">
+          <article>
+            <span>Solver Equity</span>
+            <strong className={toneClass(markedSolverPortfolio.equity - 100000)}>{fmtNum(markedSolverPortfolio.equity, 2)}</strong>
+          </article>
+          <article>
+            <span>Solver Cash</span>
+            <strong>{fmtNum(markedSolverPortfolio.cash, 2)}</strong>
+          </article>
+          <article>
+            <span>Invested Notional</span>
+            <strong>{fmtNum(markedSolverPortfolio.investedNotional, 2)}</strong>
+          </article>
+          <article>
+            <span>Open Holdings</span>
+            <strong>{fmtInt(markedSolverPortfolio.markedHoldings?.length || 0)}</strong>
+          </article>
+          <article>
+            <span>Candidate Picks</span>
+            <strong>{fmtInt(solverAllocationPreview.length)}</strong>
+          </article>
+          <article>
+            <span>Cycle Count</span>
+            <strong>{fmtInt(markedSolverPortfolio.cycle || 0)}</strong>
+          </article>
+          <article>
+            <span>Order Events</span>
+            <strong>{fmtInt(solverOrderLog.filter((row) => row.kind === 'order').length)}</strong>
+          </article>
+          <article>
+            <span>Last Update</span>
+            <strong>{fmtTime(markedSolverPortfolio.updatedAt)}</strong>
+          </article>
+        </div>
+      </GlowCard>
+
+      <div className="two-col">
+        <GlowCard className="panel-card">
+          <div className="section-head">
+            <h2>PDF Allocation Targets</h2>
+            <span>{solverAllocationPreview.length} picks</span>
+          </div>
+          <div className="list-stack">
+            {solverAllocationPreview.map((row, index) => (
+              <article key={`solver-pick:${row.key}`} className="list-item">
+                <strong>
+                  {index + 1}. {row.symbol} ({row.assetClass})
+                </strong>
+                <p>
+                  target weight {fmtPct(row.weight * 100)} | target notional {fmtNum(row.targetNotional, 2)}
+                </p>
+                <div className="item-meta">
+                  <small>up {fmtPct((row.upProb || 0) * 100)}</small>
+                  <small>down {fmtPct((row.downProb || 0) * 100)}</small>
+                  <small>expected {fmtPct(row.expectedMovePct || 0)}</small>
+                  <small>confidence {fmtNum(row.confidencePct, 1)}%</small>
+                </div>
+              </article>
+            ))}
+            {solverAllocationPreview.length === 0 ? <p className="action-message">No qualifying picks at current thresholds.</p> : null}
+          </div>
+        </GlowCard>
+
+        <GlowCard className="panel-card">
+          <div className="section-head">
+            <h2>PDF Solver Tape</h2>
+            <span>{solverOrderLog.length} rows</span>
+          </div>
+          <FlashList
+            items={solverOrderLog}
+            height={320}
+            itemHeight={74}
+            className="tick-flash-list"
+            emptyCopy="No solver cycles yet."
+            keyExtractor={(item) => item.id}
+            renderItem={(item) => {
+              if (item.kind === 'cycle') {
+                return (
+                  <article className="tensor-event-row">
+                    <strong>cycle | {item.source}</strong>
+                    <p>
+                      picks {fmtInt(item.picks)} | orders {fmtInt(item.orders)}
+                    </p>
+                    <small>
+                      equity {fmtNum(item.equityStart, 2)} -> {fmtNum(item.equityEnd, 2)} | {fmtTime(item.timestamp)}
+                    </small>
+                  </article>
+                );
+              }
+              return (
+                <article className="tensor-event-row">
+                  <strong className={actionClass(item.action)}>
+                    {item.action} | {item.symbol} | units {fmtNum(item.units, 4)}
+                  </strong>
+                  <p>
+                    notional {fmtNum(item.notional, 2)} | fee {fmtNum(item.fee, 4)}
+                  </p>
+                  <small>
+                    price {fmtNum(item.price, 4)} | {item.assetClass} | {item.source} | {fmtTime(item.timestamp)}
+                  </small>
+                </article>
+              );
+            }}
+          />
         </GlowCard>
       </div>
 
