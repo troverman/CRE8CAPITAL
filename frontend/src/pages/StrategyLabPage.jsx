@@ -97,10 +97,6 @@ export default function StrategyLabPage({ snapshot, historyByMarket }) {
     changeScenario,
     changeMarket,
     changeRisk,
-    addWalletAccount,
-    updateWalletAccount,
-    removeWalletAccount,
-    clearWalletAccounts,
     setActiveWalletAccount,
     triggerManual,
     resetSession,
@@ -166,8 +162,6 @@ export default function StrategyLabPage({ snapshot, historyByMarket }) {
   };
   const backtestTrades = backtest?.tradeLog || [];
   const backtestSignals = backtest?.signalLog || [];
-  const [newAccountName, setNewAccountName] = useState('');
-  const [newAccountCash, setNewAccountCash] = useState(100000);
   const [solverTopN, setSolverTopN] = useState(4);
   const [solverHorizon, setSolverHorizon] = useState(3);
   const [solverMinConfidence, setSolverMinConfidence] = useState(45);
@@ -177,17 +171,6 @@ export default function StrategyLabPage({ snapshot, historyByMarket }) {
   const [solverOrderLog, setSolverOrderLog] = useState([]);
   const [labView, setLabView] = useState('overview');
   const [drilldownAccountId, setDrilldownAccountId] = useState('');
-
-  const handleAddAccount = () => {
-    const safeName = String(newAccountName || '').trim();
-    const safeCash = Math.max(100, Number(newAccountCash) || 100000);
-    addWalletAccount({
-      name: safeName || `Paper ${walletAccounts.length + 1}`,
-      startCash: safeCash
-    });
-    setNewAccountName('');
-    setNewAccountCash(100000);
-  };
 
   const activeAccount = useMemo(() => {
     return walletAccounts.find((account) => account.id === activeWalletAccountId) || walletAccounts[0] || null;
@@ -783,21 +766,8 @@ export default function StrategyLabPage({ snapshot, historyByMarket }) {
                   >
                     Set Active
                   </button>
-                  <button
-                    type="button"
-                    className="btn secondary"
-                    disabled={!selectedDrillAccount}
-                    onClick={() => {
-                      if (!selectedDrillAccount) return;
-                      removeWalletAccount(selectedDrillAccount.id);
-                    }}
-                  >
-                    Remove Selected
-                  </button>
-                  <button type="button" className="btn secondary" disabled={walletAccounts.length === 0} onClick={clearWalletAccounts}>
-                    Delete All Accounts
-                  </button>
                 </div>
+                <p className="socket-status-copy">Create, delete, and edit paper accounts from Wallet tab. Strategy Lab keeps account drilldown + active selection.</p>
                 {selectedDrillAccount ? (
                   <>
                     <div className="strategy-lab-mini-grid">
@@ -1193,83 +1163,6 @@ export default function StrategyLabPage({ snapshot, historyByMarket }) {
           />
         </GlowCard>
       </div>
-
-      <GlowCard className="panel-card">
-        <div className="section-head">
-          <h2>Fake Accounts</h2>
-          <span>{walletAccounts.length} active profiles</span>
-        </div>
-        <div className="strategy-account-create">
-          <label className="control-field">
-            <span>Account Name</span>
-            <input value={newAccountName} onChange={(event) => setNewAccountName(event.target.value)} placeholder="Paper Alpha" maxLength={32} />
-          </label>
-          <label className="control-field">
-            <span>Start Cash</span>
-            <input type="number" min={100} step={100} value={newAccountCash} onChange={(event) => setNewAccountCash(Math.max(100, Number(event.target.value) || 100000))} />
-          </label>
-          <div className="hero-actions">
-            <button type="button" className="btn secondary" onClick={handleAddAccount}>
-              Add Account
-            </button>
-            <button type="button" className="btn secondary" disabled={walletAccounts.length === 0} onClick={clearWalletAccounts}>
-              Delete All Accounts
-            </button>
-          </div>
-        </div>
-        <div className="strategy-account-grid">
-          {walletAccounts.map((account) => (
-            <article key={account.id} className={account.id === activeWalletAccountId ? 'strategy-account-card active' : 'strategy-account-card'}>
-              <div className="strategy-account-head">
-                <label className="toggle-label">
-                  <input type="checkbox" checked={account.id === activeWalletAccountId} onChange={() => setActiveWalletAccount(account.id)} />
-                  <span>{account.name}</span>
-                </label>
-                <span className={account.enabled ? 'status-pill online' : 'status-pill'}>{account.enabled ? 'enabled' : 'paused'}</span>
-              </div>
-              <div className="strategy-account-metrics">
-                <small>eq {fmtNum(account.wallet.equity, 2)}</small>
-                <small>cash {fmtNum(account.wallet.cash, 2)}</small>
-                <small>units {fmtNum(account.wallet.units, 0)}</small>
-              </div>
-              <div className="strategy-account-controls">
-                <label className="control-field">
-                  <span>Max Units</span>
-                  <input
-                    type="number"
-                    min={1}
-                    max={80}
-                    step={1}
-                    value={account.maxAbsUnits}
-                    onChange={(event) => updateWalletAccount(account.id, { maxAbsUnits: event.target.value })}
-                  />
-                </label>
-                <label className="control-field">
-                  <span>Slippage</span>
-                  <input
-                    type="number"
-                    min={0}
-                    max={60}
-                    step={0.1}
-                    value={account.slippageBps}
-                    onChange={(event) => updateWalletAccount(account.id, { slippageBps: event.target.value })}
-                  />
-                </label>
-              </div>
-              <div className="strategy-account-actions">
-                <label className="toggle-label">
-                  <input type="checkbox" checked={account.enabled} onChange={(event) => updateWalletAccount(account.id, { enabled: event.target.checked })} />
-                  <span>Allow execution</span>
-                </label>
-                <button type="button" className="btn secondary" onClick={() => removeWalletAccount(account.id)}>
-                  Remove
-                </button>
-              </div>
-            </article>
-          ))}
-          {walletAccounts.length === 0 ? <p className="action-message">No paper accounts. Add a new account to resume paper execution.</p> : null}
-        </div>
-      </GlowCard>
 
       <GlowCard className="panel-card">
         <div className="section-head">

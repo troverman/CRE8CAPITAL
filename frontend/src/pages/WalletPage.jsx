@@ -4,6 +4,7 @@ import LineChart from '../components/LineChart';
 import { fmtCompact, fmtInt, fmtNum, fmtPct, fmtTime } from '../lib/format';
 import { createWalletState, executeWalletAction, markWallet } from '../lib/strategyEngine';
 import { Link } from '../lib/router';
+import { useStrategyLabStore } from '../store/strategyLabStore';
 
 const WALLET_STORAGE_KEY = 'cre8capital.wallet-lab.v1';
 const PASSPORT_STORAGE_KEY = 'cre8capital.account-passport.v1';
@@ -223,6 +224,14 @@ const readPassportSummary = () => {
 };
 
 export default function WalletPage({ snapshot }) {
+  const paperAccounts = useStrategyLabStore((state) => state.walletAccounts);
+  const activePaperAccountId = useStrategyLabStore((state) => state.activeWalletAccountId);
+  const addPaperAccount = useStrategyLabStore((state) => state.addWalletAccount);
+  const updatePaperAccount = useStrategyLabStore((state) => state.updateWalletAccount);
+  const removePaperAccount = useStrategyLabStore((state) => state.removeWalletAccount);
+  const clearPaperAccounts = useStrategyLabStore((state) => state.clearWalletAccounts);
+  const setActivePaperAccount = useStrategyLabStore((state) => state.setActiveWalletAccount);
+
   const rankedMarkets = useMemo(() => {
     const input = Array.isArray(snapshot?.markets) ? snapshot.markets : [];
     return [...input]
@@ -238,6 +247,8 @@ export default function WalletPage({ snapshot }) {
   const [walletLab, setWalletLab] = useState(createDefaultWalletLab);
   const [passportSummary, setPassportSummary] = useState(() => readPassportSummary());
   const [message, setMessage] = useState('');
+  const [paperName, setPaperName] = useState('');
+  const [paperCash, setPaperCash] = useState(100000);
 
   useEffect(() => {
     try {
@@ -337,6 +348,18 @@ export default function WalletPage({ snapshot }) {
       ...previous,
       [field]: value
     }));
+  };
+
+  const handleAddPaperAccount = () => {
+    const safeName = String(paperName || '').trim();
+    const safeCash = Math.max(100, Number(paperCash) || 100000);
+    addPaperAccount({
+      name: safeName || `Paper ${paperAccounts.length + 1}`,
+      startCash: safeCash
+    });
+    setPaperName('');
+    setPaperCash(100000);
+    setMessage('Paper account added.');
   };
 
   const executeManual = useCallback(
@@ -482,6 +505,10 @@ export default function WalletPage({ snapshot }) {
     return rows.sort((a, b) => b.notional - a.notional);
   }, [marketByKey, snapshot?.now, walletLab.assetHoldings]);
 
+  const enabledPaperCount = useMemo(() => {
+    return paperAccounts.filter((account) => account.enabled).length;
+  }, [paperAccounts]);
+
   const equitySeries = walletLab.equityHistory.map((row) => row.equity);
   const openNotional = openHoldings.reduce((sum, holding) => sum + holding.notional, 0);
   const winRate = walletLab.wallet.tradeCount > 0 ? (walletLab.wallet.winCount / Math.max(walletLab.wallet.tradeCount, 1)) * 100 : 0;
@@ -523,6 +550,100 @@ export default function WalletPage({ snapshot }) {
           <strong>{fmtCompact(openNotional)}</strong>
         </GlowCard>
       </div>
+
+      <GlowCard className="panel-card">
+        <div className="section-head">
+          <h2>Paper Accounts</h2>
+          <span>
+            {fmtInt(enabledPaperCount)} enabled / {fmtInt(paperAccounts.length)} total
+          </span>
+        </div>
+        <div className="strategy-account-create">
+          <label className="control-field">
+            <span>Account Name</span>
+            <input value={paperName} onChange={(event) => setPaperName(event.target.value)} placeholder="Paper Alpha" maxLength={32} />
+          </label>
+          <label className="control-field">
+            <span>Start Cash</span>
+            <input type="number" min={100} step={100} value={paperCash} onChange={(event) => setPaperCash(Math.max(100, Number(event.target.value) || 100000))} />
+          </label>
+          <div className="hero-actions">
+            <button type="button" className="btn secondary" onClick={handleAddPaperAccount}>
+              Add Account
+            </button>
+            <button
+              type="button"
+              className="btn secondary"
+              disabled={paperAccounts.length === 0}
+              onClick={() => {
+                clearPaperAccounts();
+                setMessage('All paper accounts removed.');
+              }}
+            >
+              Delete All Accounts
+            </button>
+          </div>
+        </div>
+        <div className="strategy-account-grid">
+          {paperAccounts.map((account) => (
+            <article key={account.id} className={account.id === activePaperAccountId ? 'strategy-account-card active' : 'strategy-account-card'}>
+              <div className="strategy-account-head">
+                <label className="toggle-label">
+                  <input type="checkbox" checked={account.id === activePaperAccountId} onChange={() => setActivePaperAccount(account.id)} />
+                  <span>{account.name}</span>
+                </label>
+                <span className={account.enabled ? 'status-pill online' : 'status-pill'}>{account.enabled ? 'enabled' : 'paused'}</span>
+              </div>
+              <div className="strategy-account-metrics">
+                <small>eq {fmtNum(account.wallet.equity, 2)}</small>
+                <small>cash {fmtNum(account.wallet.cash, 2)}</small>
+                <small>units {fmtNum(account.wallet.units, 0)}</small>
+              </div>
+              <div className="strategy-account-controls">
+                <label className="control-field">
+                  <span>Max Units</span>
+                  <input
+                    type="number"
+                    min={1}
+                    max={80}
+                    step={1}
+                    value={account.maxAbsUnits}
+                    onChange={(event) => updatePaperAccount(account.id, { maxAbsUnits: event.target.value })}
+                  />
+                </label>
+                <label className="control-field">
+                  <span>Slippage</span>
+                  <input
+                    type="number"
+                    min={0}
+                    max={60}
+                    step={0.1}
+                    value={account.slippageBps}
+                    onChange={(event) => updatePaperAccount(account.id, { slippageBps: event.target.value })}
+                  />
+                </label>
+              </div>
+              <div className="strategy-account-actions">
+                <label className="toggle-label">
+                  <input type="checkbox" checked={account.enabled} onChange={(event) => updatePaperAccount(account.id, { enabled: event.target.checked })} />
+                  <span>Allow execution</span>
+                </label>
+                <button
+                  type="button"
+                  className="btn secondary"
+                  onClick={() => {
+                    removePaperAccount(account.id);
+                    setMessage(`Removed ${account.name}.`);
+                  }}
+                >
+                  Remove
+                </button>
+              </div>
+            </article>
+          ))}
+          {paperAccounts.length === 0 ? <p className="action-message">No paper accounts. Add one to resume strategy-lab account execution.</p> : null}
+        </div>
+      </GlowCard>
 
       <div className="wallet-grid">
         <GlowCard className="panel-card wallet-control-card">

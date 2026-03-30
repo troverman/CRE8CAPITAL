@@ -2,7 +2,7 @@ import { useEffect, useMemo } from 'react';
 import GlowCard from '../components/GlowCard';
 import { fmtInt, fmtPct } from '../lib/format';
 import { Link, navigate } from '../lib/router';
-import { buildStrategyRows } from '../lib/strategyView';
+import { buildStrategyRows, toStrategyKey } from '../lib/strategyView';
 import { useStrategyToggleStore } from '../store/strategyToggleStore';
 
 const VIEWBOX_WIDTH = 1240;
@@ -57,7 +57,6 @@ const shortLabel = (value, max = 16) => {
 
 const marketIdentity = (symbol, assetClass) => `${String(symbol || '').toLowerCase()}|${String(assetClass || '').toLowerCase()}`;
 const providerKeyOf = (provider) => String(provider?.id || provider?.name || '').toLowerCase();
-const strategyKeyOf = (name) => String(name || '').toLowerCase();
 
 const resolveEnabled = (strategy, enabledByKey) => {
   const key = String(strategy?.key || '');
@@ -293,7 +292,7 @@ const buildGraph = (snapshot, strategyRows) => {
 
   for (const decision of snapshot.decisions || []) {
     const marketId = marketIdByIdentity.get(marketIdentity(decision.symbol, decision.assetClass));
-    const strategyId = strategyIds.get(strategyKeyOf(decision.strategyName || decision.strategy));
+    const strategyId = strategyIds.get(toStrategyKey(decision.strategyName || decision.strategy));
     addEdge(marketId, strategyId, 'market-strategy');
   }
 

@@ -1,8 +1,7 @@
 import { create } from 'zustand';
+import { toStrategyKey } from '../lib/strategyView';
 
-const STORAGE_KEY = 'cre8capital.strategy-toggle.v1';
-
-const toStrategyKey = (value) => String(value || '').trim().toLowerCase();
+const STORAGE_KEY = 'cre8capital.strategy-toggle.v2';
 
 const readStoredMap = () => {
   if (typeof window === 'undefined') return {};

@@ -5,7 +5,12 @@ const toNum = (value, fallback = 0) => {
   return Number.isFinite(num) ? num : fallback;
 };
 
-export const toStrategyKey = (value) => String(value || '').trim().toLowerCase();
+export const toStrategyKey = (value) =>
+  String(value || '')
+    .trim()
+    .toLowerCase()
+    .replace(/[\s_]+/g, '-')
+    .replace(/-+/g, '-');
 
 const ensureRow = (map, { key, id, name, description = '', enabled = null }) => {
   const existing = map.get(key) || {
