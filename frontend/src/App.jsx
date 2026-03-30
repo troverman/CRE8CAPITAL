@@ -20,6 +20,7 @@ import StrategyLabPage from './pages/StrategyLabPage';
 import StrategyDetailPage from './pages/StrategyDetailPage';
 import StrategyListPage from './pages/StrategyListPage';
 import WalletPage from './pages/WalletPage';
+import WalletDetailPage from './pages/WalletDetailPage';
 
 const parseRoute = (pathname) => {
   const cleanPath = pathname && pathname !== '/' ? pathname.replace(/\/+$/, '') : pathname;
@@ -57,6 +58,11 @@ const parseRoute = (pathname) => {
     return { name: 'strategy-detail', id: decodeURIComponent(strategyDetailMatch[1]) };
   }
 
+  const walletDetailMatch = routePath.match(/^\/wallet\/(.+)$/);
+  if (walletDetailMatch) {
+    return { name: 'wallet-detail', id: decodeURIComponent(walletDetailMatch[1]) };
+  }
+
   return { name: 'not-found' };
 };
 
@@ -67,7 +73,7 @@ const NotFoundPage = () => {
         <h1>Route not found</h1>
         <p>
           Try `/markets`, `/assets`, `/signals`, `/decisions`, `/probability`, `/strategies`, `/graph`, `/strategy`, `/account`, `/wallet`, `/signal/:id`, or
-          `/strategy/:id`.
+          `/strategy/:id`, `/wallet/:id`.
         </p>
       </GlowCard>
     </section>
@@ -158,6 +164,8 @@ export default function App() {
       {route.name === 'account' ? <AccountPage /> : null}
 
       {route.name === 'wallet' ? <WalletPage snapshot={snapshot} /> : null}
+
+      {route.name === 'wallet-detail' ? <WalletDetailPage walletId={route.id} snapshot={snapshot} /> : null}
 
       {route.name === 'not-found' ? <NotFoundPage /> : null}
     </main>

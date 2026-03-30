@@ -25,7 +25,7 @@ export default function TopNav({ pathname, connected, transport, localFallback }
     if (to === '/probability') return path === '/probability';
     if (to === '/strategies') return path === '/strategies' || path.startsWith('/strategy/');
     if (to === '/account') return path === '/account' || path === '/settings';
-    if (to === '/wallet') return path === '/wallet';
+    if (to === '/wallet') return path === '/wallet' || path.startsWith('/wallet/');
     if (to === '/assets') return path === '/assets' || path.startsWith('/asset/');
     if (to === '/graph') return path === '/graph';
     if (to === '/strategy') return path === '/strategy';

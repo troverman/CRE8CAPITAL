@@ -594,6 +594,11 @@ export default function WalletPage({ snapshot }) {
                 </label>
                 <span className={account.enabled ? 'status-pill online' : 'status-pill'}>{account.enabled ? 'enabled' : 'paused'}</span>
               </div>
+              <div className="section-actions">
+                <Link to={`/wallet/${encodeURIComponent(account.id)}`} className="inline-link">
+                  Open Wallet ID
+                </Link>
+              </div>
               <div className="strategy-account-metrics">
                 <small>eq {fmtNum(account.wallet.equity, 2)}</small>
                 <small>cash {fmtNum(account.wallet.cash, 2)}</small>

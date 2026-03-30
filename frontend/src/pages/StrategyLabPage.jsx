@@ -738,6 +738,13 @@ export default function StrategyLabPage({ snapshot, historyByMarket }) {
                   <h2>Account Drilldown</h2>
                   <span>{selectedDrillAccount?.name || 'none'}</span>
                 </div>
+                {selectedDrillAccount ? (
+                  <div className="section-actions">
+                    <Link to={`/wallet/${encodeURIComponent(selectedDrillAccount.id)}`} className="inline-link">
+                      Open Wallet ID Page
+                    </Link>
+                  </div>
+                ) : null}
                 <div className="strategy-drill-controls">
                   <label className="control-field">
                     <span>Selected Account</span>
