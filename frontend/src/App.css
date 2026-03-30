@@ -696,6 +696,63 @@ th {
   font-size: 0.82rem;
 }
 
+.flash-list {
+  overflow: auto;
+  border: 1px solid rgba(123, 143, 208, 0.28);
+  border-radius: 12px;
+  background: rgba(8, 12, 26, 0.82);
+}
+
+.flash-list-empty {
+  border: 1px dashed rgba(124, 143, 206, 0.42);
+  border-radius: 12px;
+  background: rgba(8, 12, 24, 0.76);
+  color: var(--ink-soft);
+  display: grid;
+  place-items: center;
+  font-size: 0.78rem;
+  text-align: center;
+  padding: 0.7rem;
+}
+
+.flash-list-row {
+  border-bottom: 1px solid rgba(120, 138, 195, 0.22);
+}
+
+.flash-list-row:last-child {
+  border-bottom: none;
+}
+
+.tick-flash-list {
+  box-shadow: inset 0 0 0 1px rgba(86, 206, 255, 0.08);
+}
+
+.tick-row {
+  display: grid;
+  grid-template-columns: 1.35fr 1fr auto;
+  gap: 0.5rem;
+  align-items: center;
+  padding: 0.42rem 0.52rem;
+}
+
+.tick-main,
+.tick-metrics {
+  display: grid;
+  gap: 0.14rem;
+}
+
+.tick-main strong,
+.tick-metrics span {
+  font-size: 0.8rem;
+}
+
+.tick-main small,
+.tick-metrics small,
+.tick-row small {
+  font-size: 0.67rem;
+  color: var(--ink-soft);
+}
+
 @keyframes spin {
   to {
     transform: rotate(360deg);
@@ -714,6 +771,11 @@ th {
 
   .socket-provider-grid {
     grid-template-columns: 1fr;
+  }
+
+  .tick-row {
+    grid-template-columns: 1fr;
+    gap: 0.3rem;
   }
 }
 

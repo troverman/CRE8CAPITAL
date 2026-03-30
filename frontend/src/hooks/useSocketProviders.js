@@ -1,29 +1,72 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { getExternalSocketProviders, getLocalFallbackProviders } from '../providers';
+import { useSocketFeedStore } from '../store/socketFeedStore';
 
-const MAX_POINTS = 240;
 const FALLBACK_DELAY_MS = 2800;
 
-const toNum = (value) => {
-  const num = Number(value);
-  return Number.isFinite(num) ? num : 0;
-};
-
-const toFiniteOrNull = (value) => {
-  const num = Number(value);
-  return Number.isFinite(num) ? num : null;
-};
-
 export default function useSocketProviders({ market, enabled }) {
-  const [providerStateById, setProviderStateById] = useState({});
-  const [seriesByProvider, setSeriesByProvider] = useState({});
+  const providerStateById = useSocketFeedStore((state) => state.providerStateById);
+  const seriesByProvider = useSocketFeedStore((state) => state.seriesByProvider);
+  const recentTicks = useSocketFeedStore((state) => state.recentTicks);
+  const resetForMarket = useSocketFeedStore((state) => state.resetForMarket);
+
+  const workerRef = useRef(null);
   const [localFallbackActive, setLocalFallbackActive] = useState(false);
 
+  const marketKey = market?.key || null;
+
   useEffect(() => {
-    setProviderStateById({});
-    setSeriesByProvider({});
+    resetForMarket(marketKey);
     setLocalFallbackActive(false);
-  }, [market?.key]);
+  }, [marketKey, resetForMarket]);
+
+  useEffect(() => {
+    if (typeof Worker === 'undefined') return;
+
+    const worker = new Worker(new URL('../workers/socketFeed.worker.js', import.meta.url), { type: 'module' });
+    workerRef.current = worker;
+
+    worker.onmessage = (event) => {
+      const message = event.data || {};
+      if (message.type !== 'snapshot' || !message.payload) return;
+      useSocketFeedStore.getState().applyWorkerSnapshot(message.payload);
+    };
+
+    return () => {
+      worker.terminate();
+      if (workerRef.current === worker) {
+        workerRef.current = null;
+      }
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!workerRef.current) return;
+    workerRef.current.postMessage({
+      type: 'reset',
+      marketKey
+    });
+  }, [marketKey]);
+
+  const pushStatus = useCallback((status) => {
+    if (!status?.id) return;
+    const worker = workerRef.current;
+    if (worker) {
+      worker.postMessage({ type: 'status', status });
+      return;
+    }
+    useSocketFeedStore.getState().ingestStatusFallback(status);
+  }, []);
+
+  const pushTick = useCallback((tick) => {
+    if (!tick?.providerId) return;
+    const worker = workerRef.current;
+    if (worker) {
+      worker.postMessage({ type: 'tick', tick });
+      return;
+    }
+    useSocketFeedStore.getState().ingestTickFallback(tick);
+  }, []);
 
   const externalProviders = useMemo(() => {
     return getExternalSocketProviders().filter((provider) => provider.supportsMarket(market));
@@ -32,75 +75,6 @@ export default function useSocketProviders({ market, enabled }) {
   const localProviders = useMemo(() => {
     return getLocalFallbackProviders().filter((provider) => provider.supportsMarket(market));
   }, [market]);
-
-  const setProviderStatus = useCallback((status) => {
-    const id = status.id;
-    setProviderStateById((previous) => {
-      const current = previous[id] || {};
-      return {
-        ...previous,
-        [id]: {
-          id,
-          name: status.name || current.name,
-          connected: Boolean(status.connected),
-          error: status.error || '',
-          lastTickAt: current.lastTickAt || null,
-          price: current.price || null,
-          bid: current.bid || null,
-          ask: current.ask || null,
-          volume: current.volume || null
-        }
-      };
-    });
-  }, []);
-
-  const onTick = useCallback((tick) => {
-    if (!tick?.providerId) return;
-
-    const point = {
-      t: Number(tick.timestamp) || Date.now(),
-      price: toNum(tick.price),
-      spread:
-        toFiniteOrNull(tick.bid) !== null && toFiniteOrNull(tick.ask) !== null
-          ? ((toNum(tick.ask) - toNum(tick.bid)) / Math.max(toNum(tick.price), 1e-9)) * 10000
-          : 0,
-      volume: toNum(tick.volume)
-    };
-
-    setSeriesByProvider((previous) => {
-      const next = { ...previous };
-      const key = tick.providerId;
-      const series = next[key] ? [...next[key]] : [];
-      const tail = series[series.length - 1];
-      if (!tail || tail.t !== point.t || tail.price !== point.price) {
-        series.push(point);
-        if (series.length > MAX_POINTS) {
-          series.splice(0, series.length - MAX_POINTS);
-        }
-        next[key] = series;
-      }
-      return next;
-    });
-
-    setProviderStateById((previous) => {
-      const current = previous[tick.providerId] || {};
-      return {
-        ...previous,
-        [tick.providerId]: {
-          ...current,
-          id: tick.providerId,
-          name: tick.providerName || current.name,
-          connected: true,
-          error: '',
-          lastTickAt: point.t,
-          price: tick.price,
-          bid: tick.bid,
-          ask: tick.ask,
-          volume: tick.volume
-        }
-      };
-    });
-  }, []);
 
   useEffect(() => {
     if (!market || !enabled || externalProviders.length === 0) {
@@ -111,7 +85,7 @@ export default function useSocketProviders({ market, enabled }) {
     const connections = [];
 
     for (const provider of externalProviders) {
-      setProviderStatus({
+      pushStatus({
         id: provider.id,
         name: provider.name,
         connected: false,
@@ -122,16 +96,18 @@ export default function useSocketProviders({ market, enabled }) {
         market,
         onTick: (tick) => {
           if (!alive) return;
-          onTick(tick);
+          pushTick(tick);
         },
         onStatus: (status) => {
           if (!alive) return;
-          setProviderStatus(status);
+          pushStatus(status);
         }
       });
 
       if (connection && typeof connection.disconnect === 'function') {
-        connections.push(connection);
+        connections.push({
+          disconnect: connection.disconnect
+        });
       }
     }
 
@@ -141,7 +117,7 @@ export default function useSocketProviders({ market, enabled }) {
         connection.disconnect();
       }
     };
-  }, [enabled, externalProviders, market, onTick, setProviderStatus]);
+  }, [enabled, externalProviders, market, pushStatus, pushTick]);
 
   const externalConnectedCount = useMemo(() => {
     return externalProviders.filter((provider) => Boolean(providerStateById[provider.id]?.connected)).length;
@@ -179,19 +155,29 @@ export default function useSocketProviders({ market, enabled }) {
     const connections = [];
 
     for (const provider of localProviders) {
+      pushStatus({
+        id: provider.id,
+        name: provider.name,
+        connected: false,
+        error: ''
+      });
+
       const connection = provider.connect({
         market,
         onTick: (tick) => {
           if (!alive) return;
-          onTick(tick);
+          pushTick(tick);
         },
         onStatus: (status) => {
           if (!alive) return;
-          setProviderStatus(status);
+          pushStatus(status);
         }
       });
+
       if (connection && typeof connection.disconnect === 'function') {
-        connections.push(connection);
+        connections.push({
+          disconnect: connection.disconnect
+        });
       }
     }
 
@@ -201,7 +187,7 @@ export default function useSocketProviders({ market, enabled }) {
         connection.disconnect();
       }
     };
-  }, [enabled, localFallbackActive, localProviders, market, onTick, setProviderStatus]);
+  }, [enabled, localFallbackActive, localProviders, market, pushStatus, pushTick]);
 
   const listedProviders = useMemo(() => {
     const includeLocal = localFallbackActive || localProviders.some((provider) => Boolean(providerStateById[provider.id]));
@@ -221,6 +207,7 @@ export default function useSocketProviders({ market, enabled }) {
           bid: null,
           ask: null,
           volume: null,
+          guardDrops: 0,
           local: Boolean(provider.isLocalFallback)
         };
       }
@@ -228,7 +215,7 @@ export default function useSocketProviders({ market, enabled }) {
       const state = providerStateById[provider.id] || {};
       return {
         id: provider.id,
-        name: provider.name,
+        name: state.name || provider.name,
         connected: Boolean(state.connected),
         error: state.error || '',
         lastTickAt: state.lastTickAt || null,
@@ -236,6 +223,7 @@ export default function useSocketProviders({ market, enabled }) {
         bid: state.bid ?? null,
         ask: state.ask ?? null,
         volume: state.volume ?? null,
+        guardDrops: Number(state.guardDrops) || 0,
         local: Boolean(provider.isLocalFallback)
       };
     });
@@ -256,9 +244,9 @@ export default function useSocketProviders({ market, enabled }) {
     seriesByProvider,
     primaryProvider,
     primarySeries,
+    recentTicks,
     localFallbackActive,
     externalProviderCount: externalProviders.length,
     externalConnectedCount
   };
 }
-

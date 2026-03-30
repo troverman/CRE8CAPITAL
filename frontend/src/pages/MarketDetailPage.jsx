@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
+import FlashList from '../components/FlashList';
 import GlowCard from '../components/GlowCard';
 import LineChart from '../components/LineChart';
 import Sparkline from '../components/Sparkline';
@@ -20,7 +21,16 @@ export default function MarketDetailPage({ marketId, snapshot, historyByMarket, 
   }, [supportsSocketProviders, market?.key]);
 
   const socketLiveEnabled = supportsSocketProviders && socketEnabled;
-  const { providerStates, seriesByProvider, primaryProvider, primarySeries, localFallbackActive, externalProviderCount, externalConnectedCount } =
+  const {
+    providerStates,
+    seriesByProvider,
+    primaryProvider,
+    primarySeries,
+    recentTicks,
+    localFallbackActive,
+    externalProviderCount,
+    externalConnectedCount
+  } =
     useSocketProviders({
       market,
       enabled: socketLiveEnabled
@@ -185,10 +195,47 @@ export default function MarketDetailPage({ marketId, snapshot, historyByMarket, 
                   price {fmtNum(provider.price, 4)} | bid {fmtNum(provider.bid, 4)} | ask {fmtNum(provider.ask, 4)}
                 </p>
                 <Sparkline data={(seriesByProvider[provider.id] || []).map((point) => point.price)} width={160} height={42} />
-                <small>{provider.error || `last tick ${fmtTime(provider.lastTickAt)}`}</small>
+                <small>
+                  {provider.error || `last tick ${fmtTime(provider.lastTickAt)}`}
+                  {provider.guardDrops > 0 ? ` | guard drops ${fmtInt(provider.guardDrops)}` : ''}
+                </small>
               </article>
             ))}
           </div>
+        </GlowCard>
+      ) : null}
+
+      {supportsSocketProviders ? (
+        <GlowCard className="panel-card">
+          <div className="section-head">
+            <h2>Live Tick Tape</h2>
+            <span>{recentTicks.length} buffered</span>
+          </div>
+          <FlashList
+            items={recentTicks}
+            height={290}
+            itemHeight={58}
+            className="tick-flash-list"
+            emptyCopy={socketLiveEnabled ? 'Waiting for live ticks...' : 'Enable frontend socket providers to stream ticks.'}
+            keyExtractor={(tick) => tick.id}
+            renderItem={(tick) => (
+              <article className="tick-row">
+                <div className="tick-main">
+                  <strong>{tick.providerName || tick.providerId}</strong>
+                  <small>
+                    {tick.venue || 'unknown'} | {tick.symbol || '-'}
+                  </small>
+                </div>
+                <div className="tick-metrics">
+                  <span>{fmtNum(tick.price, 4)}</span>
+                  <small>
+                    spr {fmtNum(tick.spread, 2)} bps | vol {fmtCompact(tick.volume)}
+                  </small>
+                </div>
+                <small>{fmtTime(tick.timestamp)}</small>
+              </article>
+            )}
+          />
         </GlowCard>
       ) : null}
 
