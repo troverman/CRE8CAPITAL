@@ -2,7 +2,7 @@ import { useMemo, useState } from 'react';
 import FlashList from '../components/FlashList';
 import GlowCard from '../components/GlowCard';
 import { fmtInt, fmtTime, severityClass } from '../lib/format';
-import { getDisplaySignals } from '../lib/signalView';
+import { buildSignalStrategyIndex, getDisplaySignals } from '../lib/signalView';
 import { Link } from '../lib/router';
 
 export default function SignalListPage({ snapshot }) {
@@ -30,6 +30,10 @@ export default function SignalListPage({ snapshot }) {
       );
     });
   }, [search, signals]);
+
+  const strategyIndexBySignal = useMemo(() => {
+    return buildSignalStrategyIndex(snapshot, signals, 4);
+  }, [signals, snapshot]);
 
   const emittedTotal = useMemo(() => {
     const summaryTotal = Number(snapshot?.signalSummary?.total);
@@ -66,29 +70,43 @@ export default function SignalListPage({ snapshot }) {
         <FlashList
           items={filtered}
           height={560}
-          itemHeight={94}
+          itemHeight={116}
           className="tick-flash-list signal-feed-list"
           emptyCopy="No signals matched your search."
           keyExtractor={(signal, index) => `${signal.id}:${index}`}
-          renderItem={(signal, index) => (
-            <Link to={`/signal/${encodeURIComponent(signal.id)}`} className="signal-feed-link">
+          renderItem={(signal, index) => {
+            const linkedStrategies = strategyIndexBySignal.get(String(signal.id || '')) || [];
+            return (
               <article className="signal-feed-row">
                 <div className="signal-feed-head">
                   <strong>
-                    {index + 1}. {signal.symbol || '-'} ({signal.assetClass || 'unknown'})
+                    <Link to={`/signal/${encodeURIComponent(signal.id)}`} className="inline-link">
+                      {index + 1}. {signal.symbol || '-'} ({signal.assetClass || 'unknown'})
+                    </Link>
                   </strong>
                   <span className={`severity ${severityClass(signal.severity)}`}>{signal.severity}</span>
                 </div>
                 <p>
                   {signal.type} | {signal.direction || 'neutral'} | score {fmtInt(signal.score)}
                 </p>
+                <div className="signal-feed-links">
+                  <Link to={`/signal/${encodeURIComponent(signal.id)}`} className="inline-link">
+                    open signal
+                  </Link>
+                  {linkedStrategies.map((strategy) => (
+                    <Link key={`signal-strategy:${signal.id}:${strategy.strategyKey}`} to={`/strategy/${encodeURIComponent(strategy.strategyId)}`} className="inline-link">
+                      strat:{strategy.strategyName}
+                    </Link>
+                  ))}
+                  {linkedStrategies.length === 0 ? <small>no linked strategy yet</small> : null}
+                </div>
                 <div className="item-meta">
                   <small>{signal.message || 'No signal message'}</small>
                   <small>{fmtTime(signal.timestamp)}</small>
                 </div>
               </article>
-            </Link>
-          )}
+            );
+          }}
         />
       </GlowCard>
     </section>

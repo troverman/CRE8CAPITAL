@@ -1,6 +1,6 @@
 import GlowCard from '../components/GlowCard';
 import { fmtInt, fmtNum, fmtTime, severityClass } from '../lib/format';
-import { findDisplaySignalById } from '../lib/signalView';
+import { findDisplaySignalById, getSignalLinkedStrategies } from '../lib/signalView';
 import { Link } from '../lib/router';
 
 export default function SignalDetailPage({ signalId, snapshot }) {
@@ -25,6 +25,8 @@ export default function SignalDetailPage({ signalId, snapshot }) {
       return String(decision.symbol || '').toUpperCase() === String(signal.symbol || '').toUpperCase() && String(decision.assetClass || '').toLowerCase() === String(signal.assetClass || '').toLowerCase();
     })
     .slice(0, 18);
+
+  const linkedStrategies = getSignalLinkedStrategies(snapshot, signal, 10);
 
   const relatedMarket = (snapshot.markets || []).find((market) => {
     return String(market.symbol || '').toUpperCase() === String(signal.symbol || '').toUpperCase() && String(market.assetClass || '').toLowerCase() === String(signal.assetClass || '').toLowerCase();
@@ -75,6 +77,32 @@ export default function SignalDetailPage({ signalId, snapshot }) {
           <h2>Signal Message</h2>
         </div>
         <p>{signal.message || 'No message provided.'}</p>
+      </GlowCard>
+
+      <GlowCard className="panel-card">
+        <div className="section-head">
+          <h2>Linked Strategies</h2>
+          <span>{linkedStrategies.length} linked</span>
+        </div>
+        <div className="list-stack">
+          {linkedStrategies.map((strategy) => (
+            <article key={`signal-linked-strategy:${strategy.strategyKey}`} className="list-item">
+              <strong>
+                <Link to={`/strategy/${encodeURIComponent(strategy.strategyId)}`} className="inline-link">
+                  {strategy.strategyName}
+                </Link>
+              </strong>
+              <p>
+                decisions {fmtInt(strategy.decisionCount)} | last action {strategy.lastAction}
+              </p>
+              <div className="item-meta">
+                <small>link score {fmtNum(strategy.linkScore, 2)}</small>
+                <small>{fmtTime(strategy.lastDecisionAt)}</small>
+              </div>
+            </article>
+          ))}
+          {linkedStrategies.length === 0 ? <p className="action-message">No linked strategy emitters detected for this signal yet.</p> : null}
+        </div>
       </GlowCard>
 
       <GlowCard className="panel-card">

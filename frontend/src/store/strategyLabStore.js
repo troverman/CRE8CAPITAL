@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import { createWalletState, executeWalletAction, evaluateStrategy, markWallet } from '../lib/strategyEngine';
+import { createWalletState, executeWalletAction, evaluateStrategy, markWallet, STRATEGY_OPTIONS } from '../lib/strategyEngine';
 import { useExecutionFeedStore } from './executionFeedStore';
 
 const MAX_RUNTIME_POINTS = 480;
@@ -8,6 +8,47 @@ const MAX_EVENTS = 280;
 const MAX_TRADES = 220;
 const MAX_WALLET_ACCOUNTS = 12;
 const MAIN_ACCOUNT_ID = 'paper-main';
+const STRATEGY_IDS = STRATEGY_OPTIONS.map((option) => String(option.id || '')).filter((id) => Boolean(id));
+const DEFAULT_PRIMARY_STRATEGY_ID = STRATEGY_IDS.includes('tensor-lite') ? 'tensor-lite' : STRATEGY_IDS[0] || 'tensor-lite';
+
+const sanitizeEnabledStrategyIds = (strategyIds, fallbackStrategyId = DEFAULT_PRIMARY_STRATEGY_ID) => {
+  const fallback = String(fallbackStrategyId || DEFAULT_PRIMARY_STRATEGY_ID);
+  const candidateIds = Array.isArray(strategyIds) ? strategyIds : [];
+  const deduped = [];
+  for (const rawId of candidateIds) {
+    const id = String(rawId || '');
+    if (!id || !STRATEGY_IDS.includes(id) || deduped.includes(id)) continue;
+    deduped.push(id);
+  }
+
+  if (!deduped.includes(fallback) && STRATEGY_IDS.includes(fallback)) {
+    deduped.unshift(fallback);
+  }
+
+  if (deduped.length === 0) {
+    const first = STRATEGY_IDS[0] || DEFAULT_PRIMARY_STRATEGY_ID;
+    return [first];
+  }
+  return deduped;
+};
+
+const buildSignalActionMap = (strategyIds, previous = null) => {
+  const previousMap = previous && typeof previous === 'object' ? previous : {};
+  const next = {};
+  for (const strategyId of sanitizeEnabledStrategyIds(strategyIds)) {
+    next[strategyId] = String(previousMap[strategyId] || 'hold');
+  }
+  return next;
+};
+
+const sameIdArray = (a = [], b = []) => {
+  if (!Array.isArray(a) || !Array.isArray(b)) return false;
+  if (a.length !== b.length) return false;
+  for (let index = 0; index < a.length; index += 1) {
+    if (String(a[index] || '') !== String(b[index] || '')) return false;
+  }
+  return true;
+};
 
 const trimTail = (list, maxLength) => {
   if (list.length <= maxLength) return list;
@@ -77,10 +118,14 @@ const createDefaultWalletAccounts = () => {
   ];
 };
 
+const defaultEnabledStrategies = sanitizeEnabledStrategyIds([DEFAULT_PRIMARY_STRATEGY_ID], DEFAULT_PRIMARY_STRATEGY_ID);
+const defaultSignalActionMap = buildSignalActionMap(defaultEnabledStrategies);
+
 const baseState = {
   running: true,
   sourceId: 'local-scenario',
-  strategyId: 'tensor-lite',
+  strategyId: DEFAULT_PRIMARY_STRATEGY_ID,
+  enabledStrategyIds: defaultEnabledStrategies,
   scenarioId: 'trend-rally',
   marketKey: '',
   intervalMs: 1200,
@@ -93,7 +138,8 @@ const baseState = {
   tradeLog: [],
   walletAccounts: createDefaultWalletAccounts(),
   activeWalletAccountId: MAIN_ACCOUNT_ID,
-  lastSignalAction: 'hold',
+  lastSignalAction: defaultSignalActionMap[DEFAULT_PRIMARY_STRATEGY_ID] || 'hold',
+  lastSignalActionByStrategy: defaultSignalActionMap,
   wallet: createWalletState(),
   backtest: null,
   stepSequence: 0
@@ -104,8 +150,22 @@ export const useStrategyLabStore = create((set) => ({
   setConfig: (patch) => {
     if (!patch || typeof patch !== 'object') return;
     set((state) => ({
-      ...state,
-      ...patch,
+      ...(() => {
+        const nextStrategyIdRaw = typeof patch.strategyId === 'string' ? patch.strategyId : state.strategyId;
+        const nextStrategyId = STRATEGY_IDS.includes(String(nextStrategyIdRaw || '')) ? String(nextStrategyIdRaw) : state.strategyId;
+        const patchEnabledIds = Array.isArray(patch.enabledStrategyIds) ? patch.enabledStrategyIds : state.enabledStrategyIds;
+        const nextEnabledStrategies = sanitizeEnabledStrategyIds(patchEnabledIds, nextStrategyId || state.strategyId || DEFAULT_PRIMARY_STRATEGY_ID);
+        const enabledStrategyIds = sameIdArray(nextEnabledStrategies, state.enabledStrategyIds) ? state.enabledStrategyIds : nextEnabledStrategies;
+        const lastSignalActionByStrategy = buildSignalActionMap(enabledStrategyIds, state.lastSignalActionByStrategy);
+        return {
+          ...state,
+          ...patch,
+          strategyId: nextStrategyId,
+          enabledStrategyIds,
+          lastSignalActionByStrategy,
+          lastSignalAction: lastSignalActionByStrategy[nextStrategyId] || state.lastSignalAction || 'hold'
+        };
+      })(),
       walletAccounts:
         typeof patch.maxAbsUnits === 'number' || typeof patch.slippageBps === 'number'
           ? state.walletAccounts.map((account) => ({
@@ -121,7 +181,10 @@ export const useStrategyLabStore = create((set) => ({
       ...baseState,
       walletAccounts: createDefaultWalletAccounts(),
       activeWalletAccountId: MAIN_ACCOUNT_ID,
-      wallet: createWalletState()
+      wallet: createWalletState(),
+      enabledStrategyIds: defaultEnabledStrategies,
+      lastSignalActionByStrategy: defaultSignalActionMap,
+      lastSignalAction: defaultSignalActionMap[baseState.strategyId] || 'hold'
     }),
   resetRuntime: ({ price, preserveBacktest = true } = {}) =>
     set((state) => {
@@ -139,6 +202,7 @@ export const useStrategyLabStore = create((set) => ({
         tradeLog: [],
         walletAccounts,
         lastSignalAction: 'hold',
+        lastSignalActionByStrategy: buildSignalActionMap(state.enabledStrategyIds),
         wallet,
         stepSequence: 0,
         backtest: preserveBacktest ? state.backtest : null
@@ -229,6 +293,67 @@ export const useStrategyLabStore = create((set) => ({
       activeWalletAccountId: '',
       wallet: createWalletState()
     })),
+  setEnabledStrategies: (strategyIds) =>
+    set((state) => {
+      const nextEnabledStrategies = sanitizeEnabledStrategyIds(strategyIds, state.strategyId || DEFAULT_PRIMARY_STRATEGY_ID);
+      const enabledStrategyIds = sameIdArray(nextEnabledStrategies, state.enabledStrategyIds) ? state.enabledStrategyIds : nextEnabledStrategies;
+      const strategyId = enabledStrategyIds.includes(state.strategyId) ? state.strategyId : enabledStrategyIds[0];
+      const lastSignalActionByStrategy = buildSignalActionMap(enabledStrategyIds, state.lastSignalActionByStrategy);
+      return {
+        ...state,
+        strategyId,
+        enabledStrategyIds,
+        lastSignalActionByStrategy,
+        lastSignalAction: lastSignalActionByStrategy[strategyId] || 'hold'
+      };
+    }),
+  toggleEnabledStrategy: (strategyId) =>
+    set((state) => {
+      const id = String(strategyId || '');
+      if (!id || !STRATEGY_IDS.includes(id)) return state;
+      const current = sanitizeEnabledStrategyIds(state.enabledStrategyIds, state.strategyId || DEFAULT_PRIMARY_STRATEGY_ID);
+      const hasId = current.includes(id);
+      const nextEnabled = hasId ? current.filter((item) => item !== id) : [...current, id];
+      const nextEnabledStrategies = sanitizeEnabledStrategyIds(nextEnabled, hasId ? state.strategyId : id);
+      const enabledStrategyIds = sameIdArray(nextEnabledStrategies, state.enabledStrategyIds) ? state.enabledStrategyIds : nextEnabledStrategies;
+      const nextStrategyId = enabledStrategyIds.includes(state.strategyId) ? state.strategyId : enabledStrategyIds[0];
+      const lastSignalActionByStrategy = buildSignalActionMap(enabledStrategyIds, state.lastSignalActionByStrategy);
+      return {
+        ...state,
+        strategyId: nextStrategyId,
+        enabledStrategyIds,
+        lastSignalActionByStrategy,
+        lastSignalAction: lastSignalActionByStrategy[nextStrategyId] || 'hold'
+      };
+    }),
+  enableAllStrategies: () =>
+    set((state) => {
+      const nextEnabledStrategies = sanitizeEnabledStrategyIds(STRATEGY_IDS, state.strategyId || DEFAULT_PRIMARY_STRATEGY_ID);
+      const enabledStrategyIds = sameIdArray(nextEnabledStrategies, state.enabledStrategyIds) ? state.enabledStrategyIds : nextEnabledStrategies;
+      const strategyId = enabledStrategyIds.includes(state.strategyId) ? state.strategyId : enabledStrategyIds[0];
+      const lastSignalActionByStrategy = buildSignalActionMap(enabledStrategyIds, state.lastSignalActionByStrategy);
+      return {
+        ...state,
+        strategyId,
+        enabledStrategyIds,
+        lastSignalActionByStrategy,
+        lastSignalAction: lastSignalActionByStrategy[strategyId] || 'hold'
+      };
+    }),
+  disableToPrimaryStrategy: () =>
+    set((state) => {
+      const strategyId = STRATEGY_IDS.includes(state.strategyId) ? state.strategyId : DEFAULT_PRIMARY_STRATEGY_ID;
+      const nextEnabledStrategies = sanitizeEnabledStrategyIds([strategyId], strategyId);
+      const enabledStrategyIds = sameIdArray(nextEnabledStrategies, state.enabledStrategyIds) ? state.enabledStrategyIds : nextEnabledStrategies;
+      const lastSignalActionByStrategy = buildSignalActionMap(enabledStrategyIds, state.lastSignalActionByStrategy);
+      return {
+        ...state,
+        strategyId,
+        enabledStrategyIds,
+        lastSignalActionByStrategy,
+        lastSignalAction: lastSignalActionByStrategy[strategyId] || 'hold'
+      };
+    }),
   setActiveWalletAccount: (accountId) =>
     set((state) => {
       const id = String(accountId || '');
@@ -265,12 +390,33 @@ export const useStrategyLabStore = create((set) => ({
         };
 
         const runtimeSeries = trimTail([...state.runtimeSeries, normalizedPoint], MAX_RUNTIME_POINTS);
-        const signal = evaluateStrategy({
-          strategyId: state.strategyId,
-          series: runtimeSeries,
-          signalRows,
-          selectedMarket
-        });
+        const normalizedEnabledStrategies = sanitizeEnabledStrategyIds(state.enabledStrategyIds, state.strategyId || DEFAULT_PRIMARY_STRATEGY_ID);
+        const enabledStrategyIds = sameIdArray(normalizedEnabledStrategies, state.enabledStrategyIds) ? state.enabledStrategyIds : normalizedEnabledStrategies;
+        const strategySignals = enabledStrategyIds.map((strategyId) => ({
+          strategyId,
+          ...evaluateStrategy({
+            strategyId,
+            series: runtimeSeries,
+            signalRows,
+            selectedMarket
+          })
+        }));
+        const primarySignal =
+          strategySignals.find((signal) => signal.strategyId === state.strategyId) ||
+          strategySignals[0] || {
+            strategyId: state.strategyId || DEFAULT_PRIMARY_STRATEGY_ID,
+            action: 'hold',
+            score: 0,
+            stance: 'neutral',
+            reason: 'No strategy enabled',
+            signalCount: 0,
+            triggerKind: 'price'
+          };
+        const activeSignals = strategySignals.filter((signal) => signal.action !== 'hold');
+        const executionSignal =
+          activeSignals.length > 0
+            ? activeSignals.reduce((best, current) => (Math.abs(Number(current.score) || 0) > Math.abs(Number(best.score) || 0) ? current : best), activeSignals[0])
+            : primarySignal;
 
         const accountTrades = [];
         const walletAccounts = state.walletAccounts.map((account, accountIndex) => {
@@ -285,11 +431,11 @@ export const useStrategyLabStore = create((set) => ({
           const slippageBps = clamp(toNum(account.slippageBps, state.slippageBps), 0, 60);
           const execution = executeWalletAction({
             wallet: account.wallet,
-            action: signal.action,
+            action: executionSignal.action,
             point: normalizedPoint,
             timestamp: timestamp + accountIndex,
-            reason: signal.reason,
-            score: signal.score,
+            reason: executionSignal.reason,
+            score: executionSignal.score,
             maxAbsUnits,
             cooldownMs: state.cooldownMs,
             slippageBps
@@ -301,7 +447,7 @@ export const useStrategyLabStore = create((set) => ({
               ...execution.trade,
               accountId: account.id,
               accountName: account.name,
-              strategyId: state.strategyId,
+              strategyId: executionSignal.strategyId,
               sourceId: sourceLabel || state.sourceId,
               marketKey: selectedMarket?.key || '',
               symbol: selectedMarket?.symbol || '',
@@ -311,9 +457,9 @@ export const useStrategyLabStore = create((set) => ({
             emitPayloads.push({
               trade,
               wallet: nextWallet,
-              signal,
+              signal: executionSignal,
               point: normalizedPoint,
-              strategyId: state.strategyId,
+              strategyId: executionSignal.strategyId,
               sourceId: sourceLabel || state.sourceId,
               market: selectedMarket
                 ? {
@@ -342,8 +488,13 @@ export const useStrategyLabStore = create((set) => ({
         const primaryWallet = activeWallet ? activeWallet.wallet : createWalletState();
 
         const runtimeEquity = trimTail([...state.runtimeEquity, primaryWallet.equity], MAX_EQUITY_POINTS);
-        const changedSignal = signal.action !== state.lastSignalAction;
-        const shouldEmitEvent = forceEvent || changedSignal || accountTrades.length > 0;
+        const previousSignalMap = state.lastSignalActionByStrategy && typeof state.lastSignalActionByStrategy === 'object' ? state.lastSignalActionByStrategy : {};
+        const changedStrategies = strategySignals.filter((signal) => signal.action !== String(previousSignalMap[signal.strategyId] || 'hold'));
+        const shouldEmitEvent = forceEvent || changedStrategies.length > 0 || accountTrades.length > 0;
+        const nextSignalActionMap = buildSignalActionMap(enabledStrategyIds, previousSignalMap);
+        for (const signal of strategySignals) {
+          nextSignalActionMap[signal.strategyId] = signal.action;
+        }
 
         const eventLog = shouldEmitEvent
           ? trimHead(
@@ -351,17 +502,20 @@ export const useStrategyLabStore = create((set) => ({
                 {
                   id: `event:${timestamp}:${stepSequence}`,
                   timestamp,
-                  action: signal.action,
-                  stance: signal.stance,
-                  score: signal.score,
-                  reason: signal.reason,
+                  action: executionSignal.action,
+                  stance: executionSignal.stance,
+                  score: executionSignal.score,
+                  reason: executionSignal.reason,
                   price: normalizedPoint.price,
                   spread: normalizedPoint.spread,
                   source: sourceLabel || state.sourceId,
                   traded: accountTrades.length > 0,
                   tradedAccounts: accountTrades.map((trade) => trade.accountName),
-                  signalCount: Number(signal.signalCount) || 0,
-                  triggerKind: signal.triggerKind || 'price'
+                  signalCount: Number(executionSignal.signalCount) || 0,
+                  triggerKind: executionSignal.triggerKind || 'price',
+                  strategyId: executionSignal.strategyId,
+                  enabledStrategies: enabledStrategyIds,
+                  changedStrategies: changedStrategies.map((signal) => signal.strategyId)
                 },
                 ...state.eventLog
               ],
@@ -372,6 +526,8 @@ export const useStrategyLabStore = create((set) => ({
         const tradeLog =
           accountTrades.length > 0 ? trimHead([...accountTrades.sort((a, b) => b.timestamp - a.timestamp), ...state.tradeLog], MAX_TRADES) : state.tradeLog;
 
+        const nextStrategyId = enabledStrategyIds.includes(state.strategyId) ? state.strategyId : enabledStrategyIds[0];
+
         return {
           ...state,
           runtimeSeries,
@@ -380,7 +536,10 @@ export const useStrategyLabStore = create((set) => ({
           tradeLog,
           walletAccounts,
           wallet: primaryWallet,
-          lastSignalAction: signal.action,
+          strategyId: nextStrategyId,
+          enabledStrategyIds,
+          lastSignalActionByStrategy: nextSignalActionMap,
+          lastSignalAction: nextSignalActionMap[nextStrategyId] || executionSignal.action || 'hold',
           stepSequence
         };
       });

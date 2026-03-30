@@ -51,6 +51,7 @@ export default function useStrategyLab({ snapshot, historyByMarket }) {
   const running = useStrategyLabStore((state) => state.running);
   const sourceId = useStrategyLabStore((state) => state.sourceId);
   const strategyId = useStrategyLabStore((state) => state.strategyId);
+  const enabledStrategyIds = useStrategyLabStore((state) => state.enabledStrategyIds);
   const scenarioId = useStrategyLabStore((state) => state.scenarioId);
   const marketKey = useStrategyLabStore((state) => state.marketKey);
   const intervalMs = useStrategyLabStore((state) => state.intervalMs);
@@ -71,6 +72,10 @@ export default function useStrategyLab({ snapshot, historyByMarket }) {
   const updateWalletAccount = useStrategyLabStore((state) => state.updateWalletAccount);
   const removeWalletAccount = useStrategyLabStore((state) => state.removeWalletAccount);
   const clearWalletAccounts = useStrategyLabStore((state) => state.clearWalletAccounts);
+  const setEnabledStrategies = useStrategyLabStore((state) => state.setEnabledStrategies);
+  const toggleEnabledStrategy = useStrategyLabStore((state) => state.toggleEnabledStrategy);
+  const enableAllStrategies = useStrategyLabStore((state) => state.enableAllStrategies);
+  const disableToPrimaryStrategy = useStrategyLabStore((state) => state.disableToPrimaryStrategy);
   const setActiveWalletAccount = useStrategyLabStore((state) => state.setActiveWalletAccount);
   const stepRuntime = useStrategyLabStore((state) => state.stepRuntime);
   const resetRuntime = useStrategyLabStore((state) => state.resetRuntime);
@@ -134,7 +139,7 @@ export default function useStrategyLab({ snapshot, historyByMarket }) {
   useEffect(() => {
     cursorRef.current = 0;
     resetRuntime({ price: basePrice, preserveBacktest: true });
-  }, [resetRuntime, scenarioId, selectedMarket?.key, sourceId, strategyId]);
+  }, [resetRuntime, scenarioId, selectedMarket?.key, sourceId, strategyId, enabledStrategyIds]);
 
   const buildMarketFeedPoint = useCallback(() => {
     const now = Date.now();
@@ -306,8 +311,27 @@ export default function useStrategyLab({ snapshot, historyByMarket }) {
       setConfig({
         strategyId: nextStrategyId
       });
+      const state = useStrategyLabStore.getState();
+      const existing = Array.isArray(state.enabledStrategyIds) ? state.enabledStrategyIds : [];
+      if (!existing.includes(nextStrategyId)) {
+        setEnabledStrategies([...existing, nextStrategyId]);
+      }
     },
-    [setConfig]
+    [setConfig, setEnabledStrategies]
+  );
+
+  const changeEnabledStrategies = useCallback(
+    (nextEnabledIds) => {
+      setEnabledStrategies(nextEnabledIds);
+    },
+    [setEnabledStrategies]
+  );
+
+  const toggleStrategyEnabled = useCallback(
+    (strategyToggleId) => {
+      toggleEnabledStrategy(strategyToggleId);
+    },
+    [toggleEnabledStrategy]
   );
 
   const changeScenario = useCallback(
@@ -362,6 +386,7 @@ export default function useStrategyLab({ snapshot, historyByMarket }) {
     running,
     sourceId,
     strategyId,
+    enabledStrategyIds,
     scenarioId,
     marketKey: selectedMarket?.key || '',
     intervalMs: clampInterval(intervalMs),
@@ -388,6 +413,10 @@ export default function useStrategyLab({ snapshot, historyByMarket }) {
     updateInterval,
     changeSource,
     changeStrategy,
+    changeEnabledStrategies,
+    toggleStrategyEnabled,
+    enableAllStrategies,
+    disableToPrimaryStrategy,
     changeScenario,
     changeMarket,
     changeRisk,

@@ -18,6 +18,7 @@ import DecisionDetailPage from './pages/DecisionDetailPage';
 import SignalDetailPage from './pages/SignalDetailPage';
 import SignalListPage from './pages/SignalListPage';
 import KnowledgePage from './pages/KnowledgePage';
+import OtherPage from './pages/OtherPage';
 import ProbabilityLabPage from './pages/ProbabilityLabPage';
 import ProviderDetailPage from './pages/ProviderDetailPage';
 import ProviderListPage from './pages/ProviderListPage';
@@ -37,6 +38,7 @@ const parseRoute = (pathname) => {
   if (routePath === '/derivatives' || routePath === '/deriv') return { name: 'derivatives' };
   if (routePath === '/graph') return { name: 'graph' };
   if (routePath === '/knowledge') return { name: 'knowledge' };
+  if (routePath === '/other') return { name: 'other' };
   if (routePath === '/providers') return { name: 'providers' };
   if (routePath === '/signals') return { name: 'signals' };
   if (routePath === '/decisions') return { name: 'decisions' };
@@ -90,7 +92,7 @@ const NotFoundPage = () => {
       <GlowCard className="detail-card">
         <h1>Route not found</h1>
         <p>
-          Try `/markets`, `/assets`, `/derivatives`, `/knowledge`, `/providers`, `/signals`, `/decisions`, `/probability`, `/strategies`, `/graph`, `/strategy`, `/account`, `/wallet`,
+          Try `/markets`, `/assets`, `/other`, `/derivatives`, `/knowledge`, `/providers`, `/signals`, `/decisions`, `/probability`, `/strategies`, `/graph`, `/strategy`, `/account`, `/wallet`,
           `/signal/:id`, `/decision/:id`, `/strategy/:id`, `/wallet/:id`, or `/provider/:id`.
         </p>
       </GlowCard>
@@ -166,6 +168,8 @@ export default function App() {
       {route.name === 'derivatives' ? <DerivativesPage snapshot={snapshot} /> : null}
 
       {route.name === 'knowledge' ? <KnowledgePage snapshot={snapshot} /> : null}
+
+      {route.name === 'other' ? <OtherPage snapshot={snapshot} /> : null}
 
       {route.name === 'providers' ? <ProviderListPage snapshot={snapshot} /> : null}
 

@@ -440,6 +440,37 @@ a {
   gap: 0.42rem;
 }
 
+.strategy-enabled-grid {
+  display: grid;
+  gap: 0.36rem;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  max-height: 214px;
+  overflow: auto;
+  padding-right: 0.1rem;
+}
+
+.strategy-toggle-chip {
+  border: 1px solid rgba(122, 141, 206, 0.28);
+  border-radius: 11px;
+  background: rgba(8, 12, 24, 0.76);
+  padding: 0.34rem 0.42rem;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.38rem;
+  font-size: 0.7rem;
+  color: var(--ink-soft);
+}
+
+.strategy-toggle-chip input {
+  margin: 0;
+}
+
+.strategy-toggle-chip.active {
+  border-color: rgba(100, 212, 255, 0.58);
+  color: #e9f5ff;
+  box-shadow: inset 0 0 0 1px rgba(100, 212, 255, 0.18);
+}
+
 .strategy-lab-mini-grid {
   display: grid;
   gap: 0.45rem;
@@ -621,6 +652,43 @@ a {
   display: grid;
   gap: 0.55rem;
   grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.other-grid {
+  display: grid;
+  gap: 0.55rem;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.other-link-card {
+  display: block;
+  color: inherit;
+}
+
+.other-card {
+  display: grid;
+  gap: 0.38rem;
+  min-height: 152px;
+}
+
+.other-card strong {
+  font-size: 0.85rem;
+}
+
+.other-card span {
+  font-size: 0.66rem;
+  color: var(--ink-soft);
+}
+
+.other-card p {
+  font-size: 0.71rem;
+  line-height: 1.35;
+  color: var(--ink-soft);
+}
+
+.other-card small {
+  font-size: 0.65rem;
+  color: var(--ink-soft);
 }
 
 .market-card-link,
@@ -1644,6 +1712,18 @@ th {
   line-height: 1.35;
 }
 
+.signal-feed-links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.42rem;
+  align-items: center;
+}
+
+.signal-feed-links small {
+  color: var(--ink-soft);
+  font-size: 0.66rem;
+}
+
 .decision-feed-list {
   box-shadow: inset 0 0 0 1px rgba(127, 133, 255, 0.09);
 }
@@ -2080,7 +2160,8 @@ th {
   .market-grid,
   .asset-grid,
   .signal-grid,
-  .strategy-grid {
+  .strategy-grid,
+  .other-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
@@ -2127,6 +2208,10 @@ th {
   .strategy-control-grid,
   .strategy-risk-grid,
   .pdf-solver-control-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .strategy-enabled-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
@@ -2197,7 +2282,8 @@ th {
   .market-grid,
   .asset-grid,
   .signal-grid,
-  .strategy-grid {
+  .strategy-grid,
+  .other-grid {
     grid-template-columns: 1fr;
   }
 
@@ -2208,6 +2294,10 @@ th {
   .strategy-control-grid,
   .strategy-risk-grid,
   .pdf-solver-control-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .strategy-enabled-grid {
     grid-template-columns: 1fr;
   }
 

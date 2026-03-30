@@ -83,9 +83,11 @@ const findNearestPointIndexByTime = (rows, targetTime) => {
 };
 
 const STRATEGY_LAB_TABS = [
-  { id: 'overview', label: 'Overview' },
+  { id: 'runtime', label: 'Runtime' },
   { id: 'accounts', label: 'Accounts' },
-  { id: 'strategy', label: 'Strategy' }
+  { id: 'strategy', label: 'Strategy' },
+  { id: 'solver', label: 'Solver' },
+  { id: 'backtest', label: 'Backtest' }
 ];
 
 const normalizeSeriesToPct = (series = []) => {
@@ -116,6 +118,7 @@ export default function StrategyLabPage({ snapshot, historyByMarket }) {
     running,
     sourceId,
     strategyId,
+    enabledStrategyIds,
     scenarioId,
     intervalMs,
     maxAbsUnits,
@@ -139,6 +142,10 @@ export default function StrategyLabPage({ snapshot, historyByMarket }) {
     updateInterval,
     changeSource,
     changeStrategy,
+    changeEnabledStrategies,
+    toggleStrategyEnabled,
+    enableAllStrategies,
+    disableToPrimaryStrategy,
     changeScenario,
     changeMarket,
     changeRisk,
@@ -216,9 +223,10 @@ export default function StrategyLabPage({ snapshot, historyByMarket }) {
   const [solverPortfolio, setSolverPortfolio] = useState(() => createPdfPortfolioState({ startCash: 100000 }));
   const [solverOrderLog, setSolverOrderLog] = useState([]);
   const [tensorHistory, setTensorHistory] = useState([]);
-  const [labView, setLabView] = useState('overview');
+  const [labView, setLabView] = useState('runtime');
   const [drilldownAccountId, setDrilldownAccountId] = useState('');
   const tensorHistoryRef = useRef('');
+  const enabledStrategySet = useMemo(() => new Set(enabledStrategyIds), [enabledStrategyIds]);
 
   const selectionModel = useMemo(() => {
     return buildStrategyLabSelectionModel({
@@ -252,6 +260,10 @@ export default function StrategyLabPage({ snapshot, historyByMarket }) {
   const runtimeStrategyDetail = useMemo(() => {
     return getStrategyImplementationDetail(strategyId);
   }, [strategyId]);
+
+  const selectedStrategyEventRows = useMemo(() => {
+    return eventLog.filter((event) => String(event?.strategyId || '') === String(strategyId || ''));
+  }, [eventLog, strategyId]);
 
   useEffect(() => {
     if (resolvedDrilldownAccountId !== drilldownAccountId) {
@@ -585,7 +597,9 @@ export default function StrategyLabPage({ snapshot, historyByMarket }) {
         <GlowCard className="panel-card strategy-lab-control-card">
           <div className="section-head">
             <h2>Control Deck</h2>
-            <span>{strategyLabel}</span>
+            <span>
+              {strategyLabel} | {fmtInt(enabledStrategyIds.length)} enabled
+            </span>
           </div>
 
           <div className="strategy-control-grid">
@@ -633,6 +647,40 @@ export default function StrategyLabPage({ snapshot, historyByMarket }) {
               </select>
             </label>
           </div>
+
+          <div className="section-head">
+            <h2>Multi Strategy Runtime</h2>
+            <span>{fmtInt(enabledStrategyIds.length)} active</span>
+          </div>
+          <div className="section-actions">
+            <button type="button" className="btn secondary" onClick={enableAllStrategies}>
+              Enable All
+            </button>
+            <button type="button" className="btn secondary" onClick={disableToPrimaryStrategy}>
+              Primary Only
+            </button>
+            <button
+              type="button"
+              className="btn secondary"
+              onClick={() => changeEnabledStrategies(strategyOptions.slice(0, 3).map((option) => option.id))}
+            >
+              Top 3 Preset
+            </button>
+          </div>
+          <div className="strategy-enabled-grid">
+            {strategyOptions.map((option) => {
+              const checked = enabledStrategySet.has(option.id);
+              return (
+                <label key={`strategy-enabled:${option.id}`} className={checked ? 'strategy-toggle-chip active' : 'strategy-toggle-chip'}>
+                  <input type="checkbox" checked={checked} onChange={() => toggleStrategyEnabled(option.id)} />
+                  <span>{option.label}</span>
+                </label>
+              );
+            })}
+          </div>
+          <p className="socket-status-copy">
+            Runtime evaluates all enabled strategies each tick, then executes the strongest non-hold score across the enabled set.
+          </p>
 
           <div className="strategy-risk-grid">
             <label className="control-field">
@@ -742,7 +790,8 @@ export default function StrategyLabPage({ snapshot, historyByMarket }) {
             {fmtInt(signalRows.length)}
           </p>
           <p className="socket-status-copy">
-            active execution account {activeExecutionAccount?.name || '-'} | drilldown account {selectedDrillAccount?.name || '-'} | selected strategy {strategyLabel}
+            active execution account {activeExecutionAccount?.name || '-'} | drilldown account {selectedDrillAccount?.name || '-'} | selected strategy {strategyLabel} |
+            enabled set {fmtInt(enabledStrategyIds.length)}
           </p>
         </GlowCard>
       </div>
@@ -769,11 +818,11 @@ export default function StrategyLabPage({ snapshot, historyByMarket }) {
           ))}
         </div>
 
-        {labView === 'overview' ? (
+        {labView === 'runtime' ? (
           <div className="strategy-drill-grid">
             <article className="strategy-drill-card">
               <LineChart
-                title={`Overview Combo (${selectedMarket?.symbol || 'SIM'})`}
+                title={`Runtime Combo (${selectedMarket?.symbol || 'SIM'})`}
                 points={overviewComboBaseSeries}
                 stroke="#86cbff"
                 fillFrom="rgba(125, 198, 255, 0.3)"
@@ -784,7 +833,7 @@ export default function StrategyLabPage({ snapshot, historyByMarket }) {
             </article>
             <article className="strategy-drill-card">
               <div className="section-head">
-                <h2>Overview Drilldown</h2>
+                <h2>Runtime Drilldown</h2>
                 <span>{fmtInt(walletAccounts.length)} accounts</span>
               </div>
               <div className="strategy-drill-controls">
@@ -1024,7 +1073,7 @@ export default function StrategyLabPage({ snapshot, historyByMarket }) {
                 <div className="strategy-lab-mini-grid">
                   <article className="strategy-lab-mini-stat">
                     <span>Runtime Trigger Events</span>
-                    <strong>{fmtInt(eventLog.length)}</strong>
+                    <strong>{fmtInt(selectedStrategyEventRows.length)}</strong>
                   </article>
                   <article className="strategy-lab-mini-stat">
                     <span>Strategy Trades</span>
@@ -1053,10 +1102,10 @@ export default function StrategyLabPage({ snapshot, historyByMarket }) {
               <article className="strategy-drill-card">
                 <div className="section-head">
                   <h2>Strategy Trigger Tape</h2>
-                  <span>{fmtInt(eventLog.length)} rows</span>
+                  <span>{fmtInt(selectedStrategyEventRows.length)} rows</span>
                 </div>
                 <FlashList
-                  items={eventLog}
+                  items={selectedStrategyEventRows}
                   height={320}
                   itemHeight={74}
                   className="tick-flash-list"
@@ -1069,7 +1118,7 @@ export default function StrategyLabPage({ snapshot, historyByMarket }) {
                       </strong>
                       <p>{item.reason}</p>
                       <small>
-                        {item.triggerKind} | score {fmtNum(item.score, 2)} | px {fmtNum(item.price, 4)} | {fmtTime(item.timestamp)}
+                        {item.triggerKind} | {item.strategyId || '-'} | score {fmtNum(item.score, 2)} | px {fmtNum(item.price, 4)} | {fmtTime(item.timestamp)}
                       </small>
                     </article>
                   )}
@@ -1134,6 +1183,8 @@ export default function StrategyLabPage({ snapshot, historyByMarket }) {
         ) : null}
       </GlowCard>
 
+      {labView === 'solver' ? (
+        <>
       <GlowCard className="panel-card">
         <div className="section-head">
           <h2>PDF Portfolio Solver</h2>
@@ -1445,7 +1496,11 @@ export default function StrategyLabPage({ snapshot, historyByMarket }) {
           </div>
         </GlowCard>
       </div>
+        </>
+      ) : null}
 
+      {labView === 'runtime' ? (
+        <>
       <GlowCard className="panel-card">
         <div className="section-head">
           <h2>Signal Set -> Strategy</h2>
@@ -1535,7 +1590,7 @@ export default function StrategyLabPage({ snapshot, historyByMarket }) {
                 </strong>
                 <p>{item.reason}</p>
                 <small>
-                  {item.triggerKind} | sigs {fmtInt(item.signalCount)} | score {fmtNum(item.score, 2)} | px {fmtNum(item.price, 4)} | spr{' '}
+                  {item.triggerKind} | strat {item.strategyId || '-'} | sigs {fmtInt(item.signalCount)} | score {fmtNum(item.score, 2)} | px {fmtNum(item.price, 4)} | spr{' '}
                   {fmtNum(item.spread, 2)} bps | {item.tradedAccounts?.length ? `fills ${item.tradedAccounts.join(', ')}` : 'no fills'} | {fmtTime(item.timestamp)}
                 </small>
               </article>
@@ -1562,7 +1617,7 @@ export default function StrategyLabPage({ snapshot, historyByMarket }) {
                 </strong>
                 <p>{trade.reason}</p>
                 <small>
-                  units {fmtNum(trade.unitsAfter, 0)} | realized {fmtNum(trade.realizedDelta, 2)} | spread {fmtNum(trade.spreadBps, 2)} bps |{' '}
+                  {trade.strategyId || '-'} | units {fmtNum(trade.unitsAfter, 0)} | realized {fmtNum(trade.realizedDelta, 2)} | spread {fmtNum(trade.spreadBps, 2)} bps |{' '}
                   {fmtTime(trade.timestamp)}
                 </small>
               </article>
@@ -1623,7 +1678,7 @@ export default function StrategyLabPage({ snapshot, historyByMarket }) {
                 </strong>
                 <p>{event.reason || 'position update'}</p>
                 <small>
-                  eq {fmtNum(event.wallet.equity, 2)} | cash {fmtNum(event.wallet.cash, 2)} | mark {fmtNum(event.wallet.markPrice, 4)} | notional{' '}
+                  {event.strategyId || '-'} | eq {fmtNum(event.wallet.equity, 2)} | cash {fmtNum(event.wallet.cash, 2)} | mark {fmtNum(event.wallet.markPrice, 4)} | notional{' '}
                   {fmtNum(event.wallet.positionNotional, 2)} | {fmtTime(event.timestamp)}
                 </small>
               </article>
@@ -1631,7 +1686,11 @@ export default function StrategyLabPage({ snapshot, historyByMarket }) {
           />
         </GlowCard>
       </div>
+        </>
+      ) : null}
 
+      {labView === 'backtest' ? (
+        <>
       <GlowCard className="panel-card">
         <div className="section-head">
           <h2>Backtest Snapshot</h2>
@@ -1698,6 +1757,8 @@ export default function StrategyLabPage({ snapshot, historyByMarket }) {
           />
         </GlowCard>
       </div>
+        </>
+      ) : null}
     </section>
   );
 }

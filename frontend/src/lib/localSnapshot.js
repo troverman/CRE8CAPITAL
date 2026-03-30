@@ -1,3 +1,5 @@
+import { STRATEGY_OPTIONS } from './strategyEngine';
+
 const clamp = (value, min, max) => Math.min(max, Math.max(min, value));
 
 const toNum = (value, fallback = 0) => {
@@ -6,6 +8,46 @@ const toNum = (value, fallback = 0) => {
 };
 
 const randomBetween = (min, max) => min + Math.random() * (max - min);
+
+const deriveFallbackAction = ({ strategyId, changePct, spreadBps, volatility }) => {
+  const id = String(strategyId || '').toLowerCase();
+  const direction = changePct >= 0 ? 1 : -1;
+  let bias = direction;
+
+  if (id.includes('reversion') || id.includes('fade') || id.includes('arb') || id.includes('carry')) {
+    bias = -direction;
+  }
+
+  const lowImpulse = Math.abs(changePct) < 0.12;
+  const mediumImpulse = Math.abs(changePct) < 0.24;
+  const spreadHeavy = spreadBps > 19;
+  const highVolatility = volatility > 0.012;
+
+  if (id.includes('signal-consensus') || id.includes('signal-cluster')) {
+    if (mediumImpulse || spreadHeavy) bias = 0;
+  }
+  if (id.includes('signal-single')) {
+    if (lowImpulse) bias = 0;
+  }
+  if (id.includes('drift-guard')) {
+    if (mediumImpulse || spreadHeavy || highVolatility) bias = 0;
+  }
+  if (id.includes('breakout')) {
+    if (mediumImpulse) bias = 0;
+  }
+  if (id.includes('micro-scalp')) {
+    if (spreadBps > 14) bias = 0;
+  }
+
+  if (bias > 0) return 'accumulate';
+  if (bias < 0) return 'reduce';
+  return 'hold';
+};
+
+const buildFallbackReason = ({ strategyLabel, action, market }) => {
+  const directionCopy = action === 'accumulate' ? 'upside' : action === 'reduce' ? 'downside' : 'neutral';
+  return `Local ${strategyLabel} model found ${directionCopy} setup on ${market.symbol} (${market.assetClass}).`;
+};
 
 const cryptoProviders = [
   { id: 'binance', name: 'Binance Socket', venue: 'BINANCE' },
@@ -471,6 +513,7 @@ export const buildLocalFallbackSnapshot = (previousSnapshot) => {
       referencePrice,
       changePct,
       spreadBps,
+      volatility: toNum(seed.volatility, 0),
       totalVolume,
       providerCount: providers.length,
       venueCount: new Set(providers.map((provider) => provider.venue)).size,
@@ -523,17 +566,35 @@ export const buildLocalFallbackSnapshot = (previousSnapshot) => {
     };
   });
 
-  const decisions = signalMarkets.slice(0, 10).map((market, index) => {
+  const strategyOffset = Math.floor(now / 3000) % Math.max(1, STRATEGY_OPTIONS.length);
+  const rotatedStrategies = STRATEGY_OPTIONS.map((_, index) => STRATEGY_OPTIONS[(strategyOffset + index) % STRATEGY_OPTIONS.length]);
+
+  const decisions = rotatedStrategies.map((strategy, index) => {
+    const market = signalMarkets[index % Math.max(1, signalMarkets.length)] || markets[index % Math.max(1, markets.length)];
+    const action = deriveFallbackAction({
+      strategyId: strategy.id,
+      changePct: toNum(market?.changePct, 0),
+      spreadBps: toNum(market?.spreadBps, 0),
+      volatility: toNum(market?.volatility, 0)
+    });
+    const changeAbs = Math.abs(toNum(market?.changePct, 0));
+    const scoreBase = action === 'hold' ? changeAbs * 62 : changeAbs * 88;
+    const score = Math.round(clamp(scoreBase + randomBetween(7, 19), 8, 99));
+
     return {
-      id: `local-decision:${market.key}:${now}:${index}`,
-      strategyName: 'fallback-momentum',
-      action: market.changePct >= 0 ? 'accumulate' : 'reduce',
-      reason: `Local fallback signal ${market.changePct >= 0 ? 'upside' : 'downside'} drift on ${market.symbol}.`,
-      trigger: 'local-snapshot',
-      score: Math.round(clamp(Math.abs(market.changePct) * 90, 15, 98)),
-      symbol: market.symbol,
-      assetClass: market.assetClass,
-      timestamp: now - index * 20000
+      id: `local-decision:${strategy.id}:${market?.key || 'market'}:${now}:${index}`,
+      strategyName: strategy.id,
+      action,
+      reason: buildFallbackReason({
+        strategyLabel: strategy.label || strategy.id,
+        action,
+        market: market || { symbol: 'UNKNOWN', assetClass: 'unknown' }
+      }),
+      trigger: 'local-strategy-sim',
+      score,
+      symbol: market?.symbol || 'UNKNOWN',
+      assetClass: market?.assetClass || 'unknown',
+      timestamp: now - index * 2600
     };
   });
 
@@ -566,13 +627,12 @@ export const buildLocalFallbackSnapshot = (previousSnapshot) => {
       total: nextSignalTotal,
       lastFiveMinutes: signals.length
     },
-    strategies: [
-      {
-        id: 'fallback-momentum',
-        name: 'fallback-momentum',
-        enabled: true
-      }
-    ],
+    strategies: STRATEGY_OPTIONS.map((strategy) => ({
+      id: strategy.id,
+      name: strategy.label || strategy.id,
+      description: strategy.description || '',
+      enabled: true
+    })),
     strategySummary: {
       totalDecisions: nextDecisionTotal
     },
