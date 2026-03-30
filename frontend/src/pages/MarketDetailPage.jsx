@@ -464,7 +464,10 @@ export default function MarketDetailPage({ marketId, snapshot, historyByMarket, 
             {signals.map((signal) => (
               <article key={signal.id} className="list-item">
                 <strong>
-                  {signal.type} | {signal.direction}
+                  <Link to={`/signal/${encodeURIComponent(signal.id)}`} className="inline-link">
+                    {signal.type}
+                  </Link>{' '}
+                  | {signal.direction}
                 </strong>
                 <p>{signal.message}</p>
                 <div className="item-meta">
@@ -487,7 +490,10 @@ export default function MarketDetailPage({ marketId, snapshot, historyByMarket, 
           {decisions.map((decision) => (
             <article key={decision.id} className="list-item">
               <strong>
-                {decision.strategyName} - {decision.action}
+                <Link to={`/strategy/${encodeURIComponent(decision.strategyName || 'unknown')}`} className="inline-link">
+                  {decision.strategyName || 'unknown'}
+                </Link>{' '}
+                - {decision.action}
               </strong>
               <p>{decision.reason}</p>
               <div className="item-meta">

@@ -11,7 +11,11 @@ import HomePage from './pages/HomePage';
 import GraphPage from './pages/GraphPage';
 import MarketDetailPage from './pages/MarketDetailPage';
 import MarketListPage from './pages/MarketListPage';
+import SignalDetailPage from './pages/SignalDetailPage';
+import SignalListPage from './pages/SignalListPage';
 import StrategyLabPage from './pages/StrategyLabPage';
+import StrategyDetailPage from './pages/StrategyDetailPage';
+import StrategyListPage from './pages/StrategyListPage';
 
 const parseRoute = (pathname) => {
   const cleanPath = pathname && pathname !== '/' ? pathname.replace(/\/+$/, '') : pathname;
@@ -21,6 +25,8 @@ const parseRoute = (pathname) => {
   if (routePath === '/markets') return { name: 'markets' };
   if (routePath === '/assets') return { name: 'assets' };
   if (routePath === '/graph') return { name: 'graph' };
+  if (routePath === '/signals') return { name: 'signals' };
+  if (routePath === '/strategies') return { name: 'strategies' };
   if (routePath === '/strategy') return { name: 'strategy' };
 
   const marketMatch = routePath.match(/^\/market\/(.+)$/);
@@ -33,6 +39,16 @@ const parseRoute = (pathname) => {
     return { name: 'asset', id: decodeURIComponent(assetMatch[1]) };
   }
 
+  const signalMatch = routePath.match(/^\/signal\/(.+)$/);
+  if (signalMatch) {
+    return { name: 'signal', id: decodeURIComponent(signalMatch[1]) };
+  }
+
+  const strategyDetailMatch = routePath.match(/^\/strategy\/(.+)$/);
+  if (strategyDetailMatch) {
+    return { name: 'strategy-detail', id: decodeURIComponent(strategyDetailMatch[1]) };
+  }
+
   return { name: 'not-found' };
 };
 
@@ -41,7 +57,7 @@ const NotFoundPage = () => {
     <section className="page-grid">
       <GlowCard className="detail-card">
         <h1>Route not found</h1>
-        <p>Try `/markets`, `/market/:id`, `/assets`, `/asset/:id`, `/graph`, or `/strategy`.</p>
+        <p>Try `/markets`, `/assets`, `/signals`, `/strategies`, `/graph`, `/strategy`, `/signal/:id`, or `/strategy/:id`.</p>
       </GlowCard>
     </section>
   );
@@ -111,6 +127,14 @@ export default function App() {
       {route.name === 'assets' ? <AssetListPage markets={snapshot.markets} /> : null}
 
       {route.name === 'asset' ? <AssetDetailPage assetId={route.id} markets={snapshot.markets} historyByMarket={historyByMarket} /> : null}
+
+      {route.name === 'signals' ? <SignalListPage snapshot={snapshot} /> : null}
+
+      {route.name === 'signal' ? <SignalDetailPage signalId={route.id} snapshot={snapshot} /> : null}
+
+      {route.name === 'strategies' ? <StrategyListPage snapshot={snapshot} /> : null}
+
+      {route.name === 'strategy-detail' ? <StrategyDetailPage strategyId={route.id} snapshot={snapshot} /> : null}
 
       {route.name === 'graph' ? <GraphPage snapshot={snapshot} /> : null}
 

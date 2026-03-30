@@ -3,6 +3,8 @@ import { Link } from '../lib/router';
 const navItems = [
   { to: '/', label: 'Overview' },
   { to: '/markets', label: 'Markets' },
+  { to: '/signals', label: 'Signals' },
+  { to: '/strategies', label: 'Strategies' },
   { to: '/assets', label: 'Assets' },
   { to: '/graph', label: 'Graph' },
   { to: '/strategy', label: 'Strategy Lab' }
@@ -14,6 +16,8 @@ export default function TopNav({ pathname, connected, transport, localFallback }
   const isActive = (to) => {
     if (to === '/') return path === '/';
     if (to === '/markets') return path === '/markets' || path.startsWith('/market/');
+    if (to === '/signals') return path === '/signals' || path.startsWith('/signal/');
+    if (to === '/strategies') return path === '/strategies' || path.startsWith('/strategy/');
     if (to === '/assets') return path === '/assets' || path.startsWith('/asset/');
     if (to === '/graph') return path === '/graph';
     if (to === '/strategy') return path === '/strategy';

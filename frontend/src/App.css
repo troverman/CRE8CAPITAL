@@ -440,19 +440,25 @@ a {
 }
 
 .market-grid,
-.asset-grid {
+.asset-grid,
+.signal-grid,
+.strategy-grid {
   display: grid;
   gap: 0.55rem;
   grid-template-columns: repeat(3, minmax(0, 1fr));
 }
 
 .market-card-link,
-.asset-card-link {
+.asset-card-link,
+.signal-card-link,
+.strategy-card-link {
   display: block;
 }
 
 .market-card,
-.asset-card {
+.asset-card,
+.signal-card,
+.strategy-card {
   display: grid;
   gap: 0.44rem;
   min-height: 170px;
@@ -469,6 +475,42 @@ a {
 .market-head strong,
 .asset-head strong {
   font-size: 0.95rem;
+}
+
+.signal-head,
+.strategy-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.5rem;
+  align-items: baseline;
+}
+
+.signal-head strong,
+.strategy-head strong {
+  font-size: 0.9rem;
+}
+
+.signal-head span,
+.strategy-head span {
+  font-size: 0.72rem;
+  color: var(--ink-soft);
+}
+
+.signal-card p,
+.strategy-card p {
+  font-size: 0.75rem;
+  color: var(--ink-soft);
+  line-height: 1.4;
+}
+
+.strategy-metrics {
+  display: grid;
+  gap: 0.18rem;
+}
+
+.strategy-metrics small {
+  color: var(--ink-soft);
+  font-size: 0.68rem;
 }
 
 .market-head span {
@@ -1154,7 +1196,9 @@ th {
 
 @media (max-width: 1160px) {
   .market-grid,
-  .asset-grid {
+  .asset-grid,
+  .signal-grid,
+  .strategy-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
@@ -1206,7 +1250,9 @@ th {
   }
 
   .market-grid,
-  .asset-grid {
+  .asset-grid,
+  .signal-grid,
+  .strategy-grid {
     grid-template-columns: 1fr;
   }
 
