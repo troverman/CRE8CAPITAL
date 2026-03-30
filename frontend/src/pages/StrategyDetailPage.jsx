@@ -1,11 +1,28 @@
+import { useEffect, useMemo } from 'react';
 import GlowCard from '../components/GlowCard';
 import { fmtInt, fmtNum, fmtTime } from '../lib/format';
 import { getDisplaySignals } from '../lib/signalView';
 import { findStrategyRow, getStrategyDecisions } from '../lib/strategyView';
 import { Link } from '../lib/router';
+import { useStrategyToggleStore } from '../store/strategyToggleStore';
+
+const resolveEnabled = (strategy, enabledByKey) => {
+  const key = String(strategy?.key || '');
+  if (typeof enabledByKey?.[key] === 'boolean') return enabledByKey[key];
+  if (strategy?.enabled === null || typeof strategy?.enabled === 'undefined') return true;
+  return Boolean(strategy.enabled);
+};
 
 export default function StrategyDetailPage({ strategyId, snapshot }) {
-  const row = findStrategyRow(snapshot, strategyId);
+  const row = useMemo(() => findStrategyRow(snapshot, strategyId), [snapshot, strategyId]);
+  const enabledByKey = useStrategyToggleStore((state) => state.enabledByKey);
+  const ensureStrategies = useStrategyToggleStore((state) => state.ensureStrategies);
+  const setStrategyEnabled = useStrategyToggleStore((state) => state.setStrategyEnabled);
+
+  useEffect(() => {
+    if (!row) return;
+    ensureStrategies([row]);
+  }, [ensureStrategies, row]);
 
   if (!row) {
     return (
@@ -22,6 +39,7 @@ export default function StrategyDetailPage({ strategyId, snapshot }) {
   }
 
   const decisions = getStrategyDecisions(snapshot, strategyId).slice(0, 36);
+  const strategyEnabled = resolveEnabled(row, enabledByKey);
   const marketKeyByIdentity = new Map(
     (snapshot.markets || []).map((market) => [`${String(market.symbol || '').toUpperCase()}|${String(market.assetClass || '').toLowerCase()}`, market.key])
   );
@@ -48,6 +66,10 @@ export default function StrategyDetailPage({ strategyId, snapshot }) {
         <div className="section-head">
           <h1>strategy:{row.name}</h1>
           <div className="section-actions">
+            <label className="toggle-label strategy-toggle-switch">
+              <input type="checkbox" checked={Boolean(strategyEnabled)} onChange={(event) => setStrategyEnabled(row.key, event.target.checked)} />
+              <span>{strategyEnabled ? 'enabled' : 'disabled'}</span>
+            </label>
             <Link to="/strategies" className="inline-link">
               Back to strategies
             </Link>
@@ -57,7 +79,7 @@ export default function StrategyDetailPage({ strategyId, snapshot }) {
           </div>
         </div>
         <p>
-          id {row.id} | {row.enabled === null ? 'runtime discovered' : row.enabled ? 'enabled' : 'disabled'}
+          id {row.id} | {strategyEnabled ? 'enabled' : 'disabled'}
         </p>
       </GlowCard>
 

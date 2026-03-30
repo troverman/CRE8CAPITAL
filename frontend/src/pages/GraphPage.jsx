@@ -1,7 +1,9 @@
-import { useMemo } from 'react';
+import { useEffect, useMemo } from 'react';
 import GlowCard from '../components/GlowCard';
 import { fmtInt, fmtPct } from '../lib/format';
-import { Link } from '../lib/router';
+import { Link, navigate } from '../lib/router';
+import { buildStrategyRows } from '../lib/strategyView';
+import { useStrategyToggleStore } from '../store/strategyToggleStore';
 
 const VIEWBOX_WIDTH = 1240;
 const VIEWBOX_HEIGHT = 760;
@@ -56,6 +58,13 @@ const shortLabel = (value, max = 16) => {
 const marketIdentity = (symbol, assetClass) => `${String(symbol || '').toLowerCase()}|${String(assetClass || '').toLowerCase()}`;
 const providerKeyOf = (provider) => String(provider?.id || provider?.name || '').toLowerCase();
 const strategyKeyOf = (name) => String(name || '').toLowerCase();
+
+const resolveEnabled = (strategy, enabledByKey) => {
+  const key = String(strategy?.key || '');
+  if (typeof enabledByKey?.[key] === 'boolean') return enabledByKey[key];
+  if (strategy?.enabled === null || typeof strategy?.enabled === 'undefined') return true;
+  return Boolean(strategy.enabled);
+};
 
 const normalizeSymbol = (value) => String(value || '').toUpperCase().replace(/[^A-Z0-9]/g, '');
 
@@ -135,7 +144,7 @@ const ensureNode = (map, node) => {
   map.set(node.id, node);
 };
 
-const buildGraph = (snapshot) => {
+const buildGraph = (snapshot, strategyRows) => {
   const nodes = new Map();
   const edges = [];
   const edgeSet = new Set();
@@ -244,30 +253,23 @@ const buildGraph = (snapshot) => {
     signalIds.set(signal.id, id);
   }
 
-  const strategyStats = new Map();
-  for (const strategy of snapshot.strategies || []) {
-    const key = strategyKeyOf(strategy.name || strategy.id);
-    if (!key) continue;
-    const current = strategyStats.get(key) || { key, name: strategy.name || strategy.id || key, count: 0 };
-    strategyStats.set(key, current);
-  }
-  for (const decision of snapshot.decisions || []) {
-    const key = strategyKeyOf(decision.strategyName);
-    if (!key) continue;
-    const current = strategyStats.get(key) || { key, name: decision.strategyName || key, count: 0 };
-    current.count += 1;
-    strategyStats.set(key, current);
-  }
-
+  const rankedStrategies = [...(strategyRows || [])]
+    .filter((strategy) => Boolean(strategy?.key) && strategy.enabled !== false)
+    .sort((a, b) => {
+      if (b.decisionCount !== a.decisionCount) return b.decisionCount - a.decisionCount;
+      return asNum(b.avgScore) - asNum(a.avgScore);
+    })
+    .slice(0, LIMITS.strategies);
   const strategyIds = new Map();
-  for (const strategy of [...strategyStats.values()].sort((a, b) => b.count - a.count).slice(0, LIMITS.strategies)) {
+  for (const strategy of rankedStrategies) {
     const id = `strategy:${strategy.key}`;
     ensureNode(nodes, {
       id,
       type: 'strategy',
       label: strategy.name,
-      meta: `${strategy.count} decisions`,
-      score: strategy.count
+      meta: `${fmtInt(strategy.decisionCount || 0)} decisions`,
+      score: Math.max(1, asNum(strategy.decisionCount)),
+      strategyId: strategy.id || strategy.name || strategy.key
     });
     strategyIds.set(strategy.key, id);
   }
@@ -291,7 +293,7 @@ const buildGraph = (snapshot) => {
 
   for (const decision of snapshot.decisions || []) {
     const marketId = marketIdByIdentity.get(marketIdentity(decision.symbol, decision.assetClass));
-    const strategyId = strategyIds.get(strategyKeyOf(decision.strategyName));
+    const strategyId = strategyIds.get(strategyKeyOf(decision.strategyName || decision.strategy));
     addEdge(marketId, strategyId, 'market-strategy');
   }
 
@@ -533,17 +535,59 @@ const buildStructureGraph = (snapshot) => {
 };
 
 export default function GraphPage({ snapshot }) {
-  const graph = useMemo(() => buildGraph(snapshot), [snapshot]);
+  const enabledByKey = useStrategyToggleStore((state) => state.enabledByKey);
+  const ensureStrategies = useStrategyToggleStore((state) => state.ensureStrategies);
+  const setStrategyEnabled = useStrategyToggleStore((state) => state.setStrategyEnabled);
+
+  const strategyRows = useMemo(() => buildStrategyRows(snapshot), [snapshot]);
+
+  useEffect(() => {
+    ensureStrategies(strategyRows);
+  }, [ensureStrategies, strategyRows]);
+
+  const hydratedStrategies = useMemo(() => {
+    return strategyRows.map((strategy) => ({
+      ...strategy,
+      enabled: resolveEnabled(strategy, enabledByKey)
+    }));
+  }, [enabledByKey, strategyRows]);
+
+  const strategyControls = useMemo(() => {
+    return [...hydratedStrategies].sort((a, b) => {
+      if (b.decisionCount !== a.decisionCount) return b.decisionCount - a.decisionCount;
+      return asNum(b.avgScore) - asNum(a.avgScore);
+    });
+  }, [hydratedStrategies]);
+
+  const enabledStrategyCount = useMemo(() => strategyControls.filter((strategy) => strategy.enabled).length, [strategyControls]);
+
+  const graph = useMemo(() => buildGraph(snapshot, hydratedStrategies), [hydratedStrategies, snapshot]);
   const structure = useMemo(() => buildStructureGraph(snapshot), [snapshot]);
+
+  const openStrategyNode = (node) => {
+    if (!node?.strategyId) return;
+    navigate(`/strategy/${encodeURIComponent(node.strategyId)}`);
+  };
+
+  const handleStrategyNodeKeyDown = (event, node) => {
+    if (event.key !== 'Enter' && event.key !== ' ') return;
+    event.preventDefault();
+    openStrategyNode(node);
+  };
 
   return (
     <section className="page-grid">
       <GlowCard className="detail-card">
         <div className="section-head">
           <h1>Graph View</h1>
-          <Link to="/markets" className="inline-link">
-            Back to markets
-          </Link>
+          <div className="section-actions">
+            <Link to="/strategies" className="inline-link">
+              Open strategies
+            </Link>
+            <Link to="/markets" className="inline-link">
+              Back to markets
+            </Link>
+          </div>
         </div>
         <p>Connection map for watched markets, providers, signals, and strategies, plus a token-structure hub graph to expose central assets.</p>
       </GlowCard>
@@ -567,11 +611,45 @@ export default function GraphPage({ snapshot }) {
         </GlowCard>
       </div>
 
+      <GlowCard className="panel-card">
+        <div className="section-head">
+          <h2>Strategy Switchboard</h2>
+          <span>
+            enabled {fmtInt(enabledStrategyCount)} / {fmtInt(strategyControls.length)}
+          </span>
+        </div>
+        <p className="socket-status-copy">Toggle strategy visibility directly from graph view. Disabled strategies are removed from strategy nodes and strategy edges.</p>
+        <div className="graph-strategy-grid">
+          {strategyControls.map((strategy) => (
+            <article key={`toggle:${strategy.key}`} className={strategy.enabled ? 'graph-strategy-row' : 'graph-strategy-row disabled'}>
+              <div className="graph-strategy-meta">
+                <strong>
+                  <Link to={`/strategy/${encodeURIComponent(strategy.id || strategy.name || strategy.key)}`} className="inline-link strategy-title-link">
+                    {strategy.name}
+                  </Link>
+                </strong>
+                <small>
+                  decisions {fmtInt(strategy.decisionCount)} | markets {fmtInt(strategy.marketCount)} | avg score {asNum(strategy.avgScore).toFixed(2)}
+                </small>
+              </div>
+              <label className="toggle-label strategy-toggle-switch">
+                <input
+                  type="checkbox"
+                  checked={Boolean(strategy.enabled)}
+                  onChange={(event) => setStrategyEnabled(strategy.key, event.target.checked)}
+                />
+                <span>{strategy.enabled ? 'on' : 'off'}</span>
+              </label>
+            </article>
+          ))}
+        </div>
+      </GlowCard>
+
       <GlowCard className="graph-card">
         <div className="graph-head">
           <h2>Live Topology</h2>
           <span>
-            signals {fmtInt(graph.counts.signals)} | strategies {fmtInt(graph.counts.strategies)}
+            signals {fmtInt(graph.counts.signals)} | strategies {fmtInt(graph.counts.strategies)} visible
           </span>
         </div>
         <svg className="graph-svg" viewBox={`0 0 ${VIEWBOX_WIDTH} ${VIEWBOX_HEIGHT}`} role="img" aria-label="Market topology graph">
@@ -600,8 +678,16 @@ export default function GraphPage({ snapshot }) {
             const textAnchor = node.type === 'strategy' ? 'end' : 'start';
             const textX = node.type === 'strategy' ? node.x - 10 : node.x + 10;
             const dotSize = node.type === 'market' ? 4.2 : 3.6;
+            const strategyNode = node.type === 'strategy' && Boolean(node.strategyId);
             return (
-              <g key={node.id} className={`graph-node ${node.type}`}>
+              <g
+                key={node.id}
+                className={`graph-node ${node.type} ${strategyNode ? 'clickable' : ''}`}
+                role={strategyNode ? 'link' : undefined}
+                tabIndex={strategyNode ? 0 : undefined}
+                onClick={strategyNode ? () => openStrategyNode(node) : undefined}
+                onKeyDown={strategyNode ? (event) => handleStrategyNodeKeyDown(event, node) : undefined}
+              >
                 <circle
                   cx={node.x}
                   cy={node.y}

@@ -12,8 +12,10 @@ import HomePage from './pages/HomePage';
 import GraphPage from './pages/GraphPage';
 import MarketDetailPage from './pages/MarketDetailPage';
 import MarketListPage from './pages/MarketListPage';
+import DecisionListPage from './pages/DecisionListPage';
 import SignalDetailPage from './pages/SignalDetailPage';
 import SignalListPage from './pages/SignalListPage';
+import ProbabilityLabPage from './pages/ProbabilityLabPage';
 import StrategyLabPage from './pages/StrategyLabPage';
 import StrategyDetailPage from './pages/StrategyDetailPage';
 import StrategyListPage from './pages/StrategyListPage';
@@ -28,6 +30,8 @@ const parseRoute = (pathname) => {
   if (routePath === '/assets') return { name: 'assets' };
   if (routePath === '/graph') return { name: 'graph' };
   if (routePath === '/signals') return { name: 'signals' };
+  if (routePath === '/decisions') return { name: 'decisions' };
+  if (routePath === '/probability') return { name: 'probability' };
   if (routePath === '/strategies') return { name: 'strategies' };
   if (routePath === '/strategy') return { name: 'strategy' };
   if (routePath === '/account' || routePath === '/settings') return { name: 'account' };
@@ -61,7 +65,10 @@ const NotFoundPage = () => {
     <section className="page-grid">
       <GlowCard className="detail-card">
         <h1>Route not found</h1>
-        <p>Try `/markets`, `/assets`, `/signals`, `/strategies`, `/graph`, `/strategy`, `/account`, `/wallet`, `/signal/:id`, or `/strategy/:id`.</p>
+        <p>
+          Try `/markets`, `/assets`, `/signals`, `/decisions`, `/probability`, `/strategies`, `/graph`, `/strategy`, `/account`, `/wallet`, `/signal/:id`, or
+          `/strategy/:id`.
+        </p>
       </GlowCard>
     </section>
   );
@@ -133,6 +140,10 @@ export default function App() {
       {route.name === 'asset' ? <AssetDetailPage assetId={route.id} markets={snapshot.markets} historyByMarket={historyByMarket} /> : null}
 
       {route.name === 'signals' ? <SignalListPage snapshot={snapshot} /> : null}
+
+      {route.name === 'decisions' ? <DecisionListPage snapshot={snapshot} /> : null}
+
+      {route.name === 'probability' ? <ProbabilityLabPage snapshot={snapshot} historyByMarket={historyByMarket} /> : null}
 
       {route.name === 'signal' ? <SignalDetailPage signalId={route.id} snapshot={snapshot} /> : null}
 

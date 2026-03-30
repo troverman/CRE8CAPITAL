@@ -20,6 +20,23 @@ const actionClass = (action) => {
   return '';
 };
 
+const findNearestPointIndexByTime = (rows, targetTime) => {
+  if (!rows.length) return -1;
+  let low = 0;
+  let high = rows.length - 1;
+
+  while (low < high) {
+    const mid = Math.floor((low + high) / 2);
+    if (rows[mid].t < targetTime) low = mid + 1;
+    else high = mid;
+  }
+
+  const right = low;
+  const left = Math.max(0, right - 1);
+  if (right >= rows.length) return rows.length - 1;
+  return Math.abs(rows[right].t - targetTime) < Math.abs(rows[left].t - targetTime) ? right : left;
+};
+
 export default function StrategyLabPage({ snapshot, historyByMarket }) {
   const txEvents = useExecutionFeedStore((state) => state.txEvents);
   const positionEvents = useExecutionFeedStore((state) => state.positionEvents);
@@ -137,123 +154,262 @@ export default function StrategyLabPage({ snapshot, historyByMarket }) {
     setNewAccountName('');
   };
 
+  const activeAccount = useMemo(() => {
+    return walletAccounts.find((account) => account.id === activeWalletAccountId) || walletAccounts[0] || null;
+  }, [activeWalletAccountId, walletAccounts]);
+
+  const enabledAccountCount = useMemo(() => {
+    return walletAccounts.filter((account) => account.enabled).length;
+  }, [walletAccounts]);
+
+  const strategyLabel = useMemo(() => {
+    return strategyOptions.find((option) => option.id === strategyId)?.label || strategyId;
+  }, [strategyId, strategyOptions]);
+
+  const runtimeTradeMarkers = useMemo(() => {
+    const timeSeries = runtimeSeries
+      .map((point, index) => ({
+        index,
+        t: Number(point?.t),
+        price: Number(point?.price)
+      }))
+      .filter((point) => Number.isFinite(point.t) && Number.isFinite(point.price));
+
+    if (timeSeries.length < 2 || tradeLog.length === 0) return [];
+
+    const grouped = new Map();
+    for (const trade of tradeLog.slice(0, 220)) {
+      const timestamp = Number(trade?.timestamp);
+      if (!Number.isFinite(timestamp)) continue;
+      const nearestIndex = findNearestPointIndexByTime(timeSeries, timestamp);
+      if (nearestIndex < 0) continue;
+
+      const nearestPoint = timeSeries[nearestIndex];
+      const key = nearestPoint.index;
+      const current = grouped.get(key) || {
+        index: nearestPoint.index,
+        value: nearestPoint.price,
+        upCount: 0,
+        downCount: 0,
+        neutralCount: 0,
+        count: 0,
+        lastTimestamp: timestamp
+      };
+
+      const tone = actionClass(String(trade?.action || '').toLowerCase());
+      if (tone === 'up') current.upCount += 1;
+      else if (tone === 'down') current.downCount += 1;
+      else current.neutralCount += 1;
+      current.count += 1;
+      if (timestamp > current.lastTimestamp) current.lastTimestamp = timestamp;
+      grouped.set(key, current);
+    }
+
+    return [...grouped.values()]
+      .sort((a, b) => a.index - b.index)
+      .slice(-28)
+      .map((group) => {
+        let tone = 'neutral';
+        if (group.upCount > 0 && group.downCount === 0) tone = 'up';
+        else if (group.downCount > 0 && group.upCount === 0) tone = 'down';
+
+        const actionLabel = group.upCount > 0 && group.downCount > 0 ? 'mixed trades' : tone === 'up' ? 'accumulate trades' : tone === 'down' ? 'reduce trades' : 'hold trades';
+
+        return {
+          key: `trade-flag:${group.index}`,
+          index: group.index,
+          value: group.value,
+          tone,
+          count: group.count,
+          title: `${actionLabel} x${group.count} @ ${fmtNum(group.value, 4)} | ${fmtTime(group.lastTimestamp)}`
+        };
+      });
+  }, [runtimeSeries, tradeLog]);
+
   return (
     <section className="page-grid">
       <GlowCard className="detail-card">
         <div className="section-head">
           <h1>Strategy Lab</h1>
-          <Link to="/markets" className="inline-link">
-            Back to markets
-          </Link>
+          <div className="section-actions">
+            <Link to="/strategies" className="inline-link">
+              Strategies
+            </Link>
+            <Link to="/decisions" className="inline-link">
+              Decisions
+            </Link>
+            <Link to="/probability" className="inline-link">
+              PDF Lab
+            </Link>
+            <Link to="/markets" className="inline-link">
+              Back to markets
+            </Link>
+          </div>
         </div>
-        <p>Backtesting + realtime strategy simulation with a local fake wallet. Defaults boot into local auto-run so you can test immediately.</p>
-
-        <div className="strategy-control-grid">
-          <label className="control-field">
-            <span>Source</span>
-            <select value={sourceId} onChange={(event) => changeSource(event.target.value)}>
-              {sourceOptions.map((option) => (
-                <option key={option.id} value={option.id}>
-                  {option.label}
-                </option>
-              ))}
-            </select>
-          </label>
-
-          <label className="control-field">
-            <span>Scenario</span>
-            <select value={scenarioId} onChange={(event) => changeScenario(event.target.value)} disabled={sourceId !== 'local-scenario'}>
-              {scenarioOptions.map((option) => (
-                <option key={option.id} value={option.id}>
-                  {option.label}
-                </option>
-              ))}
-            </select>
-          </label>
-
-          <label className="control-field">
-            <span>Strategy</span>
-            <select value={strategyId} onChange={(event) => changeStrategy(event.target.value)}>
-              {strategyOptions.map((option) => (
-                <option key={option.id} value={option.id}>
-                  {option.label}
-                </option>
-              ))}
-            </select>
-          </label>
-
-          <label className="control-field">
-            <span>Market</span>
-            <select value={selectedMarket?.key || ''} onChange={(event) => changeMarket(event.target.value)}>
-              {markets.map((market) => (
-                <option key={market.key} value={market.key}>
-                  {market.symbol} ({market.assetClass})
-                </option>
-              ))}
-            </select>
-          </label>
-        </div>
-
-        <div className="strategy-risk-grid">
-          <label className="control-field">
-            <span>Interval (ms)</span>
-            <input type="number" min={280} max={5000} step={20} value={intervalMs} onChange={(event) => updateInterval(event.target.value)} />
-          </label>
-          <label className="control-field">
-            <span>Max units</span>
-            <input
-              type="number"
-              min={1}
-              max={60}
-              step={1}
-              value={maxAbsUnits}
-              onChange={(event) => changeRisk({ nextMaxAbsUnits: event.target.value, nextSlippageBps: slippageBps, nextCooldownMs: cooldownMs })}
-            />
-          </label>
-          <label className="control-field">
-            <span>Slippage (bps)</span>
-            <input
-              type="number"
-              min={0}
-              max={40}
-              step={0.1}
-              value={slippageBps}
-              onChange={(event) => changeRisk({ nextMaxAbsUnits: maxAbsUnits, nextSlippageBps: event.target.value, nextCooldownMs: cooldownMs })}
-            />
-          </label>
-          <label className="control-field">
-            <span>Cooldown (ms)</span>
-            <input
-              type="number"
-              min={0}
-              max={120000}
-              step={200}
-              value={cooldownMs}
-              onChange={(event) => changeRisk({ nextMaxAbsUnits: maxAbsUnits, nextSlippageBps: slippageBps, nextCooldownMs: event.target.value })}
-            />
-          </label>
-        </div>
-
-        <div className="hero-actions">
-          <button type="button" className={running ? 'btn secondary' : 'btn primary'} onClick={toggleRunning}>
-            {running ? 'Pause Realtime' : 'Start Realtime'}
-          </button>
-          <button type="button" className="btn secondary" onClick={triggerManual}>
-            Manual Trigger
-          </button>
-          <button type="button" className="btn secondary" onClick={runBacktestNow}>
-            Run Backtest
-          </button>
-          <button type="button" className="btn secondary" onClick={resetSession}>
-            Reset Session
-          </button>
-        </div>
-
-        <p className="socket-status-copy">
-          mode {sourceId} | runtime {running ? 'active' : 'paused'} | market {selectedMarket?.symbol || '-'} | live history{' '}
-          {hasLiveHistory ? 'available' : 'limited'}
-        </p>
+        <p>Backtesting + realtime strategy simulation with multi-account paper execution and linked signal/decision telemetry.</p>
       </GlowCard>
+
+      <div className="strategy-lab-top-grid">
+        <GlowCard className="panel-card strategy-lab-control-card">
+          <div className="section-head">
+            <h2>Control Deck</h2>
+            <span>{strategyLabel}</span>
+          </div>
+
+          <div className="strategy-control-grid">
+            <label className="control-field">
+              <span>Source</span>
+              <select value={sourceId} onChange={(event) => changeSource(event.target.value)}>
+                {sourceOptions.map((option) => (
+                  <option key={option.id} value={option.id}>
+                    {option.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+
+            <label className="control-field">
+              <span>Scenario</span>
+              <select value={scenarioId} onChange={(event) => changeScenario(event.target.value)} disabled={sourceId !== 'local-scenario'}>
+                {scenarioOptions.map((option) => (
+                  <option key={option.id} value={option.id}>
+                    {option.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+
+            <label className="control-field">
+              <span>Strategy</span>
+              <select value={strategyId} onChange={(event) => changeStrategy(event.target.value)}>
+                {strategyOptions.map((option) => (
+                  <option key={option.id} value={option.id}>
+                    {option.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+
+            <label className="control-field">
+              <span>Market</span>
+              <select value={selectedMarket?.key || ''} onChange={(event) => changeMarket(event.target.value)}>
+                {markets.map((market) => (
+                  <option key={market.key} value={market.key}>
+                    {market.symbol} ({market.assetClass})
+                  </option>
+                ))}
+              </select>
+            </label>
+          </div>
+
+          <div className="strategy-risk-grid">
+            <label className="control-field">
+              <span>Interval (ms)</span>
+              <input type="number" min={280} max={5000} step={20} value={intervalMs} onChange={(event) => updateInterval(event.target.value)} />
+            </label>
+            <label className="control-field">
+              <span>Max units</span>
+              <input
+                type="number"
+                min={1}
+                max={60}
+                step={1}
+                value={maxAbsUnits}
+                onChange={(event) => changeRisk({ nextMaxAbsUnits: event.target.value, nextSlippageBps: slippageBps, nextCooldownMs: cooldownMs })}
+              />
+            </label>
+            <label className="control-field">
+              <span>Slippage (bps)</span>
+              <input
+                type="number"
+                min={0}
+                max={40}
+                step={0.1}
+                value={slippageBps}
+                onChange={(event) => changeRisk({ nextMaxAbsUnits: maxAbsUnits, nextSlippageBps: event.target.value, nextCooldownMs: cooldownMs })}
+              />
+            </label>
+            <label className="control-field">
+              <span>Cooldown (ms)</span>
+              <input
+                type="number"
+                min={0}
+                max={120000}
+                step={200}
+                value={cooldownMs}
+                onChange={(event) => changeRisk({ nextMaxAbsUnits: maxAbsUnits, nextSlippageBps: slippageBps, nextCooldownMs: event.target.value })}
+              />
+            </label>
+          </div>
+
+          <div className="hero-actions">
+            <button type="button" className={running ? 'btn secondary' : 'btn primary'} onClick={toggleRunning}>
+              {running ? 'Pause Realtime' : 'Start Realtime'}
+            </button>
+            <button type="button" className="btn secondary" onClick={triggerManual}>
+              Manual Trigger
+            </button>
+            <button type="button" className="btn secondary" onClick={runBacktestNow}>
+              Run Backtest
+            </button>
+            <button type="button" className="btn secondary" onClick={resetSession}>
+              Reset Session
+            </button>
+          </div>
+
+          <div className="strategy-lab-status-row">
+            <span className={running ? 'status-pill online' : 'status-pill'}>{running ? 'realtime active' : 'realtime paused'}</span>
+            <span className="status-pill">mode {sourceId}</span>
+            <span className="status-pill">market {selectedMarket?.symbol || '-'}</span>
+            <span className={hasLiveHistory ? 'status-pill online' : 'status-pill'}>history {hasLiveHistory ? 'available' : 'limited'}</span>
+          </div>
+        </GlowCard>
+
+        <GlowCard className="panel-card strategy-lab-overview-card">
+          <div className="section-head">
+            <h2>Session Overview</h2>
+            <span>{activeAccount?.name || 'paper account'}</span>
+          </div>
+          <div className="strategy-lab-mini-grid">
+            <article className="strategy-lab-mini-stat">
+              <span>Wallet Equity</span>
+              <strong className={toneClass(wallet.equity - 100000)}>{fmtNum(wallet.equity, 2)}</strong>
+            </article>
+            <article className="strategy-lab-mini-stat">
+              <span>Realized PnL</span>
+              <strong className={toneClass(wallet.realizedPnl)}>{fmtNum(wallet.realizedPnl, 2)}</strong>
+            </article>
+            <article className="strategy-lab-mini-stat">
+              <span>Unrealized PnL</span>
+              <strong className={toneClass(wallet.unrealizedPnl)}>{fmtNum(wallet.unrealizedPnl, 2)}</strong>
+            </article>
+            <article className="strategy-lab-mini-stat">
+              <span>Position</span>
+              <strong>{fmtNum(wallet.units, 0)} units</strong>
+            </article>
+            <article className="strategy-lab-mini-stat">
+              <span>Backtest Return</span>
+              <strong className={toneClass(backtestStats.returnPct)}>{fmtPct(backtestStats.returnPct)}</strong>
+            </article>
+            <article className="strategy-lab-mini-stat">
+              <span>Backtest PnL</span>
+              <strong className={toneClass(backtestStats.pnl)}>{fmtNum(backtestStats.pnl, 2)}</strong>
+            </article>
+            <article className="strategy-lab-mini-stat">
+              <span>Enabled Accounts</span>
+              <strong>{fmtInt(enabledAccountCount)}</strong>
+            </article>
+            <article className="strategy-lab-mini-stat">
+              <span>Trigger Events</span>
+              <strong>{fmtInt(eventLog.length)}</strong>
+            </article>
+          </div>
+          <p className="socket-status-copy">
+            tx feed {fmtInt(txEvents.length)} | position snapshots {fmtInt(positionEvents.length)} | execution rows {fmtInt(tradeLog.length)} | signal inputs{' '}
+            {fmtInt(signalRows.length)}
+          </p>
+        </GlowCard>
+      </div>
 
       <GlowCard className="panel-card">
         <div className="section-head">
@@ -354,85 +510,50 @@ export default function StrategyLabPage({ snapshot, historyByMarket }) {
         </div>
       </GlowCard>
 
-      <div className="detail-stat-grid">
-        <GlowCard className="stat-card">
-          <span>Wallet Equity</span>
-          <strong className={toneClass(wallet.equity - 100000)}>{fmtNum(wallet.equity, 2)}</strong>
+      <div className="strategy-lab-chart-grid">
+        <GlowCard className="chart-card">
+          <LineChart
+            title={`Realtime Price + Classic TA - ${selectedMarket?.symbol || 'SIM'}`}
+            points={runtimePriceSeries}
+            stroke="#63f7c1"
+            fillFrom="rgba(58, 227, 171, 0.34)"
+            fillTo="rgba(58, 227, 171, 0.03)"
+            overlays={runtimeTaOverlays}
+            markers={runtimeTradeMarkers}
+          />
         </GlowCard>
-        <GlowCard className="stat-card">
-          <span>Realized PnL</span>
-          <strong className={toneClass(wallet.realizedPnl)}>{fmtNum(wallet.realizedPnl, 2)}</strong>
+
+        <GlowCard className="chart-card">
+          <LineChart
+            title="Realtime Spread (bps)"
+            points={runtimeSpreadSeries}
+            stroke="#ffad73"
+            fillFrom="rgba(255, 155, 94, 0.34)"
+            fillTo="rgba(255, 155, 94, 0.02)"
+            unit=" bps"
+          />
         </GlowCard>
-        <GlowCard className="stat-card">
-          <span>Unrealized PnL</span>
-          <strong className={toneClass(wallet.unrealizedPnl)}>{fmtNum(wallet.unrealizedPnl, 2)}</strong>
+
+        <GlowCard className="chart-card">
+          <LineChart
+            title="Fake Wallet Equity Curve"
+            points={runtimeEquity}
+            stroke="#77dcff"
+            fillFrom="rgba(58, 147, 255, 0.33)"
+            fillTo="rgba(58, 147, 255, 0.02)"
+          />
         </GlowCard>
-        <GlowCard className="stat-card">
-          <span>Position</span>
-          <strong>{fmtNum(wallet.units, 0)} units</strong>
+
+        <GlowCard className="chart-card">
+          <LineChart
+            title={`Backtest Equity Curve (${backtest?.sampleSize || 0} points)`}
+            points={backtestEquitySeries}
+            stroke="#9d92ff"
+            fillFrom="rgba(150, 130, 255, 0.3)"
+            fillTo="rgba(150, 130, 255, 0.02)"
+          />
         </GlowCard>
       </div>
-
-      <div className="detail-stat-grid">
-        <GlowCard className="stat-card">
-          <span>Backtest Return</span>
-          <strong className={toneClass(backtestStats.returnPct)}>{fmtPct(backtestStats.returnPct)}</strong>
-        </GlowCard>
-        <GlowCard className="stat-card">
-          <span>Backtest PnL</span>
-          <strong className={toneClass(backtestStats.pnl)}>{fmtNum(backtestStats.pnl, 2)}</strong>
-        </GlowCard>
-        <GlowCard className="stat-card">
-          <span>Trade Count</span>
-          <strong>{fmtInt(backtestStats.tradeCount)}</strong>
-        </GlowCard>
-        <GlowCard className="stat-card">
-          <span>Win Rate</span>
-          <strong>{fmtPct(backtestStats.winRatePct)}</strong>
-        </GlowCard>
-      </div>
-
-      <GlowCard className="chart-card">
-        <LineChart
-          title={`Realtime Price + Classic TA - ${selectedMarket?.symbol || 'SIM'}`}
-          points={runtimePriceSeries}
-          stroke="#63f7c1"
-          fillFrom="rgba(58, 227, 171, 0.34)"
-          fillTo="rgba(58, 227, 171, 0.03)"
-          overlays={runtimeTaOverlays}
-        />
-      </GlowCard>
-
-      <GlowCard className="chart-card">
-        <LineChart
-          title="Realtime Spread (bps)"
-          points={runtimeSpreadSeries}
-          stroke="#ffad73"
-          fillFrom="rgba(255, 155, 94, 0.34)"
-          fillTo="rgba(255, 155, 94, 0.02)"
-          unit=" bps"
-        />
-      </GlowCard>
-
-      <GlowCard className="chart-card">
-        <LineChart
-          title="Fake Wallet Equity Curve"
-          points={runtimeEquity}
-          stroke="#77dcff"
-          fillFrom="rgba(58, 147, 255, 0.33)"
-          fillTo="rgba(58, 147, 255, 0.02)"
-        />
-      </GlowCard>
-
-      <GlowCard className="chart-card">
-        <LineChart
-          title={`Backtest Equity Curve (${backtest?.sampleSize || 0} points)`}
-          points={backtestEquitySeries}
-          stroke="#9d92ff"
-          fillFrom="rgba(150, 130, 255, 0.3)"
-          fillTo="rgba(150, 130, 255, 0.02)"
-        />
-      </GlowCard>
 
       <div className="two-col">
         <GlowCard className="panel-card">
