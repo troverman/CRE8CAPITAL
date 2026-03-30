@@ -40,7 +40,8 @@ export default function StrategyListPage({ snapshot }) {
       return (
         String(strategy.name || '').toLowerCase().includes(term) ||
         String(strategy.id || '').toLowerCase().includes(term) ||
-        String(strategy.key || '').toLowerCase().includes(term)
+        String(strategy.key || '').toLowerCase().includes(term) ||
+        String(strategy.description || '').toLowerCase().includes(term)
       );
     });
   }, [hydratedStrategies, search]);
@@ -83,6 +84,7 @@ export default function StrategyListPage({ snapshot }) {
             <p>
               decisions {fmtInt(strategy.decisionCount)} | markets {fmtInt(strategy.marketCount)}
             </p>
+            <p className="socket-status-copy">{strategy.description || 'No description available yet.'}</p>
             <div className="strategy-metrics">
               <small>avg score {fmtNum(strategy.avgScore, 2)}</small>
               <small>last action {strategy.lastAction}</small>

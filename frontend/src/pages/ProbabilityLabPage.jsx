@@ -45,6 +45,35 @@ const formatBucketLabel = (value) => {
   return `${sign}${num.toFixed(2)}%`;
 };
 
+const quantileReturnPct = ({ column = [], buckets = [], quantile = 0.5 }) => {
+  if (!Array.isArray(column) || !Array.isArray(buckets) || !column.length || !buckets.length) return null;
+  const safeQ = clamp(toNum(quantile, 0.5), 0, 1);
+  let sum = 0;
+  const normalized = column.map((value) => {
+    const safe = Math.max(0, toNum(value, 0));
+    sum += safe;
+    return safe;
+  });
+  if (sum <= 1e-12) return null;
+
+  let cumulative = 0;
+  for (let index = 0; index < normalized.length; index += 1) {
+    cumulative += normalized[index] / sum;
+    if (cumulative + 1e-12 >= safeQ) return toNum(buckets[index]?.center, null);
+  }
+  return toNum(buckets[buckets.length - 1]?.center, null);
+};
+
+const toPriceProjectedSeries = (priceSeries = [], returnPct = 0) => {
+  const factor = 1 + toNum(returnPct, 0) / 100;
+  return priceSeries.map((value) => (Number.isFinite(value) ? value * factor : null));
+};
+
+const constantSeries = (size = 0, value = 0) => {
+  const safeSize = Math.max(0, Math.round(toNum(size, 0)));
+  return new Array(safeSize).fill(toNum(value, 0));
+};
+
 const rankMarkets = (markets = []) => {
   return [...(Array.isArray(markets) ? markets : [])]
     .filter((market) => Boolean(market?.key))
@@ -85,6 +114,8 @@ export default function ProbabilityLabPage({ snapshot, historyByMarket }) {
   const [brushStep, setBrushStep] = useState(0.15);
   const [paintByHorizon, setPaintByHorizon] = useState({});
   const [dragDirection, setDragDirection] = useState(0);
+  const [chartMode, setChartMode] = useState('price');
+  const [showPdfOverlay, setShowPdfOverlay] = useState(false);
   const [decisionFeed, setDecisionFeed] = useState([]);
   const decisionRef = useRef({ signature: '', timestamp: 0 });
 
@@ -314,6 +345,105 @@ export default function ProbabilityLabPage({ snapshot, historyByMarket }) {
   }, [activeHorizon, buckets, historyByMarket, horizons, indicatorBlend, layerWeights, markets, snapshot?.now]);
 
   const topRanking = marketRankings[0] || null;
+
+  const priceTraceSeries = useMemo(() => {
+    return selectedSeriesData.series.map((point) => {
+      const price = toNum(point?.price, NaN);
+      return Number.isFinite(price) && price > 0 ? price : null;
+    });
+  }, [selectedSeriesData.series]);
+
+  const deltaChangeSeries = useMemo(() => {
+    if (!priceTraceSeries.length) return [];
+    return priceTraceSeries.map((price, index) => {
+      if (!Number.isFinite(price)) return null;
+      if (index === 0) return 0;
+      const previous = priceTraceSeries[index - 1];
+      if (!Number.isFinite(previous) || previous <= 0) return null;
+      return ((price - previous) / previous) * 100;
+    });
+  }, [priceTraceSeries]);
+
+  const activeQuantiles = useMemo(() => {
+    if (activeHorizonIndex < 0) {
+      return {
+        lower: null,
+        upper: null
+      };
+    }
+    const activeColumn = blendedColumns[activeHorizonIndex] || [];
+    return {
+      lower: quantileReturnPct({ column: activeColumn, buckets, quantile: 0.15 }),
+      upper: quantileReturnPct({ column: activeColumn, buckets, quantile: 0.85 })
+    };
+  }, [activeHorizonIndex, blendedColumns, buckets]);
+
+  const probabilityChartPoints = chartMode === 'delta' ? deltaChangeSeries : priceTraceSeries;
+
+  const probabilityChartOverlays = useMemo(() => {
+    if (!showPdfOverlay || !probabilityChartPoints.length) return [];
+
+    const overlayRows = horizonSummaries.map((row, index) => {
+      const expectedMovePct = toNum(row?.summary?.expectedMovePct, 0);
+      const confidence = clamp(toNum(row?.summary?.confidencePct, 0) / 100, 0, 1);
+      const alpha = clamp(0.38 + confidence * 0.56, 0.38, 0.94);
+      const positive = expectedMovePct >= 0;
+      const stroke = positive ? `rgba(98, 255, 204, ${alpha.toFixed(3)})` : `rgba(255, 138, 168, ${alpha.toFixed(3)})`;
+      const dash = index % 2 === 0 ? '' : '6 4';
+      const points =
+        chartMode === 'price'
+          ? toPriceProjectedSeries(priceTraceSeries, expectedMovePct)
+          : constantSeries(probabilityChartPoints.length, expectedMovePct);
+
+      return {
+        key: `pdf-expected:h${row.horizon}`,
+        label: `h${row.horizon} E[r] ${fmtPct(expectedMovePct)}`,
+        points,
+        stroke,
+        strokeWidth: 1.2 + confidence * 0.85,
+        dasharray: dash
+      };
+    });
+
+    if (!Number.isFinite(activeQuantiles.lower) || !Number.isFinite(activeQuantiles.upper)) {
+      return overlayRows;
+    }
+
+    const lowerPoints =
+      chartMode === 'price'
+        ? toPriceProjectedSeries(priceTraceSeries, activeQuantiles.lower)
+        : constantSeries(probabilityChartPoints.length, activeQuantiles.lower);
+    const upperPoints =
+      chartMode === 'price'
+        ? toPriceProjectedSeries(priceTraceSeries, activeQuantiles.upper)
+        : constantSeries(probabilityChartPoints.length, activeQuantiles.upper);
+
+    return [
+      {
+        key: `pdf-band:h${activeHorizon}:lower`,
+        label: `h${activeHorizon} q15 ${fmtPct(activeQuantiles.lower)}`,
+        points: lowerPoints,
+        stroke: 'rgba(255, 176, 120, 0.82)',
+        strokeWidth: 1.35,
+        dasharray: '3 4'
+      },
+      {
+        key: `pdf-band:h${activeHorizon}:upper`,
+        label: `h${activeHorizon} q85 ${fmtPct(activeQuantiles.upper)}`,
+        points: upperPoints,
+        stroke: 'rgba(124, 201, 255, 0.84)',
+        strokeWidth: 1.35,
+        dasharray: '3 4'
+      },
+      ...overlayRows
+    ];
+  }, [activeHorizon, activeQuantiles.lower, activeQuantiles.upper, chartMode, horizonSummaries, priceTraceSeries, probabilityChartPoints.length, showPdfOverlay]);
+
+  const probabilityChartTitle = chartMode === 'delta' ? `% Change Per Delta - ${selectedMarket.symbol}` : `Price Trace - ${selectedMarket.symbol}`;
+  const probabilityChartStroke = chartMode === 'delta' ? '#86c7ff' : '#65f5ca';
+  const probabilityChartFillFrom = chartMode === 'delta' ? 'rgba(92, 167, 255, 0.32)' : 'rgba(70, 223, 176, 0.35)';
+  const probabilityChartFillTo = chartMode === 'delta' ? 'rgba(92, 167, 255, 0.03)' : 'rgba(70, 223, 176, 0.03)';
+  const probabilityChartUnit = chartMode === 'delta' ? '%' : '';
 
   const updateLayerWeight = useCallback((key, value) => {
     const safe = clamp((Number(value) || 0) / 100, 0, 2);
@@ -614,12 +744,32 @@ export default function ProbabilityLabPage({ snapshot, historyByMarket }) {
       </div>
 
       <GlowCard className="chart-card">
+        <div className="section-head">
+          <h2>Probability Chart</h2>
+          <span>{chartMode === 'delta' ? '% change / delta mode' : 'price mode'}</span>
+        </div>
+        <div className="hero-actions">
+          <button type="button" className="btn secondary" onClick={() => setChartMode((mode) => (mode === 'price' ? 'delta' : 'price'))}>
+            {chartMode === 'price' ? 'Show % Change / Delta' : 'Show Price'}
+          </button>
+          <button type="button" className="btn secondary" onClick={() => setShowPdfOverlay((value) => !value)}>
+            {showPdfOverlay ? 'Hide PDF Overlay' : 'Overlay PDF Heatmap'}
+          </button>
+        </div>
+        {showPdfOverlay ? (
+          <p className="socket-status-copy">
+            Overlay active: expected move lines for each horizon, plus q15/q85 band for active horizon {activeHorizon}.{' '}
+            {chartMode === 'price' ? 'Lines are normalized to the live price trace.' : 'Lines are shown as return % guides per delta.'}
+          </p>
+        ) : null}
         <LineChart
-          title={`Price Trace - ${selectedMarket.symbol}`}
-          points={selectedSeriesData.series.map((point) => point.price)}
-          stroke="#65f5ca"
-          fillFrom="rgba(70, 223, 176, 0.35)"
-          fillTo="rgba(70, 223, 176, 0.03)"
+          title={probabilityChartTitle}
+          points={probabilityChartPoints}
+          stroke={probabilityChartStroke}
+          fillFrom={probabilityChartFillFrom}
+          fillTo={probabilityChartFillTo}
+          overlays={probabilityChartOverlays}
+          unit={probabilityChartUnit}
         />
       </GlowCard>
 

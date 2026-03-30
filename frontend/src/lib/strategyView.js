@@ -7,11 +7,12 @@ const toNum = (value, fallback = 0) => {
 
 export const toStrategyKey = (value) => String(value || '').trim().toLowerCase();
 
-const ensureRow = (map, { key, id, name, enabled = null }) => {
+const ensureRow = (map, { key, id, name, description = '', enabled = null }) => {
   const existing = map.get(key) || {
     key,
     id: id || name || key,
     name: name || id || key,
+    description: description || '',
     enabled,
     decisionCount: 0,
     scoreTotal: 0,
@@ -28,6 +29,9 @@ const ensureRow = (map, { key, id, name, enabled = null }) => {
   };
   if (enabled !== null) {
     existing.enabled = enabled;
+  }
+  if (description && !existing.description) {
+    existing.description = description;
   }
   map.set(key, existing);
   return existing;
@@ -46,6 +50,7 @@ export const buildStrategyRows = (snapshot) => {
       key,
       id,
       name: strategy?.label || id,
+      description: strategy?.description || '',
       enabled: true
     });
   }
@@ -58,6 +63,7 @@ export const buildStrategyRows = (snapshot) => {
       key,
       id,
       name: strategy?.name || strategy?.id || key,
+      description: strategy?.description || '',
       enabled: typeof strategy?.enabled === 'boolean' ? strategy.enabled : null
     });
   }

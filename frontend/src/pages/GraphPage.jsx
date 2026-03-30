@@ -631,6 +631,7 @@ export default function GraphPage({ snapshot }) {
                 <small>
                   decisions {fmtInt(strategy.decisionCount)} | markets {fmtInt(strategy.marketCount)} | avg score {asNum(strategy.avgScore).toFixed(2)}
                 </small>
+                <small>{strategy.description || 'No description available yet.'}</small>
               </div>
               <label className="toggle-label strategy-toggle-switch">
                 <input

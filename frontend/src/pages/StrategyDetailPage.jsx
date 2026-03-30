@@ -81,6 +81,7 @@ export default function StrategyDetailPage({ strategyId, snapshot }) {
         <p>
           id {row.id} | {strategyEnabled ? 'enabled' : 'disabled'}
         </p>
+        <p className="socket-status-copy">{row.description || 'No description available yet.'}</p>
       </GlowCard>
 
       <div className="detail-stat-grid">

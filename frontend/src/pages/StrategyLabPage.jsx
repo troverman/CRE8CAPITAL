@@ -215,9 +215,12 @@ export default function StrategyLabPage({ snapshot, historyByMarket }) {
     return walletAccounts.filter((account) => account.enabled).length;
   }, [walletAccounts]);
 
-  const strategyLabel = useMemo(() => {
-    return strategyOptions.find((option) => option.id === strategyId)?.label || strategyId;
+  const strategyMeta = useMemo(() => {
+    return strategyOptions.find((option) => option.id === strategyId) || null;
   }, [strategyId, strategyOptions]);
+
+  const strategyLabel = strategyMeta?.label || strategyId;
+  const strategyDescription = strategyMeta?.description || 'No description available yet.';
 
   const selectedAccountTradeRows = useMemo(() => {
     if (!selectedDrillAccount) return [];
@@ -599,6 +602,7 @@ export default function StrategyLabPage({ snapshot, historyByMarket }) {
             <span className="status-pill">market {selectedMarket?.symbol || '-'}</span>
             <span className={hasLiveHistory ? 'status-pill online' : 'status-pill'}>history {hasLiveHistory ? 'available' : 'limited'}</span>
           </div>
+          <p className="socket-status-copy">{strategyDescription}</p>
         </GlowCard>
 
         <GlowCard className="panel-card strategy-lab-overview-card">
@@ -918,6 +922,7 @@ export default function StrategyLabPage({ snapshot, historyByMarket }) {
                   <h2>Selected Strategy</h2>
                   <span>{strategyLabel}</span>
                 </div>
+                <p className="socket-status-copy">{strategyDescription}</p>
                 <div className="strategy-lab-mini-grid">
                   <article className="strategy-lab-mini-stat">
                     <span>Runtime Trigger Events</span>

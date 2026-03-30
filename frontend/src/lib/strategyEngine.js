@@ -90,23 +90,91 @@ const maxDrawdownPct = (equitySeries = []) => {
 };
 
 export const STRATEGY_OPTIONS = [
-  { id: 'tensor-lite', label: 'Tensor Lite' },
-  { id: 'momentum', label: 'Momentum' },
-  { id: 'mean-reversion', label: 'Mean Reversion' },
-  { id: 'breakout', label: 'Breakout' },
-  { id: 'trend-follow', label: 'Trend Follow' },
-  { id: 'ema-cross', label: 'EMA Cross' },
-  { id: 'rsi-reversion', label: 'RSI Reversion' },
-  { id: 'volatility-breakout', label: 'Volatility Breakout' },
-  { id: 'range-fade', label: 'Range Fade' },
-  { id: 'micro-scalp', label: 'Micro Scalp' },
-  { id: 'donchian-breakout', label: 'Donchian Breakout' },
-  { id: 'compression-breakout', label: 'Compression Breakout' },
-  { id: 'momentum-pullback', label: 'Momentum Pullback' },
-  { id: 'drift-guard', label: 'Drift Guard' },
-  { id: 'signal-single', label: 'Signal Single' },
-  { id: 'signal-consensus', label: 'Signal Consensus' },
-  { id: 'signal-cluster', label: 'Signal Cluster' }
+  {
+    id: 'tensor-lite',
+    label: 'Tensor Lite',
+    description: 'Balanced baseline that blends trend, momentum, spread, and volatility into a single runtime score.'
+  },
+  {
+    id: 'momentum',
+    label: 'Momentum',
+    description: 'Chases short-term directional continuation when drift and acceleration align.'
+  },
+  {
+    id: 'mean-reversion',
+    label: 'Mean Reversion',
+    description: 'Fades stretched moves and looks for snapback toward the rolling mean.'
+  },
+  {
+    id: 'breakout',
+    label: 'Breakout',
+    description: 'Acts when price escapes recent range highs/lows with confirmation.'
+  },
+  {
+    id: 'trend-follow',
+    label: 'Trend Follow',
+    description: 'Leans into multi-window trend alignment and stays with persistent direction.'
+  },
+  {
+    id: 'ema-cross',
+    label: 'EMA Cross',
+    description: 'Uses fast/slow EMA crossovers and gap slope to flip stance.'
+  },
+  {
+    id: 'rsi-reversion',
+    label: 'RSI Reversion',
+    description: 'Responds to RSI extremes by fading overbought and buying oversold conditions.'
+  },
+  {
+    id: 'volatility-breakout',
+    label: 'Volatility Breakout',
+    description: 'Targets expansion phases after compression when volatility regime shifts.'
+  },
+  {
+    id: 'range-fade',
+    label: 'Range Fade',
+    description: 'Trades against edges of a bounded channel and exits toward the center.'
+  },
+  {
+    id: 'micro-scalp',
+    label: 'Micro Scalp',
+    description: 'High-frequency micro impulses with tighter thresholds and faster reaction.'
+  },
+  {
+    id: 'donchian-breakout',
+    label: 'Donchian Breakout',
+    description: 'Classic channel breakout using Donchian highs/lows as trigger rails.'
+  },
+  {
+    id: 'compression-breakout',
+    label: 'Compression Breakout',
+    description: 'Waits for narrow-range compression, then trades directional release.'
+  },
+  {
+    id: 'momentum-pullback',
+    label: 'Momentum Pullback',
+    description: 'Buys pullbacks inside strong trends and sells rallies inside downtrends.'
+  },
+  {
+    id: 'drift-guard',
+    label: 'Drift Guard',
+    description: 'Conservative drift-aware posture that avoids noise and spread-heavy conditions.'
+  },
+  {
+    id: 'signal-single',
+    label: 'Signal Single',
+    description: 'Acts off the strongest active signal with minimal aggregation.'
+  },
+  {
+    id: 'signal-consensus',
+    label: 'Signal Consensus',
+    description: 'Requires agreement across multiple signal inputs before execution.'
+  },
+  {
+    id: 'signal-cluster',
+    label: 'Signal Cluster',
+    description: 'Weights clustered signal intensity and direction to size conviction.'
+  }
 ];
 
 export const SCENARIO_OPTIONS = [

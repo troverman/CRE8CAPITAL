@@ -127,49 +127,47 @@ export default function LineChart({
   });
   const latest = values[values.length - 1];
   const delta = latest - values[Math.max(values.length - 2, 0)];
-  const markerSpecs = useMemo(() => {
-    if (!Array.isArray(markers) || markers.length === 0) return [];
-    const denominator = Math.max(baseSeries.length - 1, 1);
-    const range = max - min || 1;
+  const markerSpecs = !Array.isArray(markers) || markers.length === 0
+    ? []
+    : markers
+        .map((marker, markerIndex) => {
+          const denominator = Math.max(baseSeries.length - 1, 1);
+          const range = max - min || 1;
+          const rawIndex = Number(marker?.index);
+          if (!Number.isFinite(rawIndex)) return null;
+          const pointIndex = clamp(Math.round(rawIndex), 0, Math.max(baseSeries.length - 1, 0));
+          const explicitValue = toNumber(marker?.value);
+          const value = explicitValue === null ? baseSeries[pointIndex] : explicitValue;
+          if (value === null) return null;
 
-    return markers
-      .map((marker, markerIndex) => {
-        const rawIndex = Number(marker?.index);
-        if (!Number.isFinite(rawIndex)) return null;
-        const pointIndex = clamp(Math.round(rawIndex), 0, Math.max(baseSeries.length - 1, 0));
-        const explicitValue = toNumber(marker?.value);
-        const value = explicitValue === null ? baseSeries[pointIndex] : explicitValue;
-        if (value === null) return null;
+          const x = (pointIndex / denominator) * width;
+          const y = height - pad - ((value - min) / range) * (height - pad * 2);
+          const flagTop = Math.max(6, y - 18);
+          const flagBottom = Math.max(9, y - 9);
+          const flip = x > width - 28;
+          const flagMid = (flagTop + flagBottom) / 2;
+          const flagPath = flip
+            ? `M${x},${flagTop} L${x},${flagBottom} L${x - 8},${flagMid} Z`
+            : `M${x},${flagTop} L${x},${flagBottom} L${x + 8},${flagMid} Z`;
+          const countRaw = Number(marker?.count);
+          const count = Number.isFinite(countRaw) && countRaw > 1 ? Math.round(countRaw) : null;
+          const tone = String(marker?.tone || '').toLowerCase();
+          const color = tone === 'up' ? '#62ffcc' : tone === 'down' ? '#ff8ca6' : '#ffd166';
 
-        const x = (pointIndex / denominator) * width;
-        const y = height - pad - ((value - min) / range) * (height - pad * 2);
-        const flagTop = Math.max(6, y - 18);
-        const flagBottom = Math.max(9, y - 9);
-        const flip = x > width - 28;
-        const flagMid = (flagTop + flagBottom) / 2;
-        const flagPath = flip
-          ? `M${x},${flagTop} L${x},${flagBottom} L${x - 8},${flagMid} Z`
-          : `M${x},${flagTop} L${x},${flagBottom} L${x + 8},${flagMid} Z`;
-        const countRaw = Number(marker?.count);
-        const count = Number.isFinite(countRaw) && countRaw > 1 ? Math.round(countRaw) : null;
-        const tone = String(marker?.tone || '').toLowerCase();
-        const color = tone === 'up' ? '#62ffcc' : tone === 'down' ? '#ff8ca6' : '#ffd166';
-
-        return {
-          key: marker?.key || `marker:${markerIndex}:${pointIndex}`,
-          title: String(marker?.title || `trade @ ${fmtNum(value, 4)}${unit}`),
-          color,
-          x,
-          y,
-          flagBottom,
-          flagPath,
-          count,
-          countX: flip ? x - 11 : x + 11,
-          countAnchor: flip ? 'end' : 'start'
-        };
-      })
-      .filter((marker) => Boolean(marker));
-  }, [markers, baseSeries, max, min, height, width, pad, unit]);
+          return {
+            key: marker?.key || `marker:${markerIndex}:${pointIndex}`,
+            title: String(marker?.title || `trade @ ${fmtNum(value, 4)}${unit}`),
+            color,
+            x,
+            y,
+            flagBottom,
+            flagPath,
+            count,
+            countX: flip ? x - 11 : x + 11,
+            countAnchor: flip ? 'end' : 'start'
+          };
+        })
+        .filter((marker) => Boolean(marker));
 
   const showLegend = overlaySeries.length > 0 || markerSpecs.length > 0;
 
