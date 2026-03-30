@@ -5,6 +5,8 @@ import { Link } from '../lib/router';
 
 const VIEWBOX_WIDTH = 1240;
 const VIEWBOX_HEIGHT = 760;
+const STRUCTURE_WIDTH = 1240;
+const STRUCTURE_HEIGHT = 690;
 
 const LIMITS = {
   providers: 18,
@@ -13,6 +15,12 @@ const LIMITS = {
   signals: 28,
   strategies: 14,
   edges: 520
+};
+
+const STRUCTURE_LIMITS = {
+  markets: 96,
+  tokens: 30,
+  edges: 130
 };
 
 const TYPE_X = {
@@ -31,6 +39,9 @@ const TYPE_LABEL = {
   strategy: 'Strategies'
 };
 
+const QUOTE_SUFFIXES = ['USDT', 'USDC', 'USD', 'BTC', 'ETH', 'EUR', 'GBP', 'JPY', 'AUD', 'CAD', 'CHF', 'NZD'];
+const STABLE_TOKENS = new Set(['USDT', 'USDC', 'USD']);
+
 const asNum = (value, fallback = 0) => {
   const num = Number(value);
   return Number.isFinite(num) ? num : fallback;
@@ -45,6 +56,50 @@ const shortLabel = (value, max = 16) => {
 const marketIdentity = (symbol, assetClass) => `${String(symbol || '').toLowerCase()}|${String(assetClass || '').toLowerCase()}`;
 const providerKeyOf = (provider) => String(provider?.id || provider?.name || '').toLowerCase();
 const strategyKeyOf = (name) => String(name || '').toLowerCase();
+
+const normalizeSymbol = (value) => String(value || '').toUpperCase().replace(/[^A-Z0-9]/g, '');
+
+const parsePair = (symbol, assetClass) => {
+  const clean = String(symbol || '').toUpperCase();
+  if (!clean) return null;
+
+  if (clean.includes('/')) {
+    const [base, quote] = clean.split('/');
+    if (base && quote) return { base: normalizeSymbol(base), quote: normalizeSymbol(quote) };
+  }
+  if (clean.includes('-')) {
+    const [base, quote] = clean.split('-');
+    if (base && quote) return { base: normalizeSymbol(base), quote: normalizeSymbol(quote) };
+  }
+
+  const normalized = normalizeSymbol(clean);
+  const lowerAsset = String(assetClass || '').toLowerCase();
+
+  if (lowerAsset === 'fx' && normalized.length === 6) {
+    return {
+      base: normalized.slice(0, 3),
+      quote: normalized.slice(3)
+    };
+  }
+
+  for (const suffix of QUOTE_SUFFIXES) {
+    if (normalized.endsWith(suffix) && normalized.length > suffix.length + 1) {
+      return {
+        base: normalized.slice(0, normalized.length - suffix.length),
+        quote: suffix
+      };
+    }
+  }
+
+  if (lowerAsset === 'equity') {
+    return {
+      base: normalized,
+      quote: 'USD'
+    };
+  }
+
+  return null;
+};
 
 const rankMarkets = (markets = []) => {
   return [...markets]
@@ -309,8 +364,177 @@ const buildGraph = (snapshot) => {
   };
 };
 
+const buildStructureGraph = (snapshot) => {
+  const watchedMarkets = [...(snapshot.markets || [])]
+    .filter((market) => Boolean(market?.key))
+    .sort((a, b) => asNum(b.totalVolume) - asNum(a.totalVolume))
+    .slice(0, STRUCTURE_LIMITS.markets);
+
+  const tokenStats = new Map();
+  const edgeStats = new Map();
+
+  const touchToken = (token, marketVolume) => {
+    const key = normalizeSymbol(token);
+    if (!key) return null;
+    const current = tokenStats.get(key) || {
+      key,
+      count: 0,
+      volume: 0
+    };
+    current.count += 1;
+    current.volume += asNum(marketVolume);
+    tokenStats.set(key, current);
+    return current;
+  };
+
+  for (const market of watchedMarkets) {
+    const pair = parsePair(market.symbol, market.assetClass);
+    if (!pair || !pair.base || !pair.quote || pair.base === pair.quote) continue;
+    const base = normalizeSymbol(pair.base);
+    const quote = normalizeSymbol(pair.quote);
+    const marketVolume = asNum(market.totalVolume);
+    touchToken(base, marketVolume);
+    touchToken(quote, marketVolume);
+
+    const edgeKey = [base, quote].sort().join('|');
+    const current = edgeStats.get(edgeKey) || {
+      key: edgeKey,
+      from: base,
+      to: quote,
+      marketCount: 0,
+      volume: 0
+    };
+    current.marketCount += 1;
+    current.volume += marketVolume;
+    edgeStats.set(edgeKey, current);
+  }
+
+  if (tokenStats.has('BTC')) {
+    for (const token of tokenStats.values()) {
+      if (!token?.key || token.key === 'BTC' || STABLE_TOKENS.has(token.key)) continue;
+      const edgeKey = [token.key, 'BTC'].sort().join('|');
+      const current = edgeStats.get(edgeKey) || {
+        key: edgeKey,
+        from: token.key,
+        to: 'BTC',
+        marketCount: 0,
+        volume: 0
+      };
+      current.marketCount += 0.45;
+      current.volume += token.volume * 0.18;
+      edgeStats.set(edgeKey, current);
+    }
+  }
+
+  const rankedTokens = [...tokenStats.values()]
+    .map((token) => ({
+      ...token,
+      score: token.count * 2 + Math.log1p(token.volume / 1000000)
+    }))
+    .sort((a, b) => b.score - a.score)
+    .slice(0, STRUCTURE_LIMITS.tokens);
+
+  const selectedTokenSet = new Set(rankedTokens.map((token) => token.key));
+  const selectedEdges = [...edgeStats.values()]
+    .filter((edge) => selectedTokenSet.has(edge.from) && selectedTokenSet.has(edge.to))
+    .sort((a, b) => {
+      const aWeight = a.marketCount * 3 + Math.log1p(a.volume / 1000000);
+      const bWeight = b.marketCount * 3 + Math.log1p(b.volume / 1000000);
+      return bWeight - aWeight;
+    })
+    .slice(0, STRUCTURE_LIMITS.edges);
+
+  const degreeMap = new Map();
+  for (const token of rankedTokens) {
+    degreeMap.set(token.key, 0);
+  }
+  for (const edge of selectedEdges) {
+    degreeMap.set(edge.from, asNum(degreeMap.get(edge.from)) + edge.marketCount);
+    degreeMap.set(edge.to, asNum(degreeMap.get(edge.to)) + edge.marketCount);
+  }
+
+  const rankedByDegree = [...rankedTokens].sort((a, b) => asNum(degreeMap.get(b.key)) - asNum(degreeMap.get(a.key)));
+  const hub = rankedByDegree[0] || null;
+
+  const centerX = STRUCTURE_WIDTH / 2;
+  const centerY = STRUCTURE_HEIGHT / 2;
+  const ringA = 185;
+  const ringB = 300;
+  const others = rankedByDegree.slice(1);
+  const coreCount = Math.min(10, others.length);
+  const core = others.slice(0, coreCount);
+  const outer = others.slice(coreCount);
+  const positions = new Map();
+
+  if (hub) {
+    positions.set(hub.key, {
+      ...hub,
+      x: centerX,
+      y: centerY,
+      tier: 'hub',
+      degree: asNum(degreeMap.get(hub.key))
+    });
+  }
+
+  for (let index = 0; index < core.length; index += 1) {
+    const token = core[index];
+    const angle = (Math.PI * 2 * index) / Math.max(core.length, 1) - Math.PI / 2;
+    positions.set(token.key, {
+      ...token,
+      x: centerX + Math.cos(angle) * ringA,
+      y: centerY + Math.sin(angle) * ringA,
+      tier: 'core',
+      degree: asNum(degreeMap.get(token.key))
+    });
+  }
+
+  for (let index = 0; index < outer.length; index += 1) {
+    const token = outer[index];
+    const angle = (Math.PI * 2 * index) / Math.max(outer.length, 1) - Math.PI / 2 + 0.12;
+    positions.set(token.key, {
+      ...token,
+      x: centerX + Math.cos(angle) * ringB,
+      y: centerY + Math.sin(angle) * ringB,
+      tier: 'outer',
+      degree: asNum(degreeMap.get(token.key))
+    });
+  }
+
+  const nodes = [...positions.values()];
+  const edges = selectedEdges
+    .map((edge) => {
+      const from = positions.get(edge.from);
+      const to = positions.get(edge.to);
+      if (!from || !to) return null;
+      return {
+        ...edge,
+        from,
+        to,
+        width: Math.min(4.6, 0.9 + edge.marketCount * 0.45)
+      };
+    })
+    .filter((edge) => Boolean(edge));
+
+  return {
+    nodes,
+    edges,
+    hub: hub
+      ? {
+          ...hub,
+          links: asNum(degreeMap.get(hub.key))
+        }
+      : null,
+    counts: {
+      markets: watchedMarkets.length,
+      tokens: nodes.length,
+      edges: edges.length
+    }
+  };
+};
+
 export default function GraphPage({ snapshot }) {
   const graph = useMemo(() => buildGraph(snapshot), [snapshot]);
+  const structure = useMemo(() => buildStructureGraph(snapshot), [snapshot]);
 
   return (
     <section className="page-grid">
@@ -321,7 +545,7 @@ export default function GraphPage({ snapshot }) {
             Back to markets
           </Link>
         </div>
-        <p>Connection map for watched markets, providers, signals, and strategies. Graph is intentionally capped to keep memory stable.</p>
+        <p>Connection map for watched markets, providers, signals, and strategies, plus a token-structure hub graph to expose central assets.</p>
       </GlowCard>
 
       <div className="detail-stat-grid">
@@ -395,6 +619,62 @@ export default function GraphPage({ snapshot }) {
               </g>
             );
           })}
+        </svg>
+      </GlowCard>
+
+      <div className="detail-stat-grid">
+        <GlowCard className="stat-card">
+          <span>Hub Token</span>
+          <strong>{structure.hub?.key || '-'}</strong>
+        </GlowCard>
+        <GlowCard className="stat-card">
+          <span>Paired Markets</span>
+          <strong>{fmtInt(structure.counts.markets)}</strong>
+        </GlowCard>
+        <GlowCard className="stat-card">
+          <span>Tokens</span>
+          <strong>{fmtInt(structure.counts.tokens)}</strong>
+        </GlowCard>
+        <GlowCard className="stat-card">
+          <span>Token Edges</span>
+          <strong>{fmtInt(structure.counts.edges)}</strong>
+        </GlowCard>
+      </div>
+
+      <GlowCard className="graph-card">
+        <div className="graph-head">
+          <h2>Market Structure Hubs</h2>
+          <span>
+            central {structure.hub?.key || '-'} | degree {fmtInt(structure.hub?.links || 0)}
+          </span>
+        </div>
+        <svg className="structure-graph-svg" viewBox={`0 0 ${STRUCTURE_WIDTH} ${STRUCTURE_HEIGHT}`} role="img" aria-label="Token hub graph">
+          <circle cx={STRUCTURE_WIDTH / 2} cy={STRUCTURE_HEIGHT / 2} r="185" className="structure-ring" />
+          <circle cx={STRUCTURE_WIDTH / 2} cy={STRUCTURE_HEIGHT / 2} r="300" className="structure-ring outer" />
+
+          {structure.edges.map((edge) => (
+            <line
+              key={`edge:${edge.key}`}
+              x1={edge.from.x}
+              y1={edge.from.y}
+              x2={edge.to.x}
+              y2={edge.to.y}
+              className="structure-edge"
+              style={{ strokeWidth: edge.width }}
+            />
+          ))}
+
+          {structure.nodes.map((node) => (
+            <g key={`token:${node.key}`}>
+              <circle cx={node.x} cy={node.y} r={node.tier === 'hub' ? 10.5 : node.tier === 'core' ? 8.4 : 6.3} className={`structure-node ${node.tier}`} />
+              <text x={node.x} y={node.y - (node.tier === 'hub' ? 14 : 10)} textAnchor="middle" className="structure-label">
+                {shortLabel(node.key, 11)}
+              </text>
+              <text x={node.x} y={node.y + (node.tier === 'hub' ? 18 : 15)} textAnchor="middle" className="structure-meta">
+                {fmtInt(node.degree)} links
+              </text>
+            </g>
+          ))}
         </svg>
       </GlowCard>
     </section>

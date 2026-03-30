@@ -35,6 +35,7 @@ export default function StrategyLabPage({ snapshot, historyByMarket }) {
     eventLog,
     tradeLog,
     backtest,
+    signalRows,
     sourceOptions,
     strategyOptions,
     scenarioOptions,
@@ -184,6 +185,30 @@ export default function StrategyLabPage({ snapshot, historyByMarket }) {
         </p>
       </GlowCard>
 
+      <GlowCard className="panel-card">
+        <div className="section-head">
+          <h2>Signal Set -> Strategy</h2>
+          <span>{signalRows.length} inputs</span>
+        </div>
+        <div className="list-stack">
+          {signalRows.slice(0, 8).map((signal) => (
+            <article key={signal.id} className="list-item">
+              <strong>
+                {signal.type} | {signal.direction || 'neutral'} | {signal.symbol || selectedMarket?.symbol || '-'}
+              </strong>
+              <p>{signal.message || 'signal input'}</p>
+              <div className="item-meta">
+                <span className={`severity ${String(signal.severity || 'low').toLowerCase()}`}>{signal.severity || 'low'}</span>
+                <small>score {fmtInt(signal.score)}</small>
+                <small>{signal.assetClass || selectedMarket?.assetClass || '-'}</small>
+                <small>{fmtTime(signal.timestamp)}</small>
+              </div>
+            </article>
+          ))}
+          {signalRows.length === 0 ? <p className="action-message">No signal inputs available yet.</p> : null}
+        </div>
+      </GlowCard>
+
       <div className="detail-stat-grid">
         <GlowCard className="stat-card">
           <span>Wallet Equity</span>
@@ -283,7 +308,8 @@ export default function StrategyLabPage({ snapshot, historyByMarket }) {
                 </strong>
                 <p>{item.reason}</p>
                 <small>
-                  score {fmtNum(item.score, 2)} | px {fmtNum(item.price, 4)} | spr {fmtNum(item.spread, 2)} bps | {fmtTime(item.timestamp)}
+                  {item.triggerKind} | sigs {fmtInt(item.signalCount)} | score {fmtNum(item.score, 2)} | px {fmtNum(item.price, 4)} | spr{' '}
+                  {fmtNum(item.spread, 2)} bps | {fmtTime(item.timestamp)}
                 </small>
               </article>
             )}

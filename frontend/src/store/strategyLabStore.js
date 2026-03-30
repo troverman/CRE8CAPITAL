@@ -75,7 +75,7 @@ export const useStrategyLabStore = create((set) => ({
       ...state,
       backtest
     })),
-  stepRuntime: ({ point, sourceLabel = '', forceEvent = false }) =>
+  stepRuntime: ({ point, sourceLabel = '', forceEvent = false, signalRows = [], selectedMarket = null }) =>
     set((state) => {
       if (!point || !Number.isFinite(Number(point.price))) return state;
 
@@ -91,7 +91,9 @@ export const useStrategyLabStore = create((set) => ({
       const runtimeSeries = trimTail([...state.runtimeSeries, normalizedPoint], MAX_RUNTIME_POINTS);
       const signal = evaluateStrategy({
         strategyId: state.strategyId,
-        series: runtimeSeries
+        series: runtimeSeries,
+        signalRows,
+        selectedMarket
       });
 
       const execution = executeWalletAction({
@@ -123,7 +125,9 @@ export const useStrategyLabStore = create((set) => ({
                 price: normalizedPoint.price,
                 spread: normalizedPoint.spread,
                 source: sourceLabel || state.sourceId,
-                traded: Boolean(execution.trade)
+                traded: Boolean(execution.trade),
+                signalCount: Number(signal.signalCount) || 0,
+                triggerKind: signal.triggerKind || 'price'
               },
               ...state.eventLog
             ],

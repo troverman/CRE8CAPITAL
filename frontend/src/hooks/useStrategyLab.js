@@ -3,6 +3,7 @@ import {
   buildScenarioSeries,
   runBacktest,
   SCENARIO_OPTIONS,
+  selectSignalRowsForMarket,
   SOURCE_OPTIONS,
   STRATEGY_OPTIONS,
   toNum
@@ -96,6 +97,16 @@ export default function useStrategyLab({ snapshot, historyByMarket }) {
     });
   }, [basePrice, scenarioId, selectedMarket?.symbol]);
 
+  const liveSignalRows = useMemo(() => {
+    return selectSignalRowsForMarket({
+      snapshotSignals: snapshot?.signals || [],
+      selectedMarket,
+      fallbackSeries: liveHistorySeries,
+      now: Date.now(),
+      maxRows: 12
+    });
+  }, [liveHistorySeries, selectedMarket, snapshot?.signals]);
+
   const cursorRef = useRef(0);
 
   useEffect(() => {
@@ -145,10 +156,12 @@ export default function useStrategyLab({ snapshot, historyByMarket }) {
       stepRuntime({
         point,
         forceEvent,
-        sourceLabel: sourceLabel || sourceId
+        sourceLabel: sourceLabel || sourceId,
+        signalRows: liveSignalRows,
+        selectedMarket
       });
     },
-    [buildMarketFeedPoint, buildScenarioPoint, sourceId, stepRuntime]
+    [buildMarketFeedPoint, buildScenarioPoint, liveSignalRows, selectedMarket, sourceId, stepRuntime]
   );
 
   useEffect(() => {
@@ -167,6 +180,8 @@ export default function useStrategyLab({ snapshot, historyByMarket }) {
     const result = runBacktest({
       series: dataSeries,
       strategyId,
+      signalRows: liveSignalRows,
+      selectedMarket,
       startCash: 100000,
       maxAbsUnits,
       slippageBps
@@ -181,7 +196,20 @@ export default function useStrategyLab({ snapshot, historyByMarket }) {
       ranAt: Date.now(),
       sampleSize: dataSeries.length
     });
-  }, [liveHistorySeries, scenarioSeries, sourceId, strategyId, maxAbsUnits, slippageBps, setBacktest, scenarioId, selectedMarket?.key, selectedMarket?.symbol]);
+  }, [
+    liveHistorySeries,
+    scenarioSeries,
+    sourceId,
+    strategyId,
+    liveSignalRows,
+    selectedMarket,
+    maxAbsUnits,
+    slippageBps,
+    setBacktest,
+    scenarioId,
+    selectedMarket?.key,
+    selectedMarket?.symbol
+  ]);
 
   useEffect(() => {
     if (backtest) return;
@@ -283,6 +311,7 @@ export default function useStrategyLab({ snapshot, historyByMarket }) {
     eventLog,
     tradeLog,
     backtest,
+    signalRows: liveSignalRows,
     sourceOptions: SOURCE_OPTIONS,
     strategyOptions: STRATEGY_OPTIONS,
     scenarioOptions: SCENARIO_OPTIONS,

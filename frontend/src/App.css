@@ -1090,6 +1090,62 @@ th {
   fill: #97a7d1;
 }
 
+.structure-graph-svg {
+  width: 100%;
+  border: 1px solid rgba(122, 143, 208, 0.3);
+  border-radius: 13px;
+  background:
+    radial-gradient(circle at 50% 50%, rgba(96, 213, 255, 0.11), transparent 35%),
+    radial-gradient(circle at 8% 88%, rgba(133, 117, 255, 0.1), transparent 30%),
+    rgba(7, 10, 20, 0.92);
+}
+
+.structure-ring {
+  fill: none;
+  stroke: rgba(124, 145, 214, 0.17);
+  stroke-width: 1.2;
+  stroke-dasharray: 5 7;
+}
+
+.structure-ring.outer {
+  stroke: rgba(124, 145, 214, 0.12);
+}
+
+.structure-edge {
+  stroke: rgba(126, 199, 255, 0.42);
+  stroke-linecap: round;
+  opacity: 0.62;
+}
+
+.structure-node {
+  stroke-width: 1.4;
+}
+
+.structure-node.hub {
+  fill: #72eeff;
+  stroke: rgba(114, 238, 255, 0.52);
+}
+
+.structure-node.core {
+  fill: #8da0ff;
+  stroke: rgba(141, 160, 255, 0.48);
+}
+
+.structure-node.outer {
+  fill: #86debc;
+  stroke: rgba(134, 222, 188, 0.44);
+}
+
+.structure-label {
+  font-size: 10.6px;
+  fill: #ecf2ff;
+}
+
+.structure-meta {
+  font-size: 8.6px;
+  fill: #93a4d3;
+}
+
 @keyframes spin {
   to {
     transform: rotate(360deg);

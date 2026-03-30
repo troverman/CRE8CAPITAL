@@ -58,7 +58,10 @@ export const STRATEGY_OPTIONS = [
   { id: 'tensor-lite', label: 'Tensor Lite' },
   { id: 'momentum', label: 'Momentum' },
   { id: 'mean-reversion', label: 'Mean Reversion' },
-  { id: 'breakout', label: 'Breakout' }
+  { id: 'breakout', label: 'Breakout' },
+  { id: 'signal-single', label: 'Signal Single' },
+  { id: 'signal-consensus', label: 'Signal Consensus' },
+  { id: 'signal-cluster', label: 'Signal Cluster' }
 ];
 
 export const SCENARIO_OPTIONS = [
@@ -72,6 +75,146 @@ export const SOURCE_OPTIONS = [
   { id: 'local-scenario', label: 'Local Scenario' },
   { id: 'market-feed', label: 'Live Market Feed' }
 ];
+
+const SIGNAL_STRATEGIES = new Set(['signal-single', 'signal-consensus', 'signal-cluster']);
+
+const severityWeight = (severity) => {
+  const value = String(severity || '').toLowerCase();
+  if (value === 'high') return 1.5;
+  if (value === 'medium') return 1;
+  return 0.62;
+};
+
+const directionScore = (signal) => {
+  const direction = String(signal?.direction || signal?.action || '').toLowerCase();
+  if (direction.includes('long') || direction.includes('bull') || direction.includes('accumulate') || direction.includes('buy')) return 1;
+  if (direction.includes('short') || direction.includes('bear') || direction.includes('reduce') || direction.includes('sell')) return -1;
+
+  const text = `${String(signal?.type || '')} ${String(signal?.message || '')}`.toLowerCase();
+  if (text.includes('upside') || text.includes('breakout') || text.includes('momentum up') || text.includes('bull')) return 1;
+  if (text.includes('downside') || text.includes('breakdown') || text.includes('momentum down') || text.includes('bear')) return -1;
+  return 0;
+};
+
+const normalizeSignalRows = (signalRows = []) => {
+  if (!Array.isArray(signalRows)) return [];
+  return signalRows
+    .map((signal, index) => ({
+      id: signal?.id || `signal:${index}`,
+      symbol: String(signal?.symbol || '').toUpperCase(),
+      assetClass: String(signal?.assetClass || '').toLowerCase(),
+      type: String(signal?.type || 'signal'),
+      direction: String(signal?.direction || ''),
+      severity: String(signal?.severity || 'low').toLowerCase(),
+      score: clamp(toNum(signal?.score, 0), 0, 100),
+      timestamp: toNum(signal?.timestamp, Date.now()),
+      message: String(signal?.message || '')
+    }))
+    .filter((signal) => signal.symbol || signal.message);
+};
+
+const alignSignalsToMarket = ({ signalRows = [], selectedMarket }) => {
+  const normalized = normalizeSignalRows(signalRows);
+  if (!selectedMarket) return normalized.slice(0, 12);
+  const symbol = String(selectedMarket.symbol || '').toUpperCase();
+  const assetClass = String(selectedMarket.assetClass || '').toLowerCase();
+  const scoped = normalized.filter((signal) => {
+    return signal.symbol === symbol && signal.assetClass === assetClass;
+  });
+  if (scoped.length > 0) return scoped.slice(0, 12);
+  return normalized.slice(0, 12);
+};
+
+const inferSeverity = (value) => {
+  if (value >= 70) return 'high';
+  if (value >= 38) return 'medium';
+  return 'low';
+};
+
+export const buildSyntheticSignalRows = ({ series = [], selectedMarket = null, now = Date.now() }) => {
+  if (!Array.isArray(series) || series.length < 3) return [];
+  const prices = series.map((point) => Math.max(toNum(point.price, 0), 1e-9));
+  const latest = prices[prices.length - 1];
+  const prev = prices[prices.length - 2];
+  const short = sma(prices, 8) || latest;
+  const long = sma(prices, 21) || latest;
+  const momentumPct = ((latest - prev) / Math.max(prev, 1e-9)) * 100;
+  const trendBps = ((short - long) / Math.max(latest, 1e-9)) * 10000;
+  const spread = Math.max(0, toNum(series[series.length - 1]?.spread, 0));
+  const absMomentum = Math.abs(momentumPct);
+  const absTrend = Math.abs(trendBps);
+
+  const symbol = String(selectedMarket?.symbol || 'SIM').toUpperCase();
+  const assetClass = String(selectedMarket?.assetClass || 'synthetic').toLowerCase();
+
+  const momentumScore = clamp(absMomentum * 120 + absTrend * 0.42, 10, 98);
+  const momentumDirection = momentumPct >= 0 ? 'long' : 'short';
+  const trendScore = clamp(absTrend * 0.78 + absMomentum * 28, 10, 98);
+  const trendDirection = trendBps >= 0 ? 'long' : 'short';
+  const spreadScore = clamp((spread - 8) * 3.5, 8, 96);
+
+  return [
+    {
+      id: `synthetic:momentum:${now}`,
+      symbol,
+      assetClass,
+      type: 'synthetic-momentum',
+      direction: momentumDirection,
+      severity: inferSeverity(momentumScore),
+      score: Math.round(momentumScore),
+      timestamp: now,
+      message: `synthetic momentum ${momentumPct.toFixed(2)}%`
+    },
+    {
+      id: `synthetic:trend:${now}`,
+      symbol,
+      assetClass,
+      type: 'synthetic-trend',
+      direction: trendDirection,
+      severity: inferSeverity(trendScore),
+      score: Math.round(trendScore),
+      timestamp: now,
+      message: `synthetic trend ${trendBps.toFixed(2)} bps`
+    },
+    {
+      id: `synthetic:spread:${now}`,
+      symbol,
+      assetClass,
+      type: 'synthetic-spread-risk',
+      direction: spread > 28 ? 'short' : 'long',
+      severity: inferSeverity(spreadScore),
+      score: Math.round(spreadScore),
+      timestamp: now,
+      message: `synthetic spread ${spread.toFixed(2)} bps`
+    }
+  ];
+};
+
+export const selectSignalRowsForMarket = ({
+  snapshotSignals = [],
+  selectedMarket = null,
+  fallbackSeries = [],
+  now = Date.now(),
+  maxRows = 12
+}) => {
+  const scoped = alignSignalsToMarket({
+    signalRows: snapshotSignals,
+    selectedMarket
+  })
+    .sort((a, b) => {
+      const aWeight = toNum(a.score, 0) + toNum(a.timestamp, 0) / 1000000000000;
+      const bWeight = toNum(b.score, 0) + toNum(b.timestamp, 0) / 1000000000000;
+      return bWeight - aWeight;
+    })
+    .slice(0, maxRows);
+
+  if (scoped.length > 0) return scoped;
+  return buildSyntheticSignalRows({
+    series: fallbackSeries,
+    selectedMarket,
+    now
+  }).slice(0, maxRows);
+};
 
 export const DEFAULT_WALLET_CASH = 100000;
 
@@ -119,13 +262,15 @@ const rollingLow = (values, length) => {
   return Math.min(...slice);
 };
 
-export const evaluateStrategy = ({ strategyId, series = [] }) => {
+const evaluatePriceStrategy = ({ strategyId, series = [] }) => {
   if (!Array.isArray(series) || series.length < 2) {
     return {
       action: 'hold',
       score: 0,
       stance: 'neutral',
-      reason: 'Waiting for enough data'
+      reason: 'Waiting for enough data',
+      signalCount: 0,
+      triggerKind: 'price'
     };
   }
 
@@ -151,7 +296,9 @@ export const evaluateStrategy = ({ strategyId, series = [] }) => {
       action,
       score,
       stance: score > 1.2 ? 'bullish' : score < -1.2 ? 'bearish' : 'neutral',
-      reason: `z-score ${z.toFixed(2)} around 20-bar mean, spread ${latestSpread.toFixed(2)} bps`
+      reason: `z-score ${z.toFixed(2)} around 20-bar mean, spread ${latestSpread.toFixed(2)} bps`,
+      signalCount: 0,
+      triggerKind: 'price'
     };
   }
 
@@ -166,7 +313,9 @@ export const evaluateStrategy = ({ strategyId, series = [] }) => {
       action,
       score,
       stance: action === 'accumulate' ? 'bullish' : action === 'reduce' ? 'bearish' : 'neutral',
-      reason: `breakout window hi ${high.toFixed(4)} / lo ${low.toFixed(4)}, spread ${latestSpread.toFixed(2)} bps`
+      reason: `breakout window hi ${high.toFixed(4)} / lo ${low.toFixed(4)}, spread ${latestSpread.toFixed(2)} bps`,
+      signalCount: 0,
+      triggerKind: 'price'
     };
   }
 
@@ -177,7 +326,9 @@ export const evaluateStrategy = ({ strategyId, series = [] }) => {
       action,
       score,
       stance: score > 2 ? 'bullish' : score < -2 ? 'bearish' : 'neutral',
-      reason: `momentum ${momentumPct.toFixed(2)}%, trend ${trendBps.toFixed(2)} bps, spread ${latestSpread.toFixed(2)} bps`
+      reason: `momentum ${momentumPct.toFixed(2)}%, trend ${trendBps.toFixed(2)} bps, spread ${latestSpread.toFixed(2)} bps`,
+      signalCount: 0,
+      triggerKind: 'price'
     };
   }
 
@@ -188,8 +339,142 @@ export const evaluateStrategy = ({ strategyId, series = [] }) => {
     action,
     score,
     stance: score > 2 ? 'bullish' : score < -2 ? 'bearish' : 'neutral',
-    reason: `tensor-lite drift ${trendBps.toFixed(2)} bps, momentum ${momentumPct.toFixed(2)}%, spread ${latestSpread.toFixed(2)} bps`
+    reason: `tensor-lite drift ${trendBps.toFixed(2)} bps, momentum ${momentumPct.toFixed(2)}%, spread ${latestSpread.toFixed(2)} bps`,
+    signalCount: 0,
+    triggerKind: 'price'
   };
+};
+
+const evaluateSignalStrategy = ({ strategyId, series = [], signalRows = [], selectedMarket = null }) => {
+  if (!Array.isArray(series) || series.length === 0) {
+    return {
+      action: 'hold',
+      score: 0,
+      stance: 'neutral',
+      reason: 'Signal strategy waiting for price stream',
+      signalCount: 0,
+      triggerKind: 'signal'
+    };
+  }
+
+  const latestSpread = Math.max(0, toNum(series[series.length - 1]?.spread, 0));
+  const now = toNum(series[series.length - 1]?.t, Date.now());
+  const syntheticRows = buildSyntheticSignalRows({
+    series,
+    selectedMarket,
+    now
+  });
+
+  const rows = alignSignalsToMarket({
+    signalRows: signalRows?.length ? signalRows : syntheticRows,
+    selectedMarket
+  });
+
+  if (rows.length === 0) {
+    return {
+      action: 'hold',
+      score: 0,
+      stance: 'neutral',
+      reason: 'Signal strategy waiting for signal rows',
+      signalCount: 0,
+      triggerKind: 'signal'
+    };
+  }
+
+  const weighted = rows.map((row) => {
+    const dir = directionScore(row);
+    const baseWeight = severityWeight(row.severity) * clamp(toNum(row.score, 0) / 100, 0.1, 1.6);
+    const ageSec = Math.max(0, (now - toNum(row.timestamp, now)) / 1000);
+    const ageWeight = Math.exp(-ageSec / 240);
+    const weight = baseWeight * ageWeight;
+    return {
+      ...row,
+      dir,
+      weight,
+      signedWeight: dir * weight
+    };
+  });
+
+  const directionalRows = weighted.filter((row) => row.dir !== 0);
+  const totalAbs = directionalRows.reduce((sum, row) => sum + Math.abs(row.weight), 0);
+  const net = directionalRows.reduce((sum, row) => sum + row.signedWeight, 0);
+  const consensus = totalAbs > 0 ? net / totalAbs : 0;
+  const bullishWeight = directionalRows.filter((row) => row.dir > 0).reduce((sum, row) => sum + row.weight, 0);
+  const bearishWeight = directionalRows.filter((row) => row.dir < 0).reduce((sum, row) => sum + row.weight, 0);
+  const top = [...directionalRows].sort((a, b) => Math.abs(b.signedWeight) - Math.abs(a.signedWeight))[0] || null;
+  const spreadPenalty = clamp((latestSpread - 15) / 7, 0, 7);
+  const spreadGuard = latestSpread > 48;
+
+  if (spreadGuard) {
+    return {
+      action: 'hold',
+      score: consensus * 8 - spreadPenalty * 1.5,
+      stance: 'neutral',
+      reason: `signal guard blocked by spread ${latestSpread.toFixed(2)} bps`,
+      signalCount: directionalRows.length,
+      triggerKind: 'signal'
+    };
+  }
+
+  if (strategyId === 'signal-single') {
+    const topStrength = top ? Math.abs(top.signedWeight) : 0;
+    const action = !top || topStrength < 0.28 ? 'hold' : top.dir > 0 ? 'accumulate' : 'reduce';
+    const score = (top ? top.dir * topStrength * 9 : 0) + consensus * 3.6 - spreadPenalty;
+    return {
+      action,
+      score,
+      stance: score > 1.4 ? 'bullish' : score < -1.4 ? 'bearish' : 'neutral',
+      reason: top
+        ? `top signal ${top.type} ${top.severity} ${top.dir > 0 ? 'bullish' : 'bearish'} on ${top.symbol}`
+        : 'No directional signal available',
+      signalCount: directionalRows.length,
+      triggerKind: 'signal'
+    };
+  }
+
+  if (strategyId === 'signal-cluster') {
+    const highConfidenceBull = directionalRows.filter((row) => row.dir > 0 && (row.severity === 'high' || row.severity === 'medium')).length;
+    const highConfidenceBear = directionalRows.filter((row) => row.dir < 0 && (row.severity === 'high' || row.severity === 'medium')).length;
+    const clusterDelta = bullishWeight - bearishWeight;
+    const action =
+      highConfidenceBull >= 2 && clusterDelta > 0.35
+        ? 'accumulate'
+        : highConfidenceBear >= 2 && clusterDelta < -0.35
+          ? 'reduce'
+          : 'hold';
+    const score = clusterDelta * 8.2 + (highConfidenceBull - highConfidenceBear) * 1.5 - spreadPenalty;
+    return {
+      action,
+      score,
+      stance: score > 1.8 ? 'bullish' : score < -1.8 ? 'bearish' : 'neutral',
+      reason: `cluster bull ${highConfidenceBull} / bear ${highConfidenceBear}, weighted delta ${clusterDelta.toFixed(2)}`,
+      signalCount: directionalRows.length,
+      triggerKind: 'signal'
+    };
+  }
+
+  const action = consensus > 0.24 ? 'accumulate' : consensus < -0.24 ? 'reduce' : 'hold';
+  const score = consensus * 11.4 + (directionalRows.length >= 3 ? 1.1 : 0) - spreadPenalty * 1.1;
+  return {
+    action,
+    score,
+    stance: score > 1.4 ? 'bullish' : score < -1.4 ? 'bearish' : 'neutral',
+    reason: `consensus ${consensus.toFixed(2)} from ${directionalRows.length} directional signals`,
+    signalCount: directionalRows.length,
+    triggerKind: 'signal'
+  };
+};
+
+export const evaluateStrategy = ({ strategyId, series = [], signalRows = [], selectedMarket = null }) => {
+  if (SIGNAL_STRATEGIES.has(strategyId)) {
+    return evaluateSignalStrategy({
+      strategyId,
+      series,
+      signalRows,
+      selectedMarket
+    });
+  }
+  return evaluatePriceStrategy({ strategyId, series });
 };
 
 export const executeWalletAction = ({
@@ -290,6 +575,8 @@ export const executeWalletAction = ({
 export const runBacktest = ({
   series = [],
   strategyId = 'tensor-lite',
+  signalRows = [],
+  selectedMarket = null,
   startCash = DEFAULT_WALLET_CASH,
   maxAbsUnits = 10,
   slippageBps = 1.2
@@ -319,7 +606,18 @@ export const runBacktest = ({
   for (let index = 1; index < series.length; index += 1) {
     const point = series[index];
     const subset = series.slice(0, index + 1);
-    const signal = evaluateStrategy({ strategyId, series: subset });
+    const syntheticRows = buildSyntheticSignalRows({
+      series: subset,
+      selectedMarket,
+      now: toNum(point.t, Date.now())
+    });
+    const activeSignalRows = SIGNAL_STRATEGIES.has(strategyId) ? [...alignSignalsToMarket({ signalRows, selectedMarket }), ...syntheticRows] : [];
+    const signal = evaluateStrategy({
+      strategyId,
+      series: subset,
+      signalRows: activeSignalRows,
+      selectedMarket
+    });
     signalLog.push({
       id: `signal:${toNum(point.t, index)}:${index}`,
       timestamp: toNum(point.t, Date.now()),
@@ -327,7 +625,9 @@ export const runBacktest = ({
       stance: signal.stance,
       score: signal.score,
       reason: signal.reason,
-      price: toNum(point.price, 0)
+      price: toNum(point.price, 0),
+      signalCount: toNum(signal.signalCount, 0),
+      triggerKind: signal.triggerKind || 'price'
     });
 
     const execution = executeWalletAction({
