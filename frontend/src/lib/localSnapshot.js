@@ -226,13 +226,19 @@ export const buildLocalFallbackSnapshot = (previousSnapshot) => {
   });
 
   const previousUptime = toNum(previousSnapshot?.telemetry?.uptimeMs, 0);
+  const previousSignalTotal = toNum(previousSnapshot?.signalSummary?.total, toNum(previousSnapshot?.telemetry?.signalsGenerated, 0));
+  const previousDecisionTotal = toNum(previousSnapshot?.strategySummary?.totalDecisions, toNum(previousSnapshot?.telemetry?.decisionsGenerated, 0));
+  const nextSignalTotal = previousSignalTotal + signals.length;
+  const nextDecisionTotal = previousDecisionTotal + decisions.length;
 
   return {
     running: true,
     now,
     telemetry: {
       uptimeMs: previousUptime + 3000,
-      localFallback: true
+      localFallback: true,
+      signalsGenerated: nextSignalTotal,
+      decisionsGenerated: nextDecisionTotal
     },
     controller: {
       mode: 'local-fallback'
@@ -245,6 +251,7 @@ export const buildLocalFallbackSnapshot = (previousSnapshot) => {
     },
     signals,
     signalSummary: {
+      total: nextSignalTotal,
       lastFiveMinutes: signals.length
     },
     strategies: [
@@ -255,7 +262,7 @@ export const buildLocalFallbackSnapshot = (previousSnapshot) => {
       }
     ],
     strategySummary: {
-      totalDecisions: toNum(previousSnapshot?.strategySummary?.totalDecisions, 0) + decisions.length
+      totalDecisions: nextDecisionTotal
     },
     positions: [],
     decisions,

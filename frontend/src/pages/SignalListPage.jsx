@@ -31,13 +31,21 @@ export default function SignalListPage({ snapshot }) {
     });
   }, [search, signals]);
 
+  const emittedTotal = useMemo(() => {
+    const summaryTotal = Number(snapshot?.signalSummary?.total);
+    const telemetryGenerated = Number(snapshot?.telemetry?.signalsGenerated);
+    const candidates = [summaryTotal, telemetryGenerated, signals.length].filter((value) => Number.isFinite(value));
+    if (candidates.length === 0) return signals.length;
+    return Math.max(...candidates);
+  }, [signals.length, snapshot?.signalSummary?.total, snapshot?.telemetry?.signalsGenerated]);
+
   return (
     <section className="page-grid">
       <GlowCard className="list-header-card">
         <div className="section-head">
           <h1>Live Signals</h1>
           <span>
-            {filtered.length} shown / {signals.length} total
+            {filtered.length} shown / {fmtInt(emittedTotal)} emitted
           </span>
         </div>
         <input
