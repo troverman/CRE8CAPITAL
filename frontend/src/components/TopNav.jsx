@@ -3,7 +3,8 @@ import { Link } from '../lib/router';
 const navItems = [
   { to: '/', label: 'Overview' },
   { to: '/markets', label: 'Markets' },
-  { to: '/assets', label: 'Assets' }
+  { to: '/assets', label: 'Assets' },
+  { to: '/graph', label: 'Graph' }
 ];
 
 export default function TopNav({ pathname, connected, transport, localFallback }) {
@@ -13,6 +14,7 @@ export default function TopNav({ pathname, connected, transport, localFallback }
     if (to === '/') return path === '/';
     if (to === '/markets') return path === '/markets' || path.startsWith('/market/');
     if (to === '/assets') return path === '/assets' || path.startsWith('/asset/');
+    if (to === '/graph') return path === '/graph';
     return path === to;
   };
 

@@ -823,6 +823,125 @@ th {
   color: var(--ink-soft);
 }
 
+.graph-card {
+  display: grid;
+  gap: 0.5rem;
+}
+
+.graph-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 0.45rem;
+  flex-wrap: wrap;
+}
+
+.graph-head h2 {
+  font-size: 0.96rem;
+}
+
+.graph-head span {
+  font-size: 0.72rem;
+  color: var(--ink-soft);
+}
+
+.graph-svg {
+  width: 100%;
+  border: 1px solid rgba(122, 143, 208, 0.3);
+  border-radius: 13px;
+  background:
+    radial-gradient(circle at 7% 0%, rgba(76, 206, 255, 0.12), transparent 24%),
+    radial-gradient(circle at 92% 98%, rgba(132, 118, 255, 0.12), transparent 28%),
+    rgba(7, 10, 20, 0.9);
+}
+
+.graph-col-label {
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  fill: #a8bae8;
+}
+
+.graph-col-line {
+  stroke: rgba(118, 137, 197, 0.2);
+  stroke-width: 1;
+}
+
+.graph-edge {
+  fill: none;
+  stroke-width: 1.2;
+  opacity: 0.58;
+}
+
+.graph-edge.provider-market {
+  stroke: rgba(104, 210, 255, 0.45);
+}
+
+.graph-edge.asset-market {
+  stroke: rgba(145, 158, 255, 0.44);
+}
+
+.graph-edge.market-signal {
+  stroke: rgba(255, 169, 101, 0.45);
+}
+
+.graph-edge.market-strategy {
+  stroke: rgba(255, 118, 145, 0.48);
+}
+
+.graph-edge.signal-strategy {
+  stroke: rgba(144, 239, 181, 0.5);
+}
+
+.graph-node-dot {
+  stroke-width: 1.2;
+}
+
+.graph-node-dot.provider {
+  fill: #54d4ff;
+  stroke: rgba(84, 212, 255, 0.35);
+}
+
+.graph-node-dot.asset {
+  fill: #8396ff;
+  stroke: rgba(131, 150, 255, 0.35);
+}
+
+.graph-node-dot.market {
+  fill: #87a9ff;
+  stroke: rgba(135, 169, 255, 0.35);
+}
+
+.graph-node-dot.market.up {
+  fill: #6effbd;
+  stroke: rgba(110, 255, 189, 0.38);
+}
+
+.graph-node-dot.market.down {
+  fill: #ff8aa1;
+  stroke: rgba(255, 138, 161, 0.38);
+}
+
+.graph-node-dot.signal {
+  fill: #ffb577;
+  stroke: rgba(255, 181, 119, 0.36);
+}
+
+.graph-node-dot.strategy {
+  fill: #ff8ca6;
+  stroke: rgba(255, 140, 166, 0.36);
+}
+
+.graph-node-label {
+  font-size: 10.7px;
+  fill: #e6eeff;
+}
+
+.graph-node-meta {
+  font-size: 8.8px;
+  fill: #97a7d1;
+}
+
 @keyframes spin {
   to {
     transform: rotate(360deg);

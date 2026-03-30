@@ -27,10 +27,10 @@ const parseEventData = (rawData) => {
 };
 
 const liveLimits = {
-  marketLimit: 220,
-  signalLimit: 120,
-  decisionLimit: 120,
-  feedLimit: 140
+  marketLimit: 360,
+  signalLimit: 180,
+  decisionLimit: 180,
+  feedLimit: 180
 };
 
 export default function useCapitalLive() {

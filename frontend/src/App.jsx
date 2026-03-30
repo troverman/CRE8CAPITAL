@@ -8,6 +8,7 @@ import { usePathname } from './lib/router';
 import AssetDetailPage from './pages/AssetDetailPage';
 import AssetListPage from './pages/AssetListPage';
 import HomePage from './pages/HomePage';
+import GraphPage from './pages/GraphPage';
 import MarketDetailPage from './pages/MarketDetailPage';
 import MarketListPage from './pages/MarketListPage';
 
@@ -18,6 +19,7 @@ const parseRoute = (pathname) => {
   if (routePath === '/') return { name: 'home' };
   if (routePath === '/markets') return { name: 'markets' };
   if (routePath === '/assets') return { name: 'assets' };
+  if (routePath === '/graph') return { name: 'graph' };
 
   const marketMatch = routePath.match(/^\/market\/(.+)$/);
   if (marketMatch) {
@@ -37,7 +39,7 @@ const NotFoundPage = () => {
     <section className="page-grid">
       <GlowCard className="detail-card">
         <h1>Route not found</h1>
-        <p>Try `/markets`, `/market/:id`, `/assets`, or `/asset/:id`.</p>
+        <p>Try `/markets`, `/market/:id`, `/assets`, `/asset/:id`, or `/graph`.</p>
       </GlowCard>
     </section>
   );
@@ -107,6 +109,8 @@ export default function App() {
       {route.name === 'assets' ? <AssetListPage markets={snapshot.markets} /> : null}
 
       {route.name === 'asset' ? <AssetDetailPage assetId={route.id} markets={snapshot.markets} historyByMarket={historyByMarket} /> : null}
+
+      {route.name === 'graph' ? <GraphPage snapshot={snapshot} /> : null}
 
       {route.name === 'not-found' ? <NotFoundPage /> : null}
     </main>
