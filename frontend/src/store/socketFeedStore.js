@@ -2,6 +2,7 @@ import { create } from 'zustand';
 
 const MAX_POINTS = 240;
 const MAX_RECENT_TICKS = 320;
+const MAX_DEPTH_LEVELS = 24;
 const MAX_DRIFT_RATIO = 0.25;
 const MAX_DRIFT_WINDOW_MS = 3500;
 
@@ -19,6 +20,7 @@ const baseState = {
   marketKey: null,
   providerStateById: {},
   seriesByProvider: {},
+  depthByProvider: {},
   recentTicks: [],
   sequence: 0
 };
@@ -108,6 +110,33 @@ const buildTickUpdate = (current, tick) => {
   };
 };
 
+const sanitizeDepthLevel = (level) => {
+  if (Array.isArray(level)) {
+    const price = toFiniteOrNull(level[0]);
+    const size = toFiniteOrNull(level[1]);
+    if (price === null || size === null || price <= 0 || size <= 0) return null;
+    return { price, size };
+  }
+
+  const price = toFiniteOrNull(level?.price);
+  const size = toFiniteOrNull(level?.size);
+  if (price === null || size === null || price <= 0 || size <= 0) return null;
+  return { price, size };
+};
+
+const sanitizeDepthSide = (levels, side) => {
+  const list = Array.isArray(levels) ? levels : [];
+  const mapped = list
+    .map((level) => sanitizeDepthLevel(level))
+    .filter((level) => Boolean(level))
+    .sort((a, b) => (side === 'bid' ? b.price - a.price : a.price - b.price));
+
+  if (mapped.length > MAX_DEPTH_LEVELS) {
+    mapped.length = MAX_DEPTH_LEVELS;
+  }
+  return mapped;
+};
+
 export const useSocketFeedStore = create((set) => ({
   ...baseState,
   resetForMarket: (marketKey) =>
@@ -121,6 +150,7 @@ export const useSocketFeedStore = create((set) => ({
       marketKey: payload.marketKey ?? state.marketKey,
       providerStateById: payload.providerStateById || state.providerStateById,
       seriesByProvider: payload.seriesByProvider || state.seriesByProvider,
+      depthByProvider: payload.depthByProvider || state.depthByProvider,
       recentTicks: payload.recentTicks || state.recentTicks,
       sequence: state.sequence
     }));
@@ -189,6 +219,49 @@ export const useSocketFeedStore = create((set) => ({
         seriesByProvider: nextSeriesByProvider,
         recentTicks: nextRecentTicks,
         sequence
+      };
+    });
+  },
+  ingestDepthFallback: (depth) => {
+    set((state) => {
+      const providerId = String(depth?.providerId || '');
+      if (!providerId) return state;
+
+      const bids = sanitizeDepthSide(depth?.bids, 'bid');
+      const asks = sanitizeDepthSide(depth?.asks, 'ask');
+      if (bids.length === 0 && asks.length === 0) return state;
+
+      const providerName = String(depth?.providerName || providerId);
+      const timestamp = toFinite(depth?.timestamp, Date.now());
+
+      const nextDepthByProvider = {
+        ...state.depthByProvider,
+        [providerId]: {
+          providerId,
+          providerName,
+          symbol: depth?.symbol || null,
+          assetClass: depth?.assetClass || null,
+          venue: depth?.venue || null,
+          timestamp,
+          bids,
+          asks
+        }
+      };
+
+      const currentProvider = state.providerStateById[providerId] || {};
+      const nextProviderStateById = {
+        ...state.providerStateById,
+        [providerId]: {
+          ...currentProvider,
+          id: providerId,
+          name: providerName
+        }
+      };
+
+      return {
+        ...state,
+        providerStateById: nextProviderStateById,
+        depthByProvider: nextDepthByProvider
       };
     });
   }

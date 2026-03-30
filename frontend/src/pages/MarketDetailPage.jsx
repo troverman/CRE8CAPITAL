@@ -24,8 +24,10 @@ export default function MarketDetailPage({ marketId, snapshot, historyByMarket, 
   const {
     providerStates,
     seriesByProvider,
+    depthByProvider,
     primaryProvider,
     primarySeries,
+    primaryDepth,
     recentTicks,
     localFallbackActive,
     externalProviderCount,
@@ -63,6 +65,27 @@ export default function MarketDetailPage({ marketId, snapshot, historyByMarket, 
   const priceSeries = useSocketAsPrimary ? socketPriceSeries : runtimePriceSeries;
   const spreadSeries = useSocketAsPrimary ? socketSpreadSeries : runtimeSpreadSeries;
   const sourceLabel = useSocketAsPrimary ? `${primaryProvider?.name || 'Socket'} feed` : 'Runtime feed';
+
+  const depthBook = useMemo(() => {
+    const activeDepth = primaryDepth || null;
+    const bids = (activeDepth?.bids || []).slice(0, 12);
+    const asks = (activeDepth?.asks || []).slice(0, 12);
+    const maxSize = Math.max(1, ...bids.map((level) => Number(level.size) || 0), ...asks.map((level) => Number(level.size) || 0));
+    const bidNotional = bids.reduce((sum, level) => sum + (Number(level.price) || 0) * (Number(level.size) || 0), 0);
+    const askNotional = asks.reduce((sum, level) => sum + (Number(level.price) || 0) * (Number(level.size) || 0), 0);
+    const imbalanceDenominator = Math.max(bidNotional + askNotional, 1e-9);
+    const imbalance = ((bidNotional - askNotional) / imbalanceDenominator) * 100;
+    return {
+      bids,
+      asks,
+      maxSize,
+      bidNotional,
+      askNotional,
+      imbalance,
+      timestamp: activeDepth?.timestamp || null,
+      providerName: activeDepth?.providerName || primaryProvider?.name || null
+    };
+  }, [primaryDepth, primaryProvider?.name]);
 
   const quoteRows = useMemo(() => {
     const runtimeRows = market.providers.map((provider) => ({
@@ -197,10 +220,53 @@ export default function MarketDetailPage({ marketId, snapshot, historyByMarket, 
                 <Sparkline data={(seriesByProvider[provider.id] || []).map((point) => point.price)} width={160} height={42} />
                 <small>
                   {provider.error || `last tick ${fmtTime(provider.lastTickAt)}`}
+                  {depthByProvider[provider.id] ? ` | depth ${(depthByProvider[provider.id].bids?.length || 0) + (depthByProvider[provider.id].asks?.length || 0)} lvls` : ''}
                   {provider.guardDrops > 0 ? ` | guard drops ${fmtInt(provider.guardDrops)}` : ''}
                 </small>
               </article>
             ))}
+          </div>
+        </GlowCard>
+      ) : null}
+
+      {supportsSocketProviders ? (
+        <GlowCard className="panel-card">
+          <div className="section-head">
+            <h2>Order Book Depth</h2>
+            <span>{depthBook.providerName ? `${depthBook.providerName}` : 'No provider depth yet'}</span>
+          </div>
+          <p className="socket-status-copy">
+            bids {fmtCompact(depthBook.bidNotional)} | asks {fmtCompact(depthBook.askNotional)} | imbalance {fmtPct(depthBook.imbalance)} | at{' '}
+            {fmtTime(depthBook.timestamp)}
+          </p>
+          <div className="depth-grid">
+            <section className="depth-side bid">
+              <h3>Bid Depth</h3>
+              {(depthBook.bids || []).map((level, index) => (
+                <article key={`bid:${index}:${level.price}`} className="depth-row">
+                  <div className="depth-bar bid" style={{ width: `${Math.min(100, (Number(level.size) / depthBook.maxSize) * 100)}%` }} />
+                  <div className="depth-content">
+                    <strong>{fmtNum(level.price, 4)}</strong>
+                    <small>{fmtCompact(level.size)}</small>
+                  </div>
+                </article>
+              ))}
+              {depthBook.bids.length === 0 ? <p className="depth-empty">No bid depth yet.</p> : null}
+            </section>
+
+            <section className="depth-side ask">
+              <h3>Ask Depth</h3>
+              {(depthBook.asks || []).map((level, index) => (
+                <article key={`ask:${index}:${level.price}`} className="depth-row">
+                  <div className="depth-bar ask" style={{ width: `${Math.min(100, (Number(level.size) / depthBook.maxSize) * 100)}%` }} />
+                  <div className="depth-content">
+                    <strong>{fmtNum(level.price, 4)}</strong>
+                    <small>{fmtCompact(level.size)}</small>
+                  </div>
+                </article>
+              ))}
+              {depthBook.asks.length === 0 ? <p className="depth-empty">No ask depth yet.</p> : null}
+            </section>
           </div>
         </GlowCard>
       ) : null}

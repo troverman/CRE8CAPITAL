@@ -22,7 +22,7 @@ export default class BinanceBookTickerProvider extends Provider {
     return Boolean(symbol);
   }
 
-  connect({ market, onTick, onStatus }) {
+  connect({ market, onTick, onDepth, onStatus }) {
     const symbol = toBinanceSymbol(market?.symbol);
     if (!symbol || typeof WebSocket === 'undefined') {
       onStatus?.({
@@ -34,22 +34,51 @@ export default class BinanceBookTickerProvider extends Provider {
       return { disconnect: () => {} };
     }
 
-    const url = `wss://stream.binance.com:9443/ws/${symbol.toLowerCase()}@bookTicker`;
-    const socket = new WebSocket(url);
+    const pair = symbol.toLowerCase();
+    const tickerSocket = new WebSocket(`wss://stream.binance.com:9443/ws/${pair}@bookTicker`);
+    const depthSocket = new WebSocket(`wss://stream.binance.com:9443/ws/${pair}@depth20@100ms`);
 
-    socket.onopen = () => {
-      onStatus?.({ id: this.id, name: this.name, connected: true, error: '' });
+    let tickerOpen = false;
+    let depthOpen = false;
+
+    const updateStatus = (error = '') => {
+      onStatus?.({
+        id: this.id,
+        name: this.name,
+        connected: tickerOpen || depthOpen,
+        error
+      });
     };
 
-    socket.onerror = () => {
-      onStatus?.({ id: this.id, name: this.name, connected: false, error: 'Socket error' });
+    tickerSocket.onopen = () => {
+      tickerOpen = true;
+      updateStatus('');
     };
 
-    socket.onclose = () => {
-      onStatus?.({ id: this.id, name: this.name, connected: false });
+    depthSocket.onopen = () => {
+      depthOpen = true;
+      updateStatus('');
     };
 
-    socket.onmessage = (event) => {
+    tickerSocket.onerror = () => {
+      updateStatus('Ticker socket error');
+    };
+
+    depthSocket.onerror = () => {
+      updateStatus('Depth socket error');
+    };
+
+    tickerSocket.onclose = () => {
+      tickerOpen = false;
+      updateStatus('');
+    };
+
+    depthSocket.onclose = () => {
+      depthOpen = false;
+      updateStatus('');
+    };
+
+    tickerSocket.onmessage = (event) => {
       try {
         const payload = JSON.parse(event.data);
         const bid = toNum(payload.b);
@@ -77,15 +106,45 @@ export default class BinanceBookTickerProvider extends Provider {
         onStatus?.({
           id: this.id,
           name: this.name,
-          connected: false,
+          connected: tickerOpen || depthOpen,
           error: 'Invalid socket payload'
         });
       }
     };
 
+    depthSocket.onmessage = (event) => {
+      try {
+        const payload = JSON.parse(event.data);
+        const bids = Array.isArray(payload?.bids) ? payload.bids : Array.isArray(payload?.b) ? payload.b : [];
+        const asks = Array.isArray(payload?.asks) ? payload.asks : Array.isArray(payload?.a) ? payload.a : [];
+
+        onDepth?.({
+          providerId: this.id,
+          providerName: this.name,
+          kind: this.kind,
+          symbol: payload?.s || market.symbol,
+          assetClass: 'crypto',
+          venue: 'BINANCE',
+          bids,
+          asks,
+          timestamp: Number(payload?.E) || Date.now(),
+          raw: payload
+        });
+      } catch (error) {
+        onStatus?.({
+          id: this.id,
+          name: this.name,
+          connected: tickerOpen || depthOpen,
+          error: 'Invalid depth payload'
+        });
+      }
+    };
+
     return {
-      disconnect: () => socket.close()
+      disconnect: () => {
+        tickerSocket.close();
+        depthSocket.close();
+      }
     };
   }
 }
-

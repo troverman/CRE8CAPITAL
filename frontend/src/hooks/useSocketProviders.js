@@ -7,6 +7,7 @@ const FALLBACK_DELAY_MS = 2800;
 export default function useSocketProviders({ market, enabled }) {
   const providerStateById = useSocketFeedStore((state) => state.providerStateById);
   const seriesByProvider = useSocketFeedStore((state) => state.seriesByProvider);
+  const depthByProvider = useSocketFeedStore((state) => state.depthByProvider);
   const recentTicks = useSocketFeedStore((state) => state.recentTicks);
   const resetForMarket = useSocketFeedStore((state) => state.resetForMarket);
 
@@ -68,6 +69,16 @@ export default function useSocketProviders({ market, enabled }) {
     useSocketFeedStore.getState().ingestTickFallback(tick);
   }, []);
 
+  const pushDepth = useCallback((depth) => {
+    if (!depth?.providerId) return;
+    const worker = workerRef.current;
+    if (worker) {
+      worker.postMessage({ type: 'depth', depth });
+      return;
+    }
+    useSocketFeedStore.getState().ingestDepthFallback(depth);
+  }, []);
+
   const externalProviders = useMemo(() => {
     return getExternalSocketProviders().filter((provider) => provider.supportsMarket(market));
   }, [market]);
@@ -98,6 +109,10 @@ export default function useSocketProviders({ market, enabled }) {
           if (!alive) return;
           pushTick(tick);
         },
+        onDepth: (depth) => {
+          if (!alive) return;
+          pushDepth(depth);
+        },
         onStatus: (status) => {
           if (!alive) return;
           pushStatus(status);
@@ -117,7 +132,7 @@ export default function useSocketProviders({ market, enabled }) {
         connection.disconnect();
       }
     };
-  }, [enabled, externalProviders, market, pushStatus, pushTick]);
+  }, [enabled, externalProviders, market, pushDepth, pushStatus, pushTick]);
 
   const externalConnectedCount = useMemo(() => {
     return externalProviders.filter((provider) => Boolean(providerStateById[provider.id]?.connected)).length;
@@ -168,6 +183,10 @@ export default function useSocketProviders({ market, enabled }) {
           if (!alive) return;
           pushTick(tick);
         },
+        onDepth: (depth) => {
+          if (!alive) return;
+          pushDepth(depth);
+        },
         onStatus: (status) => {
           if (!alive) return;
           pushStatus(status);
@@ -187,7 +206,7 @@ export default function useSocketProviders({ market, enabled }) {
         connection.disconnect();
       }
     };
-  }, [enabled, localFallbackActive, localProviders, market, pushStatus, pushTick]);
+  }, [enabled, localFallbackActive, localProviders, market, pushDepth, pushStatus, pushTick]);
 
   const listedProviders = useMemo(() => {
     const includeLocal = localFallbackActive || localProviders.some((provider) => Boolean(providerStateById[provider.id]));
@@ -238,12 +257,15 @@ export default function useSocketProviders({ market, enabled }) {
 
   const primaryProvider = sortedProviders.find((provider) => provider.connected) || sortedProviders[0] || null;
   const primarySeries = primaryProvider ? seriesByProvider[primaryProvider.id] || [] : [];
+  const primaryDepth = primaryProvider ? depthByProvider[primaryProvider.id] || null : null;
 
   return {
     providerStates: sortedProviders,
     seriesByProvider,
+    depthByProvider,
     primaryProvider,
     primarySeries,
+    primaryDepth,
     recentTicks,
     localFallbackActive,
     externalProviderCount: externalProviders.length,

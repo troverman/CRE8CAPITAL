@@ -9,6 +9,24 @@ const randomBetween = (min, max) => {
   return min + Math.random() * (max - min);
 };
 
+const buildSyntheticDepth = ({ midPrice, spreadBps, levels = 18 }) => {
+  const bids = [];
+  const asks = [];
+
+  const baseStep = (midPrice * Math.max(spreadBps, 0.5)) / 10000;
+  for (let i = 1; i <= levels; i += 1) {
+    const step = baseStep * i * randomBetween(0.86, 1.28);
+    const size = randomBetween(0.45, 5.2) * Math.max(1, midPrice * 0.002);
+    const bidPrice = Math.max(midPrice - step, 0.0000001);
+    const askPrice = Math.max(midPrice + step, 0.0000001);
+
+    bids.push({ price: bidPrice, size });
+    asks.push({ price: askPrice, size: size * randomBetween(0.86, 1.22) });
+  }
+
+  return { bids, asks };
+};
+
 export default class LocalSyntheticProvider extends Provider {
   constructor() {
     super({
@@ -23,7 +41,7 @@ export default class LocalSyntheticProvider extends Provider {
     return Boolean(market && market.symbol);
   }
 
-  connect({ market, onTick, onStatus }) {
+  connect({ market, onTick, onDepth, onStatus }) {
     const symbol = String(market?.symbol || 'SIM');
     const assetClass = String(market?.assetClass || 'unknown');
     const venue = 'LOCAL';
@@ -64,6 +82,23 @@ export default class LocalSyntheticProvider extends Provider {
         timestamp: Date.now(),
         raw: { source: 'local-synthetic' }
       });
+
+      const depth = buildSyntheticDepth({
+        midPrice: anchorPrice,
+        spreadBps: anchorSpreadBps
+      });
+      onDepth?.({
+        providerId: this.id,
+        providerName: this.name,
+        kind: this.kind,
+        symbol,
+        assetClass,
+        venue,
+        bids: depth.bids,
+        asks: depth.asks,
+        timestamp: Date.now(),
+        raw: { source: 'local-synthetic' }
+      });
     }, 1100);
 
     return {
@@ -79,4 +114,3 @@ export default class LocalSyntheticProvider extends Provider {
     };
   }
 }
-
