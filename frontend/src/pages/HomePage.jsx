@@ -74,6 +74,9 @@ export default function HomePage({
           <button type="button" className="btn primary" onClick={onRestrategy} disabled={restrategyBusy}>
             {restrategyBusy ? 'Queuing...' : 'Run Restrategy'}
           </button>
+          <Link to="/strategy" className="btn secondary">
+            Open Strategy Lab
+          </Link>
         </div>
 
         <div className="hero-status-row">

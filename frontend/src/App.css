@@ -220,6 +220,9 @@ a {
   border: 1px solid transparent;
   border-radius: 10px;
   padding: 0.5rem 0.75rem;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   font-family: inherit;
   font-size: 0.8rem;
   font-weight: 600;
@@ -385,6 +388,43 @@ a {
 
 .restrategy-row input:focus,
 .filter-input:focus {
+  outline: 2px solid rgba(100, 213, 255, 0.4);
+  border-color: rgba(100, 213, 255, 0.7);
+}
+
+.strategy-control-grid,
+.strategy-risk-grid {
+  display: grid;
+  gap: 0.5rem;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.control-field {
+  display: grid;
+  gap: 0.25rem;
+}
+
+.control-field span {
+  font-size: 0.69rem;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  color: var(--ink-soft);
+}
+
+.control-field select,
+.control-field input {
+  width: 100%;
+  border: 1px solid rgba(142, 162, 228, 0.4);
+  border-radius: 11px;
+  background: rgba(6, 9, 20, 0.94);
+  color: var(--ink);
+  padding: 0.54rem 0.58rem;
+  font-family: inherit;
+  font-size: 0.8rem;
+}
+
+.control-field select:focus,
+.control-field input:focus {
   outline: 2px solid rgba(100, 213, 255, 0.4);
   border-color: rgba(100, 213, 255, 0.7);
 }
@@ -1078,6 +1118,11 @@ th {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
+  .strategy-control-grid,
+  .strategy-risk-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
   .tick-row {
     grid-template-columns: 1fr;
     gap: 0.3rem;
@@ -1111,5 +1156,10 @@ th {
 
   .hero-copy {
     font-size: 0.84rem;
+  }
+
+  .strategy-control-grid,
+  .strategy-risk-grid {
+    grid-template-columns: 1fr;
   }
 }
