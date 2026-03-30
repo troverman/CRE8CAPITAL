@@ -6,6 +6,7 @@ import useStrategyLab from '../hooks/useStrategyLab';
 import { fmtInt, fmtNum, fmtPct, fmtTime } from '../lib/format';
 import { buildClassicAnalysis } from '../lib/indicators';
 import { Link } from '../lib/router';
+import { useExecutionFeedStore } from '../store/executionFeedStore';
 
 const toneClass = (value) => {
   const num = Number(value);
@@ -20,6 +21,10 @@ const actionClass = (action) => {
 };
 
 export default function StrategyLabPage({ snapshot, historyByMarket }) {
+  const txEvents = useExecutionFeedStore((state) => state.txEvents);
+  const positionEvents = useExecutionFeedStore((state) => state.positionEvents);
+  const clearExecutionFeed = useExecutionFeedStore((state) => state.clearExecutionFeed);
+
   const {
     markets,
     selectedMarket,
@@ -383,6 +388,67 @@ export default function StrategyLabPage({ snapshot, historyByMarket }) {
                 <small>
                   units {fmtNum(trade.unitsAfter, 0)} | realized {fmtNum(trade.realizedDelta, 2)} | spread {fmtNum(trade.spreadBps, 2)} bps |{' '}
                   {fmtTime(trade.timestamp)}
+                </small>
+              </article>
+            )}
+          />
+        </GlowCard>
+      </div>
+
+      <div className="two-col">
+        <GlowCard className="panel-card">
+          <div className="section-head">
+            <h2>Emitted Wallet TX</h2>
+            <div className="section-actions">
+              <span>{txEvents.length} events</span>
+              <button type="button" className="btn secondary" onClick={clearExecutionFeed}>
+                Clear Feed
+              </button>
+            </div>
+          </div>
+          <FlashList
+            items={txEvents}
+            height={320}
+            itemHeight={74}
+            className="tick-flash-list"
+            emptyCopy="No emitted tx events yet. Run realtime or trigger manually."
+            keyExtractor={(event) => event.id}
+            renderItem={(event) => (
+              <article className="tensor-event-row">
+                <strong className={actionClass(event.action)}>
+                  {event.action} | {event.symbol || event.marketKey || '-'}
+                </strong>
+                <p>{event.reason || 'strategy execution'}</p>
+                <small>
+                  {event.strategyId} | fill {fmtNum(event.fillPrice, 4)} | delta {fmtNum(event.unitsDelta, 0)} | units {fmtNum(event.unitsAfter, 0)} | pnl{' '}
+                  {fmtNum(event.realizedDelta, 2)} | {fmtTime(event.timestamp)}
+                </small>
+              </article>
+            )}
+          />
+        </GlowCard>
+
+        <GlowCard className="panel-card">
+          <div className="section-head">
+            <h2>Emitted Positions</h2>
+            <span>{positionEvents.length} snapshots</span>
+          </div>
+          <FlashList
+            items={positionEvents}
+            height={320}
+            itemHeight={80}
+            className="tick-flash-list"
+            emptyCopy="No emitted position snapshots yet."
+            keyExtractor={(event) => event.id}
+            renderItem={(event) => (
+              <article className="tensor-event-row">
+                <strong className={actionClass(event.action)}>
+                  {event.symbol || event.marketKey || '-'} | units {fmtNum(event.wallet.units, 0)}
+                </strong>
+                <p>{event.reason || 'position update'}</p>
+                <small>
+                  eq {fmtNum(event.wallet.equity, 2)} | cash {fmtNum(event.wallet.cash, 2)} | mark {fmtNum(event.wallet.markPrice, 4)} | notional{' '}
+                  {fmtNum(event.wallet.positionNotional, 2)} | {fmtTime(event.timestamp)}
                 </small>
               </article>
             )}
