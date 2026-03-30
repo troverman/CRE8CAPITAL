@@ -1,6 +1,6 @@
 import GlowCard from '../components/GlowCard';
 import Sparkline from '../components/Sparkline';
-import { fmtDuration, fmtInt, fmtTime } from '../lib/format';
+import { fmtDuration, fmtInt, fmtPct, fmtTime, severityClass } from '../lib/format';
 import { Link } from '../lib/router';
 
 export default function HomePage({
@@ -21,6 +21,41 @@ export default function HomePage({
 }) {
   const providerConnected = snapshot.providers.filter((provider) => provider.connected).length;
   const topMarkets = snapshot.markets.slice(0, 6);
+  const displaySignals = (() => {
+    const liveSignals = Array.isArray(snapshot.signals) ? snapshot.signals.slice(0, 8) : [];
+    if (liveSignals.length > 0) {
+      return {
+        mode: 'live',
+        rows: liveSignals
+      };
+    }
+
+    const fallbackRows = [...snapshot.markets]
+      .sort((a, b) => Math.abs(Number(b.changePct) || 0) - Math.abs(Number(a.changePct) || 0))
+      .slice(0, 8)
+      .map((market, index) => {
+        const changePct = Number(market.changePct) || 0;
+        const absMove = Math.abs(changePct);
+        const direction = changePct >= 0 ? 'long' : 'short';
+        const severity = absMove > 0.9 ? 'high' : absMove > 0.35 ? 'medium' : 'low';
+        return {
+          id: `fallback-overview-signal:${market.key}:${index}`,
+          type: 'fallback-pulse',
+          direction,
+          severity,
+          score: Math.max(8, Math.min(99, Math.round(absMove * 90))),
+          symbol: market.symbol,
+          assetClass: market.assetClass,
+          message: `Fallback signal: ${market.symbol} drift ${fmtPct(changePct)} while waiting for runtime triggers.`,
+          timestamp: market.updatedAt || Date.now()
+        };
+      });
+
+    return {
+      mode: 'fallback',
+      rows: fallbackRows
+    };
+  })();
 
   return (
     <section className="page-grid">
@@ -88,6 +123,30 @@ export default function HomePage({
               <Sparkline data={(historyByMarket[market.key] || []).map((point) => point.price)} />
             </Link>
           ))}
+        </div>
+      </GlowCard>
+
+      <GlowCard className="panel-card">
+        <div className="section-head">
+          <h2>Signal Preview</h2>
+          <span>{displaySignals.mode === 'live' ? 'runtime signals' : 'fallback signals'}</span>
+        </div>
+        <div className="list-stack">
+          {displaySignals.rows.map((signal) => (
+            <article key={signal.id} className="list-item">
+              <strong>
+                {signal.type} | {signal.direction} | {signal.symbol}
+              </strong>
+              <p>{signal.message}</p>
+              <div className="item-meta">
+                <span className={`severity ${severityClass(signal.severity)}`}>{signal.severity}</span>
+                <small>score {fmtInt(signal.score)}</small>
+                <small>{signal.assetClass}</small>
+                <small>{fmtTime(signal.timestamp)}</small>
+              </div>
+            </article>
+          ))}
+          {displaySignals.rows.length === 0 ? <p className="action-message">No signals available yet.</p> : null}
         </div>
       </GlowCard>
 
