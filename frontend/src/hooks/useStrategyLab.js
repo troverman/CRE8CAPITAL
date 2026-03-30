@@ -58,11 +58,17 @@ export default function useStrategyLab({ snapshot, historyByMarket }) {
   const runtimeSeries = useStrategyLabStore((state) => state.runtimeSeries);
   const runtimeEquity = useStrategyLabStore((state) => state.runtimeEquity);
   const wallet = useStrategyLabStore((state) => state.wallet);
+  const walletAccounts = useStrategyLabStore((state) => state.walletAccounts);
+  const activeWalletAccountId = useStrategyLabStore((state) => state.activeWalletAccountId);
   const eventLog = useStrategyLabStore((state) => state.eventLog);
   const tradeLog = useStrategyLabStore((state) => state.tradeLog);
   const backtest = useStrategyLabStore((state) => state.backtest);
 
   const setConfig = useStrategyLabStore((state) => state.setConfig);
+  const addWalletAccount = useStrategyLabStore((state) => state.addWalletAccount);
+  const updateWalletAccount = useStrategyLabStore((state) => state.updateWalletAccount);
+  const removeWalletAccount = useStrategyLabStore((state) => state.removeWalletAccount);
+  const setActiveWalletAccount = useStrategyLabStore((state) => state.setActiveWalletAccount);
   const stepRuntime = useStrategyLabStore((state) => state.stepRuntime);
   const resetRuntime = useStrategyLabStore((state) => state.resetRuntime);
   const setBacktest = useStrategyLabStore((state) => state.setBacktest);
@@ -308,6 +314,8 @@ export default function useStrategyLab({ snapshot, historyByMarket }) {
     runtimeSeries,
     runtimeEquity,
     wallet,
+    walletAccounts,
+    activeWalletAccountId,
     eventLog,
     tradeLog,
     backtest,
@@ -324,6 +332,10 @@ export default function useStrategyLab({ snapshot, historyByMarket }) {
     changeScenario,
     changeMarket,
     changeRisk,
+    addWalletAccount,
+    updateWalletAccount,
+    removeWalletAccount,
+    setActiveWalletAccount,
     triggerManual,
     resetSession,
     runBacktestNow

@@ -411,6 +411,65 @@ a {
   grid-template-columns: repeat(4, minmax(0, 1fr));
 }
 
+.strategy-account-create {
+  display: grid;
+  gap: 0.5rem;
+  grid-template-columns: 1.4fr 1fr auto;
+  align-items: end;
+}
+
+.strategy-account-grid {
+  display: grid;
+  gap: 0.5rem;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.strategy-account-card {
+  border: 1px solid rgba(121, 140, 201, 0.32);
+  border-radius: 12px;
+  background: rgba(8, 12, 24, 0.84);
+  padding: 0.5rem;
+  display: grid;
+  gap: 0.34rem;
+}
+
+.strategy-account-card.active {
+  border-color: rgba(96, 210, 255, 0.48);
+  box-shadow: inset 0 0 0 1px rgba(96, 210, 255, 0.15);
+}
+
+.strategy-account-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.strategy-account-metrics {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+}
+
+.strategy-account-metrics small {
+  color: var(--ink-soft);
+  font-size: 0.69rem;
+}
+
+.strategy-account-controls {
+  display: grid;
+  gap: 0.45rem;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.strategy-account-actions {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.45rem;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
 .control-field {
   display: grid;
   gap: 0.25rem;
@@ -1478,6 +1537,14 @@ th {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
+  .strategy-account-create {
+    grid-template-columns: 1fr;
+  }
+
+  .strategy-account-grid {
+    grid-template-columns: 1fr;
+  }
+
   .tick-row {
     grid-template-columns: 1fr;
     gap: 0.3rem;
@@ -1517,6 +1584,10 @@ th {
 
   .strategy-control-grid,
   .strategy-risk-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .strategy-account-controls {
     grid-template-columns: 1fr;
   }
 

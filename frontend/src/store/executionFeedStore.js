@@ -35,12 +35,15 @@ const buildWalletSnapshot = (wallet = {}, pointPrice = 0) => {
 
 const buildContext = (payload = {}) => {
   const market = payload.market || {};
+  const account = payload.account || {};
   return {
     strategyId: String(payload.strategyId || 'unknown'),
     sourceId: String(payload.sourceId || 'runtime'),
     marketKey: String(market.key || ''),
     symbol: String(market.symbol || ''),
-    assetClass: String(market.assetClass || '')
+    assetClass: String(market.assetClass || ''),
+    accountId: String(account.id || ''),
+    accountName: String(account.name || '')
   };
 };
 
@@ -58,7 +61,7 @@ export const useExecutionFeedStore = create((set) => ({
     const walletSnapshot = buildWalletSnapshot(wallet, pointPrice);
 
     const txEvent = {
-      id: `tx:${timestamp}:${trade.id || context.strategyId}`,
+      id: `tx:${timestamp}:${context.accountId || 'account'}:${trade.id || context.strategyId}`,
       timestamp,
       ...context,
       action: trade.action === 'reduce' ? 'reduce' : 'accumulate',
@@ -73,7 +76,7 @@ export const useExecutionFeedStore = create((set) => ({
     };
 
     const positionEvent = {
-      id: `pos:${timestamp}:${trade.id || context.strategyId}`,
+      id: `pos:${timestamp}:${context.accountId || 'account'}:${trade.id || context.strategyId}`,
       timestamp,
       ...context,
       action: txEvent.action,

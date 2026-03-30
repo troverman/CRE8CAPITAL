@@ -1,3 +1,5 @@
+import { STRATEGY_OPTIONS } from './strategyEngine';
+
 const toNum = (value, fallback = 0) => {
   const num = Number(value);
   return Number.isFinite(num) ? num : fallback;
@@ -24,7 +26,7 @@ const ensureRow = (map, { key, id, name, enabled = null }) => {
       other: 0
     }
   };
-  if (existing.enabled === null && enabled !== null) {
+  if (enabled !== null) {
     existing.enabled = enabled;
   }
   map.set(key, existing);
@@ -35,6 +37,18 @@ export const buildStrategyRows = (snapshot) => {
   const map = new Map();
   const strategies = Array.isArray(snapshot?.strategies) ? snapshot.strategies : [];
   const decisions = Array.isArray(snapshot?.decisions) ? snapshot.decisions : [];
+
+  for (const strategy of STRATEGY_OPTIONS) {
+    const id = strategy?.id || '';
+    const key = toStrategyKey(id);
+    if (!key) continue;
+    ensureRow(map, {
+      key,
+      id,
+      name: strategy?.label || id,
+      enabled: true
+    });
+  }
 
   for (const strategy of strategies) {
     const id = strategy?.id || strategy?.name || '';

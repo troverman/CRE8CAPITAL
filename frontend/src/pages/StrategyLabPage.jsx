@@ -1,4 +1,4 @@
-import { useMemo } from 'react';
+import { useMemo, useState } from 'react';
 import FlashList from '../components/FlashList';
 import GlowCard from '../components/GlowCard';
 import LineChart from '../components/LineChart';
@@ -39,6 +39,8 @@ export default function StrategyLabPage({ snapshot, historyByMarket }) {
     runtimeSeries,
     runtimeEquity,
     wallet,
+    walletAccounts,
+    activeWalletAccountId,
     eventLog,
     tradeLog,
     backtest,
@@ -54,6 +56,10 @@ export default function StrategyLabPage({ snapshot, historyByMarket }) {
     changeScenario,
     changeMarket,
     changeRisk,
+    addWalletAccount,
+    updateWalletAccount,
+    removeWalletAccount,
+    setActiveWalletAccount,
     triggerManual,
     resetSession,
     runBacktestNow
@@ -115,6 +121,20 @@ export default function StrategyLabPage({ snapshot, historyByMarket }) {
     winRatePct: 0,
     maxDrawdownPct: 0,
     endEquity: 100000
+  };
+  const backtestTrades = backtest?.tradeLog || [];
+  const backtestSignals = backtest?.signalLog || [];
+  const [newAccountName, setNewAccountName] = useState('');
+  const [newAccountCash, setNewAccountCash] = useState(100000);
+
+  const handleAddAccount = () => {
+    const safeName = String(newAccountName || '').trim();
+    const safeCash = Math.max(100, Number(newAccountCash) || 100000);
+    addWalletAccount({
+      name: safeName || `Paper ${walletAccounts.length + 1}`,
+      startCash: safeCash
+    });
+    setNewAccountName('');
   };
 
   return (
@@ -233,6 +253,81 @@ export default function StrategyLabPage({ snapshot, historyByMarket }) {
           mode {sourceId} | runtime {running ? 'active' : 'paused'} | market {selectedMarket?.symbol || '-'} | live history{' '}
           {hasLiveHistory ? 'available' : 'limited'}
         </p>
+      </GlowCard>
+
+      <GlowCard className="panel-card">
+        <div className="section-head">
+          <h2>Fake Accounts</h2>
+          <span>{walletAccounts.length} active profiles</span>
+        </div>
+        <div className="strategy-account-create">
+          <label className="control-field">
+            <span>Account Name</span>
+            <input value={newAccountName} onChange={(event) => setNewAccountName(event.target.value)} placeholder="Paper Alpha" maxLength={32} />
+          </label>
+          <label className="control-field">
+            <span>Start Cash</span>
+            <input type="number" min={100} step={100} value={newAccountCash} onChange={(event) => setNewAccountCash(Math.max(100, Number(event.target.value) || 100000))} />
+          </label>
+          <div className="hero-actions">
+            <button type="button" className="btn secondary" onClick={handleAddAccount}>
+              Add Account
+            </button>
+          </div>
+        </div>
+        <div className="strategy-account-grid">
+          {walletAccounts.map((account) => (
+            <article key={account.id} className={account.id === activeWalletAccountId ? 'strategy-account-card active' : 'strategy-account-card'}>
+              <div className="strategy-account-head">
+                <label className="toggle-label">
+                  <input type="checkbox" checked={account.id === activeWalletAccountId} onChange={() => setActiveWalletAccount(account.id)} />
+                  <span>{account.name}</span>
+                </label>
+                <span className={account.enabled ? 'status-pill online' : 'status-pill'}>{account.enabled ? 'enabled' : 'paused'}</span>
+              </div>
+              <div className="strategy-account-metrics">
+                <small>eq {fmtNum(account.wallet.equity, 2)}</small>
+                <small>cash {fmtNum(account.wallet.cash, 2)}</small>
+                <small>units {fmtNum(account.wallet.units, 0)}</small>
+              </div>
+              <div className="strategy-account-controls">
+                <label className="control-field">
+                  <span>Max Units</span>
+                  <input
+                    type="number"
+                    min={1}
+                    max={80}
+                    step={1}
+                    value={account.maxAbsUnits}
+                    onChange={(event) => updateWalletAccount(account.id, { maxAbsUnits: event.target.value })}
+                  />
+                </label>
+                <label className="control-field">
+                  <span>Slippage</span>
+                  <input
+                    type="number"
+                    min={0}
+                    max={60}
+                    step={0.1}
+                    value={account.slippageBps}
+                    onChange={(event) => updateWalletAccount(account.id, { slippageBps: event.target.value })}
+                  />
+                </label>
+              </div>
+              <div className="strategy-account-actions">
+                <label className="toggle-label">
+                  <input type="checkbox" checked={account.enabled} onChange={(event) => updateWalletAccount(account.id, { enabled: event.target.checked })} />
+                  <span>Allow execution</span>
+                </label>
+                {account.id !== 'paper-main' ? (
+                  <button type="button" className="btn secondary" onClick={() => removeWalletAccount(account.id)}>
+                    Remove
+                  </button>
+                ) : null}
+              </div>
+            </article>
+          ))}
+        </div>
       </GlowCard>
 
       <GlowCard className="panel-card">
@@ -360,7 +455,7 @@ export default function StrategyLabPage({ snapshot, historyByMarket }) {
                 <p>{item.reason}</p>
                 <small>
                   {item.triggerKind} | sigs {fmtInt(item.signalCount)} | score {fmtNum(item.score, 2)} | px {fmtNum(item.price, 4)} | spr{' '}
-                  {fmtNum(item.spread, 2)} bps | {fmtTime(item.timestamp)}
+                  {fmtNum(item.spread, 2)} bps | {item.tradedAccounts?.length ? `fills ${item.tradedAccounts.join(', ')}` : 'no fills'} | {fmtTime(item.timestamp)}
                 </small>
               </article>
             )}
@@ -369,7 +464,7 @@ export default function StrategyLabPage({ snapshot, historyByMarket }) {
 
         <GlowCard className="panel-card">
           <div className="section-head">
-            <h2>Fake Wallet Trades</h2>
+            <h2>Execution Tape</h2>
             <span>{tradeLog.length} rows</span>
           </div>
           <FlashList
@@ -377,12 +472,12 @@ export default function StrategyLabPage({ snapshot, historyByMarket }) {
             height={320}
             itemHeight={68}
             className="tick-flash-list"
-            emptyCopy="No executed trades yet."
+            emptyCopy="No executions yet. Run realtime or trigger manually."
             keyExtractor={(trade) => trade.id}
             renderItem={(trade) => (
               <article className="tensor-event-row">
                 <strong className={actionClass(trade.action)}>
-                  {trade.action} | fill {fmtNum(trade.fillPrice, 4)}
+                  {(trade.accountName || 'paper')} | {trade.action} | fill {fmtNum(trade.fillPrice, 4)}
                 </strong>
                 <p>{trade.reason}</p>
                 <small>
@@ -416,7 +511,7 @@ export default function StrategyLabPage({ snapshot, historyByMarket }) {
             renderItem={(event) => (
               <article className="tensor-event-row">
                 <strong className={actionClass(event.action)}>
-                  {event.action} | {event.symbol || event.marketKey || '-'}
+                  {event.accountName || 'paper'} | {event.action} | {event.symbol || event.marketKey || '-'}
                 </strong>
                 <p>{event.reason || 'strategy execution'}</p>
                 <small>
@@ -443,7 +538,7 @@ export default function StrategyLabPage({ snapshot, historyByMarket }) {
             renderItem={(event) => (
               <article className="tensor-event-row">
                 <strong className={actionClass(event.action)}>
-                  {event.symbol || event.marketKey || '-'} | units {fmtNum(event.wallet.units, 0)}
+                  {event.accountName || 'paper'} | {event.symbol || event.marketKey || '-'} | units {fmtNum(event.wallet.units, 0)}
                 </strong>
                 <p>{event.reason || 'position update'}</p>
                 <small>
@@ -468,6 +563,60 @@ export default function StrategyLabPage({ snapshot, historyByMarket }) {
           {fmtTime(backtest?.ranAt)}
         </p>
       </GlowCard>
+
+      <div className="two-col">
+        <GlowCard className="panel-card">
+          <div className="section-head">
+            <h2>Backtest Trade Tape</h2>
+            <span>{backtestTrades.length} rows</span>
+          </div>
+          <FlashList
+            items={backtestTrades}
+            height={300}
+            itemHeight={72}
+            className="tick-flash-list"
+            emptyCopy="No backtest trades on the latest run."
+            keyExtractor={(trade) => trade.id}
+            renderItem={(trade) => (
+              <article className="tensor-event-row">
+                <strong className={actionClass(trade.action)}>
+                  {trade.action} | fill {fmtNum(trade.fillPrice, 4)}
+                </strong>
+                <p>{trade.reason || 'backtest execution'}</p>
+                <small>
+                  units {fmtNum(trade.unitsAfter, 0)} | realized {fmtNum(trade.realizedDelta, 2)} | spread {fmtNum(trade.spreadBps, 2)} bps | {fmtTime(trade.timestamp)}
+                </small>
+              </article>
+            )}
+          />
+        </GlowCard>
+
+        <GlowCard className="panel-card">
+          <div className="section-head">
+            <h2>Backtest Signal Tape</h2>
+            <span>{backtestSignals.length} rows</span>
+          </div>
+          <FlashList
+            items={backtestSignals}
+            height={300}
+            itemHeight={72}
+            className="tick-flash-list"
+            emptyCopy="No backtest signals on the latest run."
+            keyExtractor={(signal) => signal.id}
+            renderItem={(signal) => (
+              <article className="tensor-event-row">
+                <strong className={actionClass(signal.action)}>
+                  {signal.action} | {signal.stance}
+                </strong>
+                <p>{signal.reason}</p>
+                <small>
+                  score {fmtNum(signal.score, 2)} | px {fmtNum(signal.price, 4)} | sigs {fmtInt(signal.signalCount)} | {fmtTime(signal.timestamp)}
+                </small>
+              </article>
+            )}
+          />
+        </GlowCard>
+      </div>
     </section>
   );
 }
