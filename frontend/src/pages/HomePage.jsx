@@ -7,6 +7,7 @@ export default function HomePage({
   snapshot,
   connected,
   transport,
+  localFallback,
   syncing,
   lastSyncedAt,
   error,
@@ -42,6 +43,7 @@ export default function HomePage({
 
         <div className="hero-status-row">
           <span className={connected ? 'status-pill online' : 'status-pill'}>{connected ? `Live ${transport}` : 'Disconnected'}</span>
+          {localFallback ? <span className="status-pill">Local fallback feed</span> : null}
           <span>Last sync {fmtTime(lastSyncedAt)}</span>
           <span>Uptime {fmtDuration(snapshot.telemetry.uptimeMs)}</span>
         </div>
@@ -109,4 +111,3 @@ export default function HomePage({
     </section>
   );
 }
-

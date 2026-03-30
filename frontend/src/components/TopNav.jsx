@@ -6,7 +6,7 @@ const navItems = [
   { to: '/assets', label: 'Assets' }
 ];
 
-export default function TopNav({ pathname, connected, transport }) {
+export default function TopNav({ pathname, connected, transport, localFallback }) {
   const normalize = pathname && pathname !== '/' ? pathname.replace(/\/+$/, '') : pathname;
   const path = normalize || '/';
   const isActive = (to) => {
@@ -33,7 +33,7 @@ export default function TopNav({ pathname, connected, transport }) {
 
       <div className="live-pill">
         <span className={connected ? 'dot on' : 'dot'} />
-        <span>{connected ? `Live ${transport}` : 'Offline'}</span>
+        <span>{connected ? `Live ${transport}` : localFallback ? 'Offline (local feed)' : 'Offline'}</span>
       </div>
     </header>
   );

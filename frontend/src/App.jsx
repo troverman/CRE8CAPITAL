@@ -54,6 +54,7 @@ export default function App() {
     loading,
     syncing,
     transport,
+    localFallback,
     lastSyncedAt,
     error,
     restrategyBusy,
@@ -70,10 +71,10 @@ export default function App() {
 
   return (
     <main className="capital-shell">
-      <TopNav pathname={pathname} connected={connected} transport={transport} />
+      <TopNav pathname={pathname} connected={connected} transport={transport} localFallback={localFallback} />
 
       <section className="shell-meta">
-        <span>runtime {connected ? 'online' : 'offline'}</span>
+        <span>runtime {connected ? 'online' : localFallback ? 'offline (local fallback)' : 'offline'}</span>
         <span>last sync {fmtTime(lastSyncedAt)}</span>
         <span>{loading ? 'booting...' : `markets ${snapshot.markets.length}`}</span>
       </section>
@@ -83,6 +84,7 @@ export default function App() {
           snapshot={snapshot}
           connected={connected}
           transport={transport}
+          localFallback={localFallback}
           syncing={syncing}
           lastSyncedAt={lastSyncedAt}
           error={error}

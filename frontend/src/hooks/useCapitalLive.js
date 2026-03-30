@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { getSnapshotUrl, getStreamUrl, restrategyUrl } from '../lib/capitalApi';
+import { buildLocalFallbackSnapshot } from '../lib/localSnapshot';
 
 const initialSnapshot = {
   running: false,
@@ -35,6 +36,7 @@ const liveLimits = {
 export default function useCapitalLive() {
   const [snapshot, setSnapshot] = useState(initialSnapshot);
   const [connected, setConnected] = useState(false);
+  const [localFallback, setLocalFallback] = useState(false);
   const [loading, setLoading] = useState(true);
   const [syncing, setSyncing] = useState(false);
   const [transport, setTransport] = useState('boot');
@@ -82,13 +84,18 @@ export default function useCapitalLive() {
       if (!mountedRef.current || requestId !== requestRef.current.id) return;
       setSnapshot(payload);
       setConnected(true);
+      setLocalFallback(false);
       setError('');
       setLastSyncedAt(Date.now());
     } catch (loadError) {
       if (loadError.name === 'AbortError') return;
       if (!mountedRef.current || requestId !== requestRef.current.id) return;
       setConnected(false);
-      setError(loadError.message || 'Snapshot fetch failed');
+      setLocalFallback(true);
+      setTransport('local');
+      setSnapshot((previous) => buildLocalFallbackSnapshot(previous));
+      setError(`Runtime unavailable (${loadError.message || 'snapshot fetch failed'}). Using local fallback feed.`);
+      setLastSyncedAt(Date.now());
     } finally {
       if (!mountedRef.current || requestId !== requestRef.current.id) return;
       setSyncing(false);
@@ -118,6 +125,7 @@ export default function useCapitalLive() {
         if (!payload || !mountedRef.current) return;
         setSnapshot(payload);
         setConnected(true);
+        setLocalFallback(false);
         setError('');
         setLastSyncedAt(Date.now());
         setLoading(false);
@@ -177,6 +185,7 @@ export default function useCapitalLive() {
     loading,
     syncing,
     transport,
+    localFallback,
     lastSyncedAt,
     error,
     restrategyBusy,

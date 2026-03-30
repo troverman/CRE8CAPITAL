@@ -1,4 +1,17 @@
-const apiBase = import.meta.env.VITE_API_BASE || 'http://localhost:8787';
+const inferDefaultApiBase = () => {
+  if (typeof window === 'undefined') {
+    return 'http://localhost:8787';
+  }
+
+  const host = window.location.hostname;
+  if (host === 'localhost' || host === '127.0.0.1') {
+    return 'http://localhost:8787';
+  }
+
+  return window.location.origin;
+};
+
+const apiBase = import.meta.env.VITE_API_BASE || inferDefaultApiBase();
 
 export const getApiBase = () => apiBase;
 
