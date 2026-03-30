@@ -1,19 +1,54 @@
-// Base provider — manages lifecycle of a data source
-class Provider {
-	constructor({ id }) {
+const EventEmitter = require('node:events');
+
+class Provider extends EventEmitter {
+	constructor({
+		id,
+		name,
+		assetClass,
+		kind = 'external'
+	}) {
+		super();
 		this.id = id;
-		this._handlers = {};
-		this._connected = false;
+		this.name = name || id;
+		this.assetClass = assetClass || 'unknown';
+		this.kind = kind;
+		this.connected = false;
+		this.lastHeartbeat = null;
+		this.lastError = null;
 	}
 
-	on(event, handler) {
-		if (!this._handlers[event]) this._handlers[event] = [];
-		this._handlers[event].push(handler);
-		return this;
+	emitTick(tick) {
+		const normalized = {
+			providerId: this.id,
+			providerName: this.name,
+			assetClass: this.assetClass,
+			kind: this.kind,
+			...tick
+		};
+		this.lastHeartbeat = Date.now();
+		this.emit('tick', normalized);
 	}
 
-	emit(event, data) {
-		for (const h of this._handlers[event] || []) h(data);
+	setConnected(value) {
+		this.connected = Boolean(value);
+		this.emit('status', this.getStatus());
+	}
+
+	setError(error) {
+		this.lastError = error ? String(error.message || error) : null;
+		this.emit('status', this.getStatus());
+	}
+
+	getStatus() {
+		return {
+			id: this.id,
+			name: this.name,
+			assetClass: this.assetClass,
+			kind: this.kind,
+			connected: this.connected,
+			lastHeartbeat: this.lastHeartbeat,
+			lastError: this.lastError
+		};
 	}
 
 	async connect() {
@@ -21,7 +56,7 @@ class Provider {
 	}
 
 	async disconnect() {
-		this._connected = false;
+		this.setConnected(false);
 	}
 }
 

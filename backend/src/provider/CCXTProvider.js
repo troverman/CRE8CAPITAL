@@ -1,84 +1,91 @@
-const ccxt = require('ccxt');
 const Provider = require('./Provider');
 
 class CCXTProvider extends Provider {
-	constructor({ exchangeId = 'binanceus', marketLimit = 10, interval = 60000 }) {
-		super({ id: `ccxt.${exchangeId}` });
+	constructor({
+		exchangeId = 'binanceus',
+		symbols = ['BTC/USDT', 'ETH/USDT', 'SOL/USDT'],
+		intervalMs = 15000
+	} = {}) {
+		super({
+			id: `ccxt.${exchangeId}`,
+			name: `CCXT ${exchangeId}`,
+			assetClass: 'crypto',
+			kind: 'external'
+		});
 		this.exchangeId = exchangeId;
-		this.marketLimit = marketLimit;
-		this.interval = interval;
-		this._intervals = [];
+		this.symbols = symbols;
+		this.intervalMs = intervalMs;
+		this._timer = null;
+		this._exchange = null;
+	}
+
+	async _createExchange() {
+		let ccxtLib;
+		try {
+			// Lazy import so the app can run even when ccxt is unavailable.
+			ccxtLib = require('ccxt');
+		} catch (error) {
+			throw new Error(`ccxt unavailable: ${error.message}`);
+		}
+		const ExchangeClass = ccxtLib[this.exchangeId];
+		if (!ExchangeClass) {
+			throw new Error(`ccxt exchange "${this.exchangeId}" not found`);
+		}
+		return new ExchangeClass();
+	}
+
+	async _pollSymbol(symbol) {
+		const ticker = await this._exchange.fetchTicker(symbol);
+		const normalizedSymbol = String(symbol).replace('/', '-').toUpperCase();
+		this.emitTick({
+			symbol: normalizedSymbol,
+			venue: this.exchangeId.toUpperCase(),
+			price: Number(ticker.last),
+			bid: Number(ticker.bid),
+			ask: Number(ticker.ask),
+			volume: Number(ticker.baseVolume || ticker.quoteVolume || 0),
+			timestamp: Number(ticker.timestamp) || Date.now(),
+			raw: {
+				base: ticker.base,
+				quote: ticker.quote
+			}
+		});
+	}
+
+	async _poll() {
+		for (const symbol of this.symbols) {
+			try {
+				// eslint-disable-next-line no-await-in-loop
+				await this._pollSymbol(symbol);
+			} catch (error) {
+				this.setError(error);
+			}
+		}
 	}
 
 	async connect() {
-		const exchange = new ccxt[this.exchangeId]();
-		console.log(`[CCXTProvider] connecting: ${this.exchangeId}`);
-
-		this.emit('exchange', { string: this.exchangeId });
-
-		let markets;
+		if (this._timer) return;
+		this.setError(null);
 		try {
-			markets = await exchange.loadMarkets();
-		} catch (e) {
-			console.error(`[CCXTProvider] loadMarkets error: ${this.exchangeId}`, e.message);
+			this._exchange = await this._createExchange();
+			await this._exchange.loadMarkets();
+		} catch (error) {
+			this.setError(error);
 			return;
 		}
-
-		const marketKeys = Object.keys(markets).slice(0, this.marketLimit);
-
-		for (const key of marketKeys) {
-			this.emit('market', { string: key.replace('/', '-'), rank: 2 });
-		}
-
-		for (const key of marketKeys) {
-			const id = setInterval(() => this._pollMarket(exchange, key), this.interval);
-			this._intervals.push(id);
-		}
-
-		this._connected = true;
-	}
-
-	async _pollMarket(exchange, symbol) {
-		try {
-			const orderBook = await exchange.fetchOrderBook(symbol);
-			const [base, quote] = symbol.split('/');
-
-			for (const [price, amount] of orderBook.asks) {
-				this.emit('position', {
-					string: `${this.exchangeId}.${symbol}`,
-					input:  { '1': { asset: { string: base },  number: amount } },
-					output: { '1': { asset: { string: quote }, number: price * amount } }
-				});
-			}
-			for (const [price, amount] of orderBook.bids) {
-				this.emit('position', {
-					string: `${this.exchangeId}.${symbol}`,
-					input:  { '1': { asset: { string: quote }, number: price * amount } },
-					output: { '1': { asset: { string: base },  number: amount } }
-				});
-			}
-		} catch (e) {
-			console.error(`[CCXTProvider] orderBook error: ${symbol}`, e.message);
-		}
-
-		try {
-			const trades = await exchange.fetchTrades(symbol);
-			for (const trade of trades) {
-				const [base, quote] = trade.symbol.split('/');
-				this.emit('trade', {
-					string: `${trade.symbol.replace('/', ':')}.${this.exchangeId}.${trade.id}`,
-					input:  { string: base,  number: trade.amount,             pool: `${trade.symbol}.${this.exchangeId}` },
-					output: { string: quote, number: trade.amount * trade.price, pool: `${trade.symbol}.${this.exchangeId}` }
-				});
-			}
-		} catch (e) {
-			console.error(`[CCXTProvider] fetchTrades error: ${symbol}`, e.message);
-		}
+		await this._poll();
+		this._timer = setInterval(() => {
+			this._poll().catch((error) => this.setError(error));
+		}, this.intervalMs);
+		this.setConnected(true);
 	}
 
 	async disconnect() {
-		for (const id of this._intervals) clearInterval(id);
-		this._intervals = [];
+		if (this._timer) {
+			clearInterval(this._timer);
+			this._timer = null;
+		}
+		this._exchange = null;
 		await super.disconnect();
 	}
 }

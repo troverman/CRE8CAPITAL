@@ -1,51 +1,63 @@
-const { CCXTProvider, BinanceProvider } = require('./provider');
-const Pipeline = require('./pipeline/Pipeline');
-const Exchange    = require('./connection/Exchange');
-const Market      = require('./connection/Market');
-const Position    = require('./connection/Position');
-const Transaction = require('./connection/Transaction');
+const { createCapitalRuntime } = require('./runtime');
 
-const Init = async () => {
-	console.log('[CAPITAL] init');
+const runtime = createCapitalRuntime();
 
-	const pipeline = new Pipeline();
+let heartbeatIntervalId = null;
 
-	// --- CCXT REST polling ---
-	const ccxt = new CCXTProvider({
-		exchangeId:  'binanceus',
-		marketLimit: 5,      // bump to 35 for stress test
-		interval:    60000
-	});
+const start = async () => {
+	await runtime.start();
+	console.log('[CRE8CAPITAL] runtime started');
 
-	ccxt.on('exchange', data => pipeline.run({ connection: Exchange,    data }));
-	ccxt.on('market',   data => pipeline.run({ connection: Market,      data }));
-	ccxt.on('position', data => pipeline.run({ connection: Position,    data }));
-	ccxt.on('trade',    data => pipeline.run({ connection: Transaction, data }));
-
-	await ccxt.connect();
-
-	// --- Binance WebSocket ---
-	const binance = new BinanceProvider({ symbols: ['BTCUSDT'] });
-
-	binance.on('depth', ({ symbol, depth }) => {
-		pipeline.run({ connection: Position, data: {
-			string: `binance.ws.${symbol}`,
-			symbol,
-			bids: depth.bids,
-			asks: depth.asks
-		}});
-	});
-
-	await binance.connect();
-
-	// heartbeat
-	setInterval(() => {
-		const mb = Math.round(process.memoryUsage().heapUsed / 1024 / 1024);
-		console.log(`[CAPITAL] events: ${pipeline.count}  heap: ${mb}MB`);
+	heartbeatIntervalId = setInterval(() => {
+		const snapshot = runtime.getSnapshot({
+			marketLimit: 1,
+			signalLimit: 1,
+			decisionLimit: 1,
+			feedLimit: 1
+		});
+		console.log('[CRE8CAPITAL] heartbeat', {
+			ticksProcessed: snapshot.telemetry.ticksProcessed,
+			signalsGenerated: snapshot.telemetry.signalsGenerated,
+			decisionsGenerated: snapshot.telemetry.decisionsGenerated,
+			queueDepth: snapshot.controller.queueDepth,
+			providersConnected: snapshot.providers.filter((provider) => provider.connected).length
+		});
 	}, 30000);
 };
 
-Init().catch(e => {
-	console.error('[CAPITAL] fatal:', e.message);
+let shuttingDown = false;
+const shutdown = async () => {
+	if (shuttingDown) {
+		return;
+	}
+	shuttingDown = true;
+	if (heartbeatIntervalId) {
+		clearInterval(heartbeatIntervalId);
+		heartbeatIntervalId = null;
+	}
+	await runtime.stop();
+	console.log('[CRE8CAPITAL] runtime stopped');
+};
+
+start().catch((error) => {
+	console.error('[CRE8CAPITAL] fatal runtime error:', error.message);
 	process.exit(1);
+});
+
+process.on('SIGINT', () => {
+	shutdown()
+		.then(() => process.exit(0))
+		.catch((error) => {
+			console.error('[CRE8CAPITAL] shutdown failed:', error.message);
+			process.exit(1);
+		});
+});
+
+process.on('SIGTERM', () => {
+	shutdown()
+		.then(() => process.exit(0))
+		.catch((error) => {
+			console.error('[CRE8CAPITAL] shutdown failed:', error.message);
+			process.exit(1);
+		});
 });

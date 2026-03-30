@@ -1,108 +1,53 @@
 const http = require('node:http');
+const { runtime } = require('./runtime');
 
 const PORT = Number(process.env.PORT || 8787);
-
-const ideas = [
-	{
-		id: 'idea-1',
-		asset: 'AI Infrastructure Basket',
-		theme: 'Compute and data center exposure',
-		confidence: 89,
-		allocation: '14%',
-		horizon: '6 months',
-		status: 'ready'
-	},
-	{
-		id: 'idea-2',
-		asset: 'Treasury Yield Ladder',
-		theme: 'Cash efficiency and downside insulation',
-		confidence: 82,
-		allocation: '18%',
-		horizon: '12 months',
-		status: 'review'
-	},
-	{
-		id: 'idea-3',
-		asset: 'Energy Transition Pair',
-		theme: 'Hedge commodity spikes with growth upside',
-		confidence: 77,
-		allocation: '8%',
-		horizon: '9 months',
-		status: 'simulating'
-	}
-];
-
-const workflows = [
-	{
-		id: 'wf-1',
-		name: 'Weekly Idea Engine',
-		trigger: 'Every Monday at 07:00',
-		nextRun: 'Mon 07:00',
-		owner: 'Agent Stack',
-		mode: 'agentic',
-		progress: 68
-	},
-	{
-		id: 'wf-2',
-		name: 'Capital Allocation Review',
-		trigger: 'Drawdown > 3%',
-		nextRun: 'Event driven',
-		owner: 'CFO + Agent',
-		mode: 'hybrid',
-		progress: 43
-	},
-	{
-		id: 'wf-3',
-		name: 'Profit Lock Rotation',
-		trigger: 'Take-profit threshold reached',
-		nextRun: 'Live monitor',
-		owner: 'Execution Agent',
-		mode: 'agentic',
-		progress: 91
-	}
-];
-
-const tasks = [
-	{
-		id: 'task-1',
-		title: 'Validate top 3 AI basket entries against liquidity floor',
-		assignee: 'Capital Agent',
-		due: 'Today 16:30',
-		status: 'in-progress'
-	},
-	{
-		id: 'task-2',
-		title: 'Approve treasury ladder rebalance',
-		assignee: 'Finance Lead',
-		due: 'Today 18:00',
-		status: 'awaiting-review'
-	},
-	{
-		id: 'task-3',
-		title: 'Publish strategy memo to investor room',
-		assignee: 'Ops Team',
-		due: 'Tomorrow 09:00',
-		status: 'queued'
-	}
-];
-
-const guardrails = [
-	{ id: 'gr-1', label: 'Max Single-Asset Exposure', value: 17, limit: 20 },
-	{ id: 'gr-2', label: 'Cash Reserve Floor', value: 26, limit: 18 },
-	{ id: 'gr-3', label: 'Monthly Risk Budget', value: 62, limit: 75 }
-];
+const HOST = process.env.HOST || '0.0.0.0';
 
 const sendJson = (res, statusCode, payload) => {
 	res.writeHead(statusCode, {
 		'Content-Type': 'application/json; charset=utf-8',
 		'Access-Control-Allow-Origin': '*',
-		'Access-Control-Allow-Methods': 'GET,OPTIONS',
+		'Access-Control-Allow-Methods': 'GET,POST,OPTIONS',
 		'Access-Control-Allow-Headers': 'Content-Type'
 	});
 	res.end(JSON.stringify(payload));
 };
 
-const server = http.createServer((req, res) => {
+const readBody = (req) => {
+	return new Promise((resolve, reject) => {
+		let body = '';
+		req.on('data', (chunk) => {
+			body += chunk;
+			if (body.length > 1024 * 1024) {
+				req.destroy();
+				reject(new Error('Request body too large'));
+			}
+		});
+		req.on('end', () => {
+			if (!body) {
+				resolve({});
+				return;
+			}
+			try {
+				resolve(JSON.parse(body));
+			} catch (error) {
+				reject(new Error(`Invalid JSON body: ${error.message}`));
+			}
+		});
+		req.on('error', (error) => reject(error));
+	});
+};
+
+const numberParam = (value, fallback) => {
+	if (value === undefined || value === null || value === '') {
+		return fallback;
+	}
+	const num = Number(value);
+	return Number.isFinite(num) ? num : fallback;
+};
+
+const api = async (req, res) => {
 	if (req.method === 'OPTIONS') {
 		return sendJson(res, 204, {});
 	}
@@ -111,50 +56,173 @@ const server = http.createServer((req, res) => {
 	const url = new URL(req.url || '/', baseUrl);
 
 	if (req.method === 'GET' && url.pathname === '/health') {
+		const snapshot = runtime.getSnapshot({ marketLimit: 1, signalLimit: 1, decisionLimit: 1, feedLimit: 1 });
 		return sendJson(res, 200, {
-			status: 'ok',
-			service: 'cre8capital-backend',
-			timestamp: new Date().toISOString()
+			status: snapshot.running ? 'ok' : 'degraded',
+			service: 'cre8capital-runtime',
+			timestamp: new Date().toISOString(),
+			running: snapshot.running,
+			providerCount: snapshot.providers.length,
+			providersConnected: snapshot.providers.filter((provider) => provider.connected).length
 		});
 	}
 
-	if (req.method === 'GET' && url.pathname === '/api/splash') {
+	if (req.method === 'GET' && url.pathname === '/api/snapshot') {
+		const snapshot = runtime.getSnapshot({
+			marketLimit: numberParam(url.searchParams.get('marketLimit'), 150),
+			signalLimit: numberParam(url.searchParams.get('signalLimit'), 120),
+			decisionLimit: numberParam(url.searchParams.get('decisionLimit'), 120),
+			feedLimit: numberParam(url.searchParams.get('feedLimit'), 140)
+		});
+		return sendJson(res, 200, snapshot);
+	}
+
+	if (req.method === 'GET' && url.pathname === '/api/providers') {
+		return sendJson(res, 200, { items: runtime.getProviderStatuses() });
+	}
+
+	if (req.method === 'GET' && url.pathname === '/api/markets') {
+		const items = runtime.getMarkets({
+			limit: numberParam(url.searchParams.get('limit'), 120),
+			assetClass: url.searchParams.get('assetClass') || undefined
+		});
+		return sendJson(res, 200, { items, summary: runtime.marketStore.getSummary() });
+	}
+
+	if (req.method === 'GET' && url.pathname === '/api/signals') {
+		const items = runtime.getSignals({
+			limit: numberParam(url.searchParams.get('limit'), 120),
+			type: url.searchParams.get('type') || undefined,
+			symbol: url.searchParams.get('symbol') || undefined,
+			severity: url.searchParams.get('severity') || undefined
+		});
 		return sendJson(res, 200, {
-			site: 'capital.cre8.xyz',
-			headline: 'Capital automation for bold operators',
-			subheadline: 'Turn market signals into action-ready investment workflows.'
+			items,
+			summary: runtime.signalEngine.getSummary()
 		});
 	}
 
-	if (req.method === 'GET' && url.pathname === '/api/ideas') {
-		return sendJson(res, 200, { items: ideas });
+	if (req.method === 'GET' && url.pathname === '/api/strategies') {
+		return sendJson(res, 200, {
+			items: runtime.getStrategies(),
+			summary: runtime.strategyEngine.getSummary(),
+			positions: runtime.strategyEngine.getPositions()
+		});
 	}
 
-	if (req.method === 'GET' && url.pathname === '/api/workflows') {
-		return sendJson(res, 200, { items: workflows });
+	if (req.method === 'GET' && url.pathname === '/api/decisions') {
+		const items = runtime.getDecisions({
+			limit: numberParam(url.searchParams.get('limit'), 120),
+			strategyId: url.searchParams.get('strategyId') || undefined,
+			symbol: url.searchParams.get('symbol') || undefined
+		});
+		return sendJson(res, 200, { items });
 	}
 
-	if (req.method === 'GET' && url.pathname === '/api/tasks') {
-		return sendJson(res, 200, { items: tasks });
+	if (req.method === 'GET' && url.pathname === '/api/feed') {
+		const items = runtime.getFeed({
+			limit: numberParam(url.searchParams.get('limit'), 120)
+		});
+		return sendJson(res, 200, { items });
 	}
 
-	if (req.method === 'GET' && url.pathname === '/api/guardrails') {
-		return sendJson(res, 200, { items: guardrails });
+	if (req.method === 'GET' && url.pathname === '/api/controller') {
+		return sendJson(res, 200, runtime.getControllerState());
+	}
+
+	if (req.method === 'POST' && url.pathname === '/api/triggers/restrategy') {
+		const body = await readBody(req);
+		const result = await runtime.triggerRestrategy({
+			reason: body.reason,
+			source: body.source || 'api'
+		});
+		return sendJson(res, 202, {
+			ok: true,
+			...result
+		});
+	}
+
+	if (req.method === 'POST' && url.pathname === '/api/runtime/start') {
+		await runtime.start();
+		return sendJson(res, 200, {
+			ok: true,
+			running: true
+		});
+	}
+
+	if (req.method === 'POST' && url.pathname === '/api/runtime/stop') {
+		await runtime.stop();
+		return sendJson(res, 200, {
+			ok: true,
+			running: false
+		});
 	}
 
 	return sendJson(res, 404, {
 		error: 'Not found',
 		availableRoutes: [
 			'/health',
-			'/api/splash',
-			'/api/ideas',
-			'/api/workflows',
-			'/api/tasks',
-			'/api/guardrails'
+			'/api/snapshot',
+			'/api/providers',
+			'/api/markets',
+			'/api/signals',
+			'/api/strategies',
+			'/api/decisions',
+			'/api/feed',
+			'/api/controller',
+			'/api/triggers/restrategy',
+			'/api/runtime/start',
+			'/api/runtime/stop'
 		]
+	});
+};
+
+const server = http.createServer((req, res) => {
+	api(req, res).catch((error) => {
+		sendJson(res, 500, {
+			error: 'Internal error',
+			message: error.message
+		});
 	});
 });
 
-server.listen(PORT, () => {
-	console.log(`[CRE8 Capital API] listening on http://localhost:${PORT}`);
+server.listen(PORT, HOST, async () => {
+	console.log(`[CRE8 Capital API] listening on http://${HOST}:${PORT}`);
+	try {
+		await runtime.start();
+	} catch (error) {
+		console.error('[CRE8 Capital API] runtime start failed:', error.message);
+	}
 });
+
+let shuttingDown = false;
+const shutdown = async () => {
+	if (shuttingDown) {
+		return;
+	}
+	shuttingDown = true;
+	try {
+		await runtime.stop();
+	} catch (error) {
+		console.error('[CRE8 Capital API] runtime shutdown failed:', error.message);
+	}
+	server.close(() => {
+		process.exit(0);
+	});
+	setTimeout(() => process.exit(0), 2000).unref();
+};
+
+process.on('SIGINT', () => {
+	shutdown().catch((error) => {
+		console.error('[CRE8 Capital API] SIGINT shutdown failure:', error.message);
+		process.exit(1);
+	});
+});
+process.on('SIGTERM', () => {
+	shutdown().catch((error) => {
+		console.error('[CRE8 Capital API] SIGTERM shutdown failure:', error.message);
+		process.exit(1);
+	});
+});
+
+module.exports = { server, runtime };

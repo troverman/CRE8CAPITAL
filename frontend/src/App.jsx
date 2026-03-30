@@ -1,346 +1,401 @@
-import { useEffect, useMemo, useState } from 'react';
-
-const sections = [
-  { id: 'automation', label: 'Automation Hub' },
-  { id: 'ideas', label: 'Auto-Invest Ideas' },
-  { id: 'guardrails', label: 'Risk Guardrails' },
-  { id: 'tasks', label: 'Active Tasks' }
-];
-
-const seedIdeas = [
-  {
-    id: 'idea-1',
-    asset: 'AI Infrastructure Basket',
-    theme: 'Compute and data center exposure',
-    confidence: 89,
-    allocation: '14%',
-    horizon: '6 months',
-    status: 'ready'
-  },
-  {
-    id: 'idea-2',
-    asset: 'Treasury Yield Ladder',
-    theme: 'Cash efficiency and downside insulation',
-    confidence: 82,
-    allocation: '18%',
-    horizon: '12 months',
-    status: 'review'
-  },
-  {
-    id: 'idea-3',
-    asset: 'Energy Transition Pair',
-    theme: 'Hedge commodity spikes with growth upside',
-    confidence: 77,
-    allocation: '8%',
-    horizon: '9 months',
-    status: 'simulating'
-  }
-];
-
-const seedWorkflows = [
-  {
-    id: 'wf-1',
-    name: 'Weekly Idea Engine',
-    trigger: 'Every Monday at 07:00',
-    nextRun: 'Mon 07:00',
-    owner: 'Agent Stack',
-    mode: 'agentic',
-    progress: 68
-  },
-  {
-    id: 'wf-2',
-    name: 'Capital Allocation Review',
-    trigger: 'Drawdown > 3%',
-    nextRun: 'Event driven',
-    owner: 'CFO + Agent',
-    mode: 'hybrid',
-    progress: 43
-  },
-  {
-    id: 'wf-3',
-    name: 'Profit Lock Rotation',
-    trigger: 'Take-profit threshold reached',
-    nextRun: 'Live monitor',
-    owner: 'Execution Agent',
-    mode: 'agentic',
-    progress: 91
-  }
-];
-
-const seedTasks = [
-  {
-    id: 'task-1',
-    title: 'Validate top 3 AI basket entries against liquidity floor',
-    assignee: 'Capital Agent',
-    due: 'Today 16:30',
-    status: 'in-progress'
-  },
-  {
-    id: 'task-2',
-    title: 'Approve treasury ladder rebalance',
-    assignee: 'Finance Lead',
-    due: 'Today 18:00',
-    status: 'awaiting-review'
-  },
-  {
-    id: 'task-3',
-    title: 'Publish strategy memo to investor room',
-    assignee: 'Ops Team',
-    due: 'Tomorrow 09:00',
-    status: 'queued'
-  }
-];
-
-const seedGuardrails = [
-  { id: 'gr-1', label: 'Max Single-Asset Exposure', value: 17, limit: 20 },
-  { id: 'gr-2', label: 'Cash Reserve Floor', value: 26, limit: 18 },
-  { id: 'gr-3', label: 'Monthly Risk Budget', value: 62, limit: 75 }
-];
+﻿import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 const apiBase = import.meta.env.VITE_API_BASE || 'http://localhost:8787';
 
-const toStateLabel = (value) =>
-  value
-    .split('-')
-    .map((chunk) => chunk.charAt(0).toUpperCase() + chunk.slice(1))
-    .join(' ');
+const initialSnapshot = {
+  running: false,
+  telemetry: {},
+  controller: {},
+  providers: [],
+  markets: [],
+  marketSummary: {},
+  signals: [],
+  signalSummary: {},
+  strategies: [],
+  strategySummary: {},
+  positions: [],
+  decisions: [],
+  feed: []
+};
 
-const confidenceClass = (confidence) => {
-  if (confidence >= 85) return 'high';
-  if (confidence >= 70) return 'medium';
+const fmtInt = (value) => {
+  const num = Number(value);
+  if (!Number.isFinite(num)) return '0';
+  return Math.round(num).toLocaleString();
+};
+
+const fmtNum = (value, digits = 2) => {
+  const num = Number(value);
+  if (!Number.isFinite(num)) return '-';
+  return num.toLocaleString(undefined, {
+    minimumFractionDigits: digits,
+    maximumFractionDigits: digits
+  });
+};
+
+const fmtCompact = (value) => {
+  const num = Number(value);
+  if (!Number.isFinite(num)) return '-';
+  return new Intl.NumberFormat(undefined, {
+    notation: 'compact',
+    maximumFractionDigits: 2
+  }).format(num);
+};
+
+const fmtPct = (value) => {
+  const num = Number(value);
+  if (!Number.isFinite(num)) return '-';
+  const sign = num > 0 ? '+' : '';
+  return `${sign}${num.toFixed(2)}%`;
+};
+
+const fmtTime = (value) => {
+  if (!value) return '-';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return '-';
+  return date.toLocaleTimeString([], {
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit'
+  });
+};
+
+const fmtDuration = (value) => {
+  const ms = Number(value);
+  if (!Number.isFinite(ms) || ms <= 0) return '-';
+  const totalSeconds = Math.floor(ms / 1000);
+  if (totalSeconds < 60) return `${totalSeconds}s`;
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+  return `${minutes}m ${seconds}s`;
+};
+
+const severityClass = (severity) => {
+  if (severity === 'high') return 'high';
+  if (severity === 'medium') return 'medium';
   return 'low';
 };
 
-const percent = (value, limit) => {
-  if (!limit || limit <= 0) return 0;
-  return Math.min(100, Math.round((value / limit) * 100));
-};
-
 export default function App() {
-  const [activeSection, setActiveSection] = useState('automation');
-  const [mode, setMode] = useState('agentic');
-  const [ideas, setIdeas] = useState(seedIdeas);
-  const [workflows, setWorkflows] = useState(seedWorkflows);
-  const [tasks, setTasks] = useState(seedTasks);
-  const [guardrails, setGuardrails] = useState(seedGuardrails);
+  const [snapshot, setSnapshot] = useState(initialSnapshot);
   const [connected, setConnected] = useState(false);
-  const [syncMessage, setSyncMessage] = useState('Simulation mode: local idea engine');
+  const [loading, setLoading] = useState(true);
+  const [syncing, setSyncing] = useState(false);
+  const [lastSyncedAt, setLastSyncedAt] = useState(null);
+  const [error, setError] = useState('');
+  const [restrategyReason, setRestrategyReason] = useState('manual rebalance check');
+  const [restrategyBusy, setRestrategyBusy] = useState(false);
+  const [actionMessage, setActionMessage] = useState('');
 
-  useEffect(() => {
+  const requestRef = useRef({ id: 0, controller: null });
+  const mountedRef = useRef(false);
+
+  const loadSnapshot = useCallback(async () => {
+    const requestId = requestRef.current.id + 1;
+    requestRef.current.id = requestId;
+
+    if (requestRef.current.controller) {
+      requestRef.current.controller.abort();
+    }
+
     const controller = new AbortController();
+    requestRef.current.controller = controller;
+    setSyncing(true);
 
-    const fetchResource = async (path, setter) => {
-      try {
-        const response = await fetch(`${apiBase}${path}`, { signal: controller.signal });
-        if (!response.ok) return false;
-        const payload = await response.json();
-        if (!Array.isArray(payload.items)) return false;
-        setter(payload.items);
-        return true;
-      } catch {
-        return false;
-      }
-    };
+    try {
+      const response = await fetch(`${apiBase}/api/snapshot`, {
+        signal: controller.signal
+      });
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
 
-    const load = async () => {
-      const [ideasOk, workflowsOk, tasksOk, guardrailsOk] = await Promise.all([
-        fetchResource('/api/ideas', setIdeas),
-        fetchResource('/api/workflows', setWorkflows),
-        fetchResource('/api/tasks', setTasks),
-        fetchResource('/api/guardrails', setGuardrails)
-      ]);
+      const payload = await response.json();
+      if (!mountedRef.current || requestId !== requestRef.current.id) return;
 
-      const hasApiData = ideasOk || workflowsOk || tasksOk || guardrailsOk;
-      setConnected(hasApiData);
-      if (hasApiData) {
-        const stamp = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-        setSyncMessage(`API sync complete at ${stamp}`);
-      }
-    };
+      setSnapshot(payload);
+      setConnected(true);
+      setError('');
+      setLastSyncedAt(Date.now());
+    } catch (loadError) {
+      if (loadError.name === 'AbortError') return;
+      if (!mountedRef.current || requestId !== requestRef.current.id) return;
 
-    load();
-    return () => controller.abort();
+      setConnected(false);
+      setError(loadError.message || 'Snapshot fetch failed');
+    } finally {
+      if (!mountedRef.current || requestId !== requestRef.current.id) return;
+      setSyncing(false);
+      setLoading(false);
+    }
   }, []);
 
-  const activeLabel = useMemo(() => {
-    const selected = sections.find((item) => item.id === activeSection);
-    return selected ? selected.label : 'Automation Hub';
-  }, [activeSection]);
+  useEffect(() => {
+    mountedRef.current = true;
+    loadSnapshot();
 
-  const queuedApprovals = ideas.filter((idea) => idea.status !== 'ready').length;
-  const automatedFlows = workflows.filter((flow) => flow.mode === 'agentic').length;
+    const intervalId = setInterval(() => {
+      loadSnapshot();
+    }, 5000);
+
+    return () => {
+      mountedRef.current = false;
+      clearInterval(intervalId);
+      if (requestRef.current.controller) {
+        requestRef.current.controller.abort();
+      }
+    };
+  }, [loadSnapshot]);
+
+  const triggerRestrategy = async () => {
+    setRestrategyBusy(true);
+    setActionMessage('');
+
+    try {
+      const response = await fetch(`${apiBase}/api/triggers/restrategy`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          reason: restrategyReason,
+          source: 'capital-intro'
+        })
+      });
+
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+
+      const payload = await response.json();
+      setActionMessage(`Restrategy queued at ${fmtTime(payload.request?.requestedAt)}`);
+      await loadSnapshot();
+    } catch (triggerError) {
+      setActionMessage(`Restrategy failed: ${triggerError.message}`);
+    } finally {
+      setRestrategyBusy(false);
+    }
+  };
+
+  const providerCounts = useMemo(() => {
+    const connectedCount = snapshot.providers.filter((provider) => provider.connected).length;
+    const syntheticCount = snapshot.providers.filter((provider) => provider.kind === 'synthetic').length;
+    const externalCount = snapshot.providers.filter((provider) => provider.kind === 'external').length;
+    return { connectedCount, syntheticCount, externalCount };
+  }, [snapshot.providers]);
+
+  const topMarkets = useMemo(() => snapshot.markets.slice(0, 8), [snapshot.markets]);
+  const topSignals = useMemo(() => snapshot.signals.slice(0, 6), [snapshot.signals]);
+  const topDecisions = useMemo(() => snapshot.decisions.slice(0, 6), [snapshot.decisions]);
+  const architectureItems = useMemo(
+    () => [
+      {
+        title: 'Controller Interface',
+        detail: 'Queue + trigger pattern from runtime/CRE8SOCIAL',
+        stats: [
+          `Tick ${fmtInt(snapshot.controller.tick)}`,
+          `Queue ${fmtInt(snapshot.controller.queueDepth)}`,
+          `FPS ${fmtInt(snapshot.controller.fps)}`
+        ]
+      },
+      {
+        title: 'Signal Engine',
+        detail: 'multi-market signal model for momentum, spread, and venue gaps',
+        stats: [
+          `${fmtInt(snapshot.signalSummary.total)} total signals`,
+          `${fmtInt(snapshot.signalSummary.lastFiveMinutes)} in last 5m`,
+          `High ${fmtInt(snapshot.signalSummary.bySeverity?.high)}`
+        ]
+      },
+      {
+        title: 'Strategy Layer',
+        detail: 'strategy models + restrategy trigger over signal output',
+        stats: [
+          `${fmtInt(snapshot.strategies.length)} strategies`,
+          `${fmtInt(snapshot.positions.length)} positions`,
+          `${fmtInt(snapshot.strategySummary.totalDecisions)} decisions`
+        ]
+      }
+    ],
+    [snapshot]
+  );
 
   return (
-    <main className="capital-app">
-      <aside className="sidebar">
-        <div className="brand-block">
-          <p className="brand-url">capital.cre8.xyz</p>
-          <h1>CRE8 Capital</h1>
-          <p className="brand-copy">
-            Capital automation for teams that want sharper bets and faster execution.
-          </p>
+    <main className="capital-home">
+      <section className="hero-shell">
+        <p className="hero-eyebrow">capital.cre8.xyz</p>
+        <h1>MultiMarket Capital, Simple Intro</h1>
+        <p className="hero-copy">
+          CRE8 Capital is the strategy layer above a multimarket runtime. Providers stream market data, signals model
+          market states, and strategy engines execute decisions with manual and automatic restrategy triggers.
+        </p>
+
+        <div className="hero-actions">
+          <button type="button" className="btn secondary" onClick={loadSnapshot} disabled={syncing}>
+            {syncing ? 'Syncing...' : 'Refresh Snapshot'}
+          </button>
+          <button type="button" className="btn primary" onClick={triggerRestrategy} disabled={restrategyBusy}>
+            {restrategyBusy ? 'Queuing...' : 'Run Restrategy'}
+          </button>
         </div>
 
-        <nav className="nav-stack">
-          {sections.map((section) => (
-            <button
-              key={section.id}
-              type="button"
-              className={section.id === activeSection ? 'nav-item active' : 'nav-item'}
-              onClick={() => setActiveSection(section.id)}
-            >
-              {section.label}
-            </button>
+        <div className="hero-status-row">
+          <span className={connected ? 'status-pill online' : 'status-pill'}>
+            {connected ? 'Runtime Connected' : 'Runtime Disconnected'}
+          </span>
+          <span>Last sync {loading ? '-' : fmtTime(lastSyncedAt)}</span>
+          <span>Uptime {fmtDuration(snapshot.telemetry.uptimeMs)}</span>
+        </div>
+
+        {error ? <p className="error-copy">{error}</p> : null}
+      </section>
+
+      <section className="stats-ribbon">
+        <div className="stat-item">
+          <span>Providers</span>
+          <strong>
+            {fmtInt(providerCounts.connectedCount)}/{fmtInt(snapshot.providers.length)}
+          </strong>
+        </div>
+        <div className="stat-item">
+          <span>Markets</span>
+          <strong>{fmtInt(snapshot.marketSummary.marketCount)}</strong>
+        </div>
+        <div className="stat-item">
+          <span>Signals (5m)</span>
+          <strong>{fmtInt(snapshot.signalSummary.lastFiveMinutes)}</strong>
+        </div>
+        <div className="stat-item">
+          <span>Decisions</span>
+          <strong>{fmtInt(snapshot.strategySummary.totalDecisions)}</strong>
+        </div>
+        <div className="stat-item">
+          <span>Dropped Actions</span>
+          <strong>{fmtInt(snapshot.telemetry.actionsDropped)}</strong>
+        </div>
+      </section>
+
+      <section className="architecture-section">
+        <h2>Runtime Architecture</h2>
+        <p>
+          This page reflects backend reality: controller pattern, multimarket providers, signal generation, strategy
+          decisions, and restrategy event triggers.
+        </p>
+        <div className="architecture-grid">
+          {architectureItems.map((item) => (
+            <article key={item.title} className="architecture-card">
+              <h3>{item.title}</h3>
+              <p>{item.detail}</p>
+              <ul>
+                {item.stats.map((stat) => (
+                  <li key={stat}>{stat}</li>
+                ))}
+              </ul>
+            </article>
           ))}
-        </nav>
+        </div>
+      </section>
 
-        <div className="sidebar-card">
-          <p className="sidebar-label">Decision Mode</p>
-          <div className="mode-switch">
-            <button
-              type="button"
-              className={mode === 'human' ? 'mode-button active' : 'mode-button'}
-              onClick={() => setMode('human')}
-            >
-              Human
-            </button>
-            <button
-              type="button"
-              className={mode === 'agentic' ? 'mode-button active' : 'mode-button'}
-              onClick={() => setMode('agentic')}
-            >
-              Agentic
-            </button>
-          </div>
-          <p className="sidebar-note">
-            {mode === 'agentic'
-              ? 'Agents can draft, score, and queue investment actions for approval.'
-              : 'Human-led review mode with full manual approvals.'}
+      <section className="live-section">
+        <div className="live-header">
+          <h2>Live Runtime Snapshot</h2>
+          <p>
+            synthetic {fmtInt(providerCounts.syntheticCount)} | external {fmtInt(providerCounts.externalCount)} | queue{' '}
+            {fmtInt(snapshot.controller.queueDepth)}
           </p>
         </div>
 
-        <div className="sidebar-metrics">
-          <div className="metric">
-            <span>Automated Workflows</span>
-            <strong>{automatedFlows}</strong>
-          </div>
-          <div className="metric">
-            <span>Pending Approvals</span>
-            <strong>{queuedApprovals}</strong>
-          </div>
-          <div className="metric">
-            <span>Active Tasks</span>
-            <strong>{tasks.length}</strong>
-          </div>
-        </div>
-      </aside>
-
-      <section className="workspace">
-        <header className="workspace-header">
-          <div>
-            <span className={connected ? 'status-pill online' : 'status-pill'}>
-              {connected ? 'API Connected' : 'Simulation Mode'}
-            </span>
-            <h2>{activeLabel}</h2>
-            <p className="sync-copy">{syncMessage}</p>
-          </div>
-          <div className="header-actions">
-            <button type="button" className="action-button neutral">
-              Run Backtest
-            </button>
-            <button type="button" className="action-button">
-              Launch Allocation Cycle
-            </button>
-          </div>
-        </header>
-
-        <div className="panel-grid">
-          <article className="panel ideas">
+        <div className="live-grid">
+          <article className="panel">
             <div className="panel-head">
-              <h3>Auto-Invest Ideas</h3>
-              <span>{ideas.length} opportunities</span>
+              <h3>Providers</h3>
+              <span>{fmtInt(snapshot.providers.length)}</span>
             </div>
-            <div className="idea-list">
-              {ideas.map((idea) => (
-                <div key={idea.id} className="idea-card">
-                  <div className="idea-header">
-                    <h4>{idea.asset}</h4>
-                    <span className={`confidence ${confidenceClass(idea.confidence)}`}>
-                      {idea.confidence}% confidence
-                    </span>
-                  </div>
-                  <p>{idea.theme}</p>
-                  <div className="idea-meta">
-                    <span>{idea.allocation} allocation</span>
-                    <span>{idea.horizon}</span>
-                    <span>{toStateLabel(idea.status)}</span>
-                  </div>
-                </div>
-              ))}
-            </div>
-          </article>
-
-          <article className="panel workflows">
-            <div className="panel-head">
-              <h3>Automation Flows</h3>
-              <span>Human + agent collaboration</span>
-            </div>
-            <div className="workflow-list">
-              {workflows.map((workflow) => (
-                <div key={workflow.id} className="workflow-card">
-                  <div className="workflow-top">
-                    <h4>{workflow.name}</h4>
-                    <span className="workflow-mode">{workflow.mode}</span>
-                  </div>
-                  <p className="workflow-copy">
-                    Trigger: {workflow.trigger} | Next run: {workflow.nextRun}
-                  </p>
-                  <p className="workflow-owner">Owner: {workflow.owner}</p>
-                  <div className="progress-track">
-                    <span style={{ width: `${workflow.progress}%` }} />
-                  </div>
-                </div>
-              ))}
-            </div>
-          </article>
-
-          <article className="panel tasks">
-            <div className="panel-head">
-              <h3>Active Tasks</h3>
-              <span>Execution queue</span>
-            </div>
-            <div className="task-list">
-              {tasks.map((task) => (
-                <div key={task.id} className="task-row">
+            <div className="list">
+              {snapshot.providers.slice(0, 8).map((provider) => (
+                <div key={provider.id} className="list-row">
                   <div>
-                    <h4>{task.title}</h4>
-                    <p>{task.assignee}</p>
+                    <strong>{provider.name}</strong>
+                    <p>
+                      {provider.assetClass} | {provider.kind}
+                    </p>
                   </div>
-                  <div className="task-meta">
-                    <span>{task.due}</span>
-                    <span className="task-status">{toStateLabel(task.status)}</span>
+                  <div className="right-copy">
+                    <span className={provider.connected ? 'dot on' : 'dot'} />
+                    <small>{fmtTime(provider.lastHeartbeat)}</small>
                   </div>
                 </div>
               ))}
             </div>
           </article>
 
-          <article className="panel guardrails">
+          <article className="panel wide">
             <div className="panel-head">
-              <h3>Portfolio Guardrails</h3>
-              <span>Policy thresholds</span>
+              <h3>Markets</h3>
+              <span>{fmtInt(topMarkets.length)} shown</span>
             </div>
-            <div className="guardrail-list">
-              {guardrails.map((guardrail) => (
-                <div key={guardrail.id} className="guardrail">
-                  <div className="guardrail-text">
-                    <strong>{guardrail.label}</strong>
-                    <span>
-                      {guardrail.value}% / {guardrail.limit}%
-                    </span>
+            <div className="table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Symbol</th>
+                    <th>Class</th>
+                    <th>Reference</th>
+                    <th>Spread (bps)</th>
+                    <th>Change</th>
+                    <th>Volume</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {topMarkets.map((market) => (
+                    <tr key={market.key}>
+                      <td>{market.symbol}</td>
+                      <td>{market.assetClass}</td>
+                      <td>{fmtNum(market.referencePrice, 4)}</td>
+                      <td>{fmtNum(market.spreadBps, 1)}</td>
+                      <td className={Number(market.changePct) >= 0 ? 'up' : 'down'}>{fmtPct(market.changePct)}</td>
+                      <td>{fmtCompact(market.totalVolume)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </article>
+
+          <article className="panel">
+            <div className="panel-head">
+              <h3>Signals</h3>
+              <span>{fmtInt(topSignals.length)} recent</span>
+            </div>
+            <div className="list">
+              {topSignals.map((signal) => (
+                <div key={signal.id} className="list-row stacked">
+                  <strong>
+                    {signal.symbol} | {signal.type}
+                  </strong>
+                  <p>{signal.message}</p>
+                  <div className="line-row">
+                    <span className={`severity ${severityClass(signal.severity)}`}>{signal.severity}</span>
+                    <small>score {fmtInt(signal.score)}</small>
+                    <small>{fmtTime(signal.timestamp)}</small>
                   </div>
-                  <div className="guardrail-track">
-                    <span style={{ width: `${percent(guardrail.value, guardrail.limit)}%` }} />
+                </div>
+              ))}
+            </div>
+          </article>
+
+          <article className="panel">
+            <div className="panel-head">
+              <h3>Decisions</h3>
+              <span>{fmtInt(topDecisions.length)} recent</span>
+            </div>
+            <div className="list">
+              {topDecisions.map((decision) => (
+                <div key={decision.id} className="list-row stacked">
+                  <strong>
+                    {decision.strategyName} -> {decision.action}
+                  </strong>
+                  <p>
+                    {decision.symbol} | {decision.reason}
+                  </p>
+                  <div className="line-row">
+                    <small>{decision.trigger}</small>
+                    <small>score {fmtInt(decision.score)}</small>
+                    <small>{fmtTime(decision.timestamp)}</small>
                   </div>
                 </div>
               ))}
@@ -348,6 +403,27 @@ export default function App() {
           </article>
         </div>
       </section>
+
+      <section className="restrategy-section">
+        <h2>Restrategy Trigger</h2>
+        <p>
+          Manual trigger for the backend `restrategy` event. This maps directly to `POST /api/triggers/restrategy`.
+        </p>
+        <div className="restrategy-row">
+          <input
+            type="text"
+            value={restrategyReason}
+            onChange={(event) => setRestrategyReason(event.target.value)}
+            placeholder="manual rebalance check"
+            aria-label="Restrategy reason"
+          />
+          <button type="button" className="btn primary" onClick={triggerRestrategy} disabled={restrategyBusy}>
+            {restrategyBusy ? 'Queuing...' : 'Queue Restrategy'}
+          </button>
+        </div>
+        {actionMessage ? <p className="action-message">{actionMessage}</p> : null}
+      </section>
     </main>
   );
 }
+
