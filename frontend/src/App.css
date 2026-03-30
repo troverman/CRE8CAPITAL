@@ -661,6 +661,11 @@ th {
   grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 
+.socket-status-copy {
+  color: var(--ink-soft);
+  font-size: 0.73rem;
+}
+
 .socket-provider-card {
   border: 1px solid rgba(123, 143, 208, 0.35);
   border-radius: 12px;

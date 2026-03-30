@@ -20,10 +20,11 @@ export default function MarketDetailPage({ marketId, snapshot, historyByMarket, 
   }, [supportsSocketProviders, market?.key]);
 
   const socketLiveEnabled = supportsSocketProviders && socketEnabled;
-  const { providerStates, seriesByProvider, primaryProvider, primarySeries } = useSocketProviders({
-    market,
-    enabled: socketLiveEnabled
-  });
+  const { providerStates, seriesByProvider, primaryProvider, primarySeries, localFallbackActive, externalProviderCount, externalConnectedCount } =
+    useSocketProviders({
+      market,
+      enabled: socketLiveEnabled
+    });
 
   if (!market) {
     return (
@@ -111,7 +112,9 @@ export default function MarketDetailPage({ marketId, snapshot, historyByMarket, 
           </label>
           <small>
             {supportsSocketProviders
-              ? 'Binance + Coinbase direct socket feed'
+              ? localFallbackActive
+                ? 'External sockets unavailable, using local synthetic fallback'
+                : 'Binance + Coinbase direct socket feed'
               : 'Socket providers currently enabled for crypto markets'}
           </small>
         </div>
@@ -165,6 +168,10 @@ export default function MarketDetailPage({ marketId, snapshot, historyByMarket, 
               {providerStates.filter((provider) => provider.connected).length}/{providerStates.length} connected
             </span>
           </div>
+          <p className="socket-status-copy">
+            external {externalConnectedCount}/{externalProviderCount} connected
+            {localFallbackActive ? ' | local fallback active' : ''}
+          </p>
           <div className="socket-provider-grid">
             {providerStates.map((provider) => (
               <article key={provider.id} className="socket-provider-card">
@@ -268,4 +275,3 @@ export default function MarketDetailPage({ marketId, snapshot, historyByMarket, 
     </section>
   );
 }
-
