@@ -823,6 +823,114 @@ th {
   color: var(--ink-soft);
 }
 
+.tensor-grid {
+  display: grid;
+  gap: 0.55rem;
+  grid-template-columns: 1.2fr 1fr;
+}
+
+.tensor-panel {
+  gap: 0.6rem;
+}
+
+.tensor-chip {
+  border-radius: 999px;
+  border: 1px solid rgba(127, 147, 213, 0.44);
+  background: rgba(86, 103, 164, 0.24);
+  color: #b9cbf7;
+  font-size: 0.67rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  font-weight: 700;
+  padding: 0.14rem 0.55rem;
+}
+
+.tensor-chip.accumulate {
+  border-color: rgba(88, 237, 182, 0.45);
+  background: rgba(56, 185, 139, 0.2);
+  color: #96ffd4;
+}
+
+.tensor-chip.reduce {
+  border-color: rgba(255, 138, 158, 0.48);
+  background: rgba(207, 79, 106, 0.22);
+  color: #ffb1c0;
+}
+
+.tensor-chip.hold {
+  border-color: rgba(135, 152, 218, 0.44);
+  background: rgba(80, 98, 160, 0.23);
+  color: #c3d2f7;
+}
+
+.tensor-metrics {
+  display: grid;
+  gap: 0.4rem;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.tensor-metrics article {
+  border: 1px solid rgba(122, 141, 206, 0.32);
+  border-radius: 11px;
+  background: rgba(9, 13, 26, 0.86);
+  padding: 0.45rem;
+  display: grid;
+  gap: 0.2rem;
+}
+
+.tensor-metrics span {
+  font-size: 0.67rem;
+  color: var(--ink-soft);
+}
+
+.tensor-metrics strong {
+  font-size: 0.83rem;
+}
+
+.tensor-components {
+  display: grid;
+  gap: 0.35rem;
+}
+
+.tensor-component-row {
+  border: 1px solid rgba(119, 138, 201, 0.3);
+  border-radius: 11px;
+  background: rgba(8, 11, 22, 0.84);
+  padding: 0.42rem 0.48rem;
+  display: grid;
+  gap: 0.18rem;
+}
+
+.tensor-component-row strong {
+  font-size: 0.78rem;
+}
+
+.tensor-component-row small {
+  font-size: 0.67rem;
+  color: var(--ink-soft);
+}
+
+.tensor-event-row {
+  padding: 0.42rem 0.52rem;
+  display: grid;
+  gap: 0.2rem;
+}
+
+.tensor-event-row strong {
+  font-size: 0.79rem;
+}
+
+.tensor-event-row p {
+  font-size: 0.72rem;
+  color: var(--ink-soft);
+  line-height: 1.35;
+}
+
+.tensor-event-row small {
+  font-size: 0.66rem;
+  color: var(--ink-soft);
+}
+
 .graph-card {
   display: grid;
   gap: 0.5rem;
@@ -960,6 +1068,14 @@ th {
 
   .socket-provider-grid {
     grid-template-columns: 1fr;
+  }
+
+  .tensor-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .tensor-metrics {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
   .tick-row {

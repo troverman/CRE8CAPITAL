@@ -4,6 +4,7 @@ import GlowCard from '../components/GlowCard';
 import LineChart from '../components/LineChart';
 import Sparkline from '../components/Sparkline';
 import useSocketProviders from '../hooks/useSocketProviders';
+import useTensorStrategy from '../hooks/useTensorStrategy';
 import { fmtCompact, fmtInt, fmtNum, fmtPct, fmtTime, severityClass } from '../lib/format';
 import { Link } from '../lib/router';
 
@@ -38,6 +39,19 @@ export default function MarketDetailPage({ marketId, snapshot, historyByMarket, 
       enabled: socketLiveEnabled
     });
 
+  const {
+    snapshot: tensorSnapshot,
+    tensorSeries,
+    strategy: tensorStrategy,
+    strategyEvents,
+    paper: tensorPaper
+  } = useTensorStrategy({
+    market,
+    enabled: socketLiveEnabled,
+    providerStates,
+    depthByProvider
+  });
+
   if (!market) {
     return (
       <section className="page-grid">
@@ -60,11 +74,13 @@ export default function MarketDetailPage({ marketId, snapshot, historyByMarket, 
   const runtimeSpreadSeries = history.map((point) => point.spread);
   const socketPriceSeries = primarySeries.map((point) => point.price);
   const socketSpreadSeries = primarySeries.map((point) => point.spread);
+  const tensorPriceSeries = tensorSeries.map((point) => point.price);
 
   const useSocketAsPrimary = socketLiveEnabled && socketPriceSeries.length > 1;
   const priceSeries = useSocketAsPrimary ? socketPriceSeries : runtimePriceSeries;
   const spreadSeries = useSocketAsPrimary ? socketSpreadSeries : runtimeSpreadSeries;
   const sourceLabel = useSocketAsPrimary ? `${primaryProvider?.name || 'Socket'} feed` : 'Runtime feed';
+  const tensorActionClass = tensorStrategy.action === 'accumulate' ? 'up' : tensorStrategy.action === 'reduce' ? 'down' : '';
 
   const depthBook = useMemo(() => {
     const activeDepth = primaryDepth || null;
@@ -192,6 +208,104 @@ export default function MarketDetailPage({ marketId, snapshot, historyByMarket, 
           unit=" bps"
         />
       </GlowCard>
+
+      {supportsSocketProviders ? (
+        <GlowCard className="chart-card">
+          <LineChart
+            title={`Tensor Price (micro-weighted) - ${sourceLabel}`}
+            points={tensorPriceSeries}
+            stroke="#62ffc4"
+            fillFrom="rgba(65, 245, 173, 0.31)"
+            fillTo="rgba(65, 245, 173, 0.02)"
+          />
+        </GlowCard>
+      ) : null}
+
+      {supportsSocketProviders ? (
+        <div className="tensor-grid">
+          <GlowCard className="panel-card tensor-panel">
+            <div className="section-head">
+              <h2>Tensor Strategy (Local)</h2>
+              <span className={`tensor-chip ${tensorStrategy.action}`}>{tensorStrategy.action}</span>
+            </div>
+            <p className="socket-status-copy">{tensorStrategy.reason}</p>
+            <div className="tensor-metrics">
+              <article>
+                <span>Tensor Price</span>
+                <strong>{fmtNum(tensorSnapshot?.tensorPrice || market.referencePrice, 4)}</strong>
+              </article>
+              <article>
+                <span>Tensor Spread</span>
+                <strong>{fmtNum(tensorSnapshot?.tensorSpreadBps || market.spreadBps, 2)} bps</strong>
+              </article>
+              <article>
+                <span>Confidence</span>
+                <strong>{fmtPct((tensorSnapshot?.confidence || 0) * 100)}</strong>
+              </article>
+              <article>
+                <span>Score</span>
+                <strong className={tensorActionClass}>{fmtNum(tensorStrategy.score, 2)}</strong>
+              </article>
+              <article>
+                <span>Trend</span>
+                <strong className={tensorActionClass}>{fmtNum(tensorStrategy.trendBps, 2)} bps</strong>
+              </article>
+              <article>
+                <span>Momentum</span>
+                <strong className={tensorActionClass}>{fmtPct(tensorStrategy.momentumPct)}</strong>
+              </article>
+              <article>
+                <span>Paper Position</span>
+                <strong>{fmtNum(tensorPaper.units, 0)} units</strong>
+              </article>
+              <article>
+                <span>Paper Equity</span>
+                <strong className={Number(tensorPaper.equity) >= 0 ? 'up' : 'down'}>{fmtNum(tensorPaper.equity, 2)}</strong>
+              </article>
+            </div>
+            <div className="tensor-components">
+              {(tensorSnapshot?.components || []).slice(0, 4).map((component) => (
+                <article key={`tensor-comp:${component.providerId}`} className="tensor-component-row">
+                  <strong>{component.providerName || component.providerId}</strong>
+                  <small>
+                    w {fmtPct(component.contribution * 100)} | px {fmtNum(component.tensorComponent, 4)} | spr {fmtNum(component.spreadBps, 2)} bps
+                  </small>
+                </article>
+              ))}
+              {(tensorSnapshot?.components || []).length === 0 ? <p className="depth-empty">Waiting for weighted provider components...</p> : null}
+            </div>
+          </GlowCard>
+
+          <GlowCard className="panel-card">
+            <div className="section-head">
+              <h2>Tensor Events</h2>
+              <span>{strategyEvents.length} recent</span>
+            </div>
+            <p className="socket-status-copy">
+              cash {fmtNum(tensorPaper.cash, 2)} | mark {fmtNum(tensorPaper.markValue, 2)} | avg entry {fmtNum(tensorPaper.avgEntry, 4)}
+            </p>
+            <FlashList
+              items={strategyEvents}
+              height={286}
+              itemHeight={72}
+              className="tick-flash-list"
+              emptyCopy={socketLiveEnabled ? 'No tensor action flips yet. Strategy currently stable.' : 'Enable frontend socket providers to run tensor strategy.'}
+              keyExtractor={(event) => event.id}
+              renderItem={(event) => (
+                <article className="tensor-event-row">
+                  <strong className={event.action === 'accumulate' ? 'up' : event.action === 'reduce' ? 'down' : ''}>
+                    {event.action} | {event.stance}
+                  </strong>
+                  <p>{event.reason}</p>
+                  <small>
+                    score {fmtNum(event.score, 2)} | px {fmtNum(event.price, 4)} | spr {fmtNum(event.spreadBps, 2)} bps | {fmtTime(event.timestamp)}
+                  </small>
+                </article>
+              )}
+            />
+          </GlowCard>
+        </div>
+      ) : null}
 
       {supportsSocketProviders ? (
         <GlowCard className="panel-card">
