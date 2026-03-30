@@ -3,13 +3,20 @@ const { runtime } = require('./runtime');
 
 const PORT = Number(process.env.PORT || 8787);
 const HOST = process.env.HOST || '0.0.0.0';
+const STREAM_INTERVAL_MS = Number(process.env.CAPITAL_STREAM_INTERVAL_MS || 1000);
+
+const corsHeaders = {
+	'Access-Control-Allow-Origin': '*',
+	'Access-Control-Allow-Methods': 'GET,POST,OPTIONS',
+	'Access-Control-Allow-Headers': 'Content-Type'
+};
+
+const sseClients = new Set();
 
 const sendJson = (res, statusCode, payload) => {
 	res.writeHead(statusCode, {
 		'Content-Type': 'application/json; charset=utf-8',
-		'Access-Control-Allow-Origin': '*',
-		'Access-Control-Allow-Methods': 'GET,POST,OPTIONS',
-		'Access-Control-Allow-Headers': 'Content-Type'
+		...corsHeaders
 	});
 	res.end(JSON.stringify(payload));
 };
@@ -47,6 +54,54 @@ const numberParam = (value, fallback) => {
 	return Number.isFinite(num) ? num : fallback;
 };
 
+const writeSseEvent = (res, eventName, payload) => {
+	if (eventName) {
+		res.write(`event: ${eventName}\n`);
+	}
+	res.write(`data: ${JSON.stringify(payload)}\n\n`);
+};
+
+const makeStreamLimits = (searchParams) => {
+	return {
+		marketLimit: numberParam(searchParams.get('marketLimit'), 150),
+		signalLimit: numberParam(searchParams.get('signalLimit'), 120),
+		decisionLimit: numberParam(searchParams.get('decisionLimit'), 120),
+		feedLimit: numberParam(searchParams.get('feedLimit'), 140)
+	};
+};
+
+const snapshotForLimits = (limits) => {
+	return runtime.getSnapshot({
+		marketLimit: limits.marketLimit,
+		signalLimit: limits.signalLimit,
+		decisionLimit: limits.decisionLimit,
+		feedLimit: limits.feedLimit
+	});
+};
+
+const broadcastSnapshot = () => {
+	if (sseClients.size === 0) {
+		return;
+	}
+
+	for (const client of sseClients) {
+		try {
+			const payload = snapshotForLimits(client.limits);
+			writeSseEvent(client.res, 'snapshot', payload);
+		} catch (error) {
+			client.res.end();
+			sseClients.delete(client);
+		}
+	}
+};
+
+const streamIntervalId = setInterval(() => {
+	broadcastSnapshot();
+}, STREAM_INTERVAL_MS);
+if (typeof streamIntervalId.unref === 'function') {
+	streamIntervalId.unref();
+}
+
 const api = async (req, res) => {
 	if (req.method === 'OPTIONS') {
 		return sendJson(res, 204, {});
@@ -75,6 +130,29 @@ const api = async (req, res) => {
 			feedLimit: numberParam(url.searchParams.get('feedLimit'), 140)
 		});
 		return sendJson(res, 200, snapshot);
+	}
+
+	if (req.method === 'GET' && url.pathname === '/api/stream') {
+		const limits = makeStreamLimits(url.searchParams);
+		res.writeHead(200, {
+			...corsHeaders,
+			'Content-Type': 'text/event-stream; charset=utf-8',
+			'Cache-Control': 'no-cache, no-transform',
+			Connection: 'keep-alive',
+			'X-Accel-Buffering': 'no'
+		});
+		res.write('retry: 2000\n\n');
+
+		const client = { res, limits };
+		sseClients.add(client);
+
+		const firstSnapshot = snapshotForLimits(limits);
+		writeSseEvent(res, 'snapshot', firstSnapshot);
+
+		req.on('close', () => {
+			sseClients.delete(client);
+		});
+		return;
 	}
 
 	if (req.method === 'GET' && url.pathname === '/api/providers') {
@@ -163,6 +241,7 @@ const api = async (req, res) => {
 		availableRoutes: [
 			'/health',
 			'/api/snapshot',
+			'/api/stream',
 			'/api/providers',
 			'/api/markets',
 			'/api/signals',
@@ -201,6 +280,11 @@ const shutdown = async () => {
 		return;
 	}
 	shuttingDown = true;
+	clearInterval(streamIntervalId);
+	for (const client of sseClients) {
+		client.res.end();
+	}
+	sseClients.clear();
 	try {
 		await runtime.stop();
 	} catch (error) {
