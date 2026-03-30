@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useMemo } from 'react';
 import TopNav from './components/TopNav';
 import GlowCard from './components/GlowCard';
 import useCapitalLive from './hooks/useCapitalLive';
@@ -9,6 +9,7 @@ import AssetDetailPage from './pages/AssetDetailPage';
 import AssetListPage from './pages/AssetListPage';
 import AccountPage from './pages/AccountPage';
 import DerivativesPage from './pages/DerivativesPage';
+import ExchangePage from './pages/ExchangePage';
 import HomePage from './pages/HomePage';
 import GraphPage from './pages/GraphPage';
 import MarketDetailPage from './pages/MarketDetailPage';
@@ -39,6 +40,7 @@ const parseRoute = (pathname) => {
   if (routePath === '/graph') return { name: 'graph' };
   if (routePath === '/knowledge') return { name: 'knowledge' };
   if (routePath === '/other') return { name: 'other' };
+  if (routePath === '/exchange') return { name: 'exchange' };
   if (routePath === '/providers') return { name: 'providers' };
   if (routePath === '/signals') return { name: 'signals' };
   if (routePath === '/decisions') return { name: 'decisions' };
@@ -92,7 +94,8 @@ const NotFoundPage = () => {
       <GlowCard className="detail-card">
         <h1>Route not found</h1>
         <p>
-          Try `/markets`, `/assets`, `/other`, `/derivatives`, `/knowledge`, `/providers`, `/signals`, `/decisions`, `/probability`, `/strategies`, `/graph`, `/strategy`, `/account`, `/wallet`,
+          Try `/markets`, `/assets`, `/other`, `/exchange`, `/derivatives`, `/knowledge`, `/providers`, `/signals`, `/decisions`, `/probability`, `/strategies`, `/graph`, `/strategy`, `/account`,
+          `/wallet`,
           `/signal/:id`, `/decision/:id`, `/strategy/:id`, `/wallet/:id`, or `/provider/:id`.
         </p>
       </GlowCard>
@@ -103,7 +106,6 @@ const NotFoundPage = () => {
 export default function App() {
   const pathname = usePathname();
   const route = useMemo(() => parseRoute(pathname), [pathname]);
-  const [restrategyReason, setRestrategyReason] = useState('manual rebalance check');
 
   const {
     snapshot,
@@ -115,7 +117,6 @@ export default function App() {
     lastSyncedAt,
     error,
     restrategyBusy,
-    actionMessage,
     refresh,
     triggerRestrategy
   } = useCapitalLive();
@@ -123,7 +124,7 @@ export default function App() {
   const historyByMarket = useMarketHistory(snapshot.markets, snapshot.now);
 
   const handleRestrategy = async () => {
-    await triggerRestrategy(restrategyReason);
+    await triggerRestrategy('manual rebalance check');
   };
 
   return (
@@ -146,11 +147,8 @@ export default function App() {
           lastSyncedAt={lastSyncedAt}
           error={error}
           onRefresh={refresh}
-          restrategyReason={restrategyReason}
-          onRestrategyReasonChange={setRestrategyReason}
           onRestrategy={handleRestrategy}
           restrategyBusy={restrategyBusy}
-          actionMessage={actionMessage}
           historyByMarket={historyByMarket}
         />
       ) : null}
@@ -170,6 +168,8 @@ export default function App() {
       {route.name === 'knowledge' ? <KnowledgePage snapshot={snapshot} /> : null}
 
       {route.name === 'other' ? <OtherPage snapshot={snapshot} /> : null}
+
+      {route.name === 'exchange' ? <ExchangePage snapshot={snapshot} /> : null}
 
       {route.name === 'providers' ? <ProviderListPage snapshot={snapshot} /> : null}
 

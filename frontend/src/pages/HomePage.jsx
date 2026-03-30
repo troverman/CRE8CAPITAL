@@ -13,11 +13,8 @@ export default function HomePage({
   lastSyncedAt,
   error,
   onRefresh,
-  restrategyReason,
-  onRestrategyReasonChange,
   onRestrategy,
   restrategyBusy,
-  actionMessage,
   historyByMarket
 }) {
   const providerConnected = snapshot.providers.filter((provider) => provider.connected).length;
@@ -135,23 +132,6 @@ export default function HomePage({
         </div>
       </GlowCard>
 
-      <GlowCard className="restrategy-card">
-        <h2>Restrategy Trigger</h2>
-        <p>Manual trigger for `POST /api/triggers/restrategy`.</p>
-        <div className="restrategy-row">
-          <input
-            type="text"
-            value={restrategyReason}
-            onChange={(event) => onRestrategyReasonChange(event.target.value)}
-            placeholder="manual rebalance check"
-            aria-label="Restrategy reason"
-          />
-          <button type="button" className="btn primary" onClick={onRestrategy} disabled={restrategyBusy}>
-            {restrategyBusy ? 'Queuing...' : 'Queue Restrategy'}
-          </button>
-        </div>
-        {actionMessage ? <p className="action-message">{actionMessage}</p> : null}
-      </GlowCard>
     </section>
   );
 }

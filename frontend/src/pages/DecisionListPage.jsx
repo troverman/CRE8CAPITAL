@@ -1,8 +1,11 @@
 import { useMemo, useState } from 'react';
 import FlashList from '../components/FlashList';
 import GlowCard from '../components/GlowCard';
+import { buildDecisionWalletLinkIndex } from '../lib/decisionWalletLink';
 import { fmtInt, fmtNum, fmtTime } from '../lib/format';
 import { Link } from '../lib/router';
+import { useExecutionFeedStore } from '../store/executionFeedStore';
+import { useStrategyLabStore } from '../store/strategyLabStore';
 
 const toText = (value, fallback = '-') => {
   const text = String(value || '').trim();
@@ -13,6 +16,8 @@ const toAction = (value) => String(value || 'hold').toLowerCase();
 
 export default function DecisionListPage({ snapshot }) {
   const [search, setSearch] = useState('');
+  const walletAccounts = useStrategyLabStore((state) => state.walletAccounts);
+  const txEvents = useExecutionFeedStore((state) => state.txEvents);
 
   const marketKeyByIdentity = useMemo(() => {
     const map = new Map();
@@ -36,10 +41,21 @@ export default function DecisionListPage({ snapshot }) {
         score: Number(decision?.score) || 0,
         symbol: toText(decision?.symbol),
         assetClass: toText(decision?.assetClass, 'unknown'),
-        timestamp: Number(decision?.timestamp) || 0
+        timestamp: Number(decision?.timestamp) || 0,
+        accountId: toText(decision?.accountId || decision?.walletAccountId || decision?.walletId || decision?.account?.id || ''),
+        accountName: toText(decision?.accountName || decision?.walletName || decision?.account?.name || '')
       }))
       .sort((a, b) => b.timestamp - a.timestamp);
   }, [snapshot?.decisions]);
+
+  const walletLinkByDecisionId = useMemo(() => {
+    return buildDecisionWalletLinkIndex({
+      decisions,
+      walletAccounts,
+      txEvents,
+      timeWindowMs: 210000
+    });
+  }, [decisions, txEvents, walletAccounts]);
 
   const filtered = useMemo(() => {
     const term = search.trim().toLowerCase();
@@ -90,6 +106,7 @@ export default function DecisionListPage({ snapshot }) {
           keyExtractor={(decision, index) => `${decision.id}:${index}`}
           renderItem={(decision, index) => {
             const marketKey = marketKeyByIdentity.get(`${String(decision.symbol || '').toUpperCase()}|${String(decision.assetClass || '').toLowerCase()}`);
+            const walletLink = walletLinkByDecisionId.get(String(decision.id || '')) || null;
             return (
               <article className="decision-feed-row">
                 <div className="decision-feed-head">
@@ -111,6 +128,11 @@ export default function DecisionListPage({ snapshot }) {
                   {marketKey ? (
                     <Link to={`/market/${encodeURIComponent(marketKey)}`} className="inline-link">
                       market
+                    </Link>
+                  ) : null}
+                  {walletLink ? (
+                    <Link to={`/wallet/${encodeURIComponent(walletLink.accountId)}`} className="inline-link">
+                      wallet:{walletLink.accountName}
                     </Link>
                   ) : null}
                 </div>

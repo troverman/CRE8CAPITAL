@@ -981,6 +981,21 @@ a {
   gap: 0.55rem;
 }
 
+.passport-form-help {
+  border: 1px solid rgba(124, 143, 205, 0.28);
+  border-radius: 11px;
+  background: rgba(8, 12, 24, 0.74);
+  padding: 0.5rem 0.58rem;
+  display: grid;
+  gap: 0.35rem;
+}
+
+.passport-form-help p {
+  margin: 0;
+  color: var(--ink-soft);
+  font-size: 0.75rem;
+}
+
 .passport-form-grid {
   display: grid;
   gap: 0.5rem;
@@ -1048,6 +1063,15 @@ a {
 
 .passport-provider-head strong {
   font-size: 0.84rem;
+}
+
+.strategy-action-list {
+  margin: 0;
+  padding-left: 1.1rem;
+  display: grid;
+  gap: 0.34rem;
+  color: var(--ink-soft);
+  font-size: 0.76rem;
 }
 
 .wallet-grid {

@@ -13,6 +13,20 @@ const PROVIDER_OPTIONS = [
   { id: 'oanda', label: 'OANDA', assetClass: 'fx' }
 ];
 
+const PROVIDER_HINTS = {
+  binance: { key: 'binance-api-key', secret: 'binance-api-secret', passphrase: '', note: 'Use restricted API key with IP allowlist where possible.' },
+  'coinbase-advanced': {
+    key: 'coinbase-api-key-name',
+    secret: 'coinbase-private-key',
+    passphrase: 'optional profile passphrase',
+    note: 'Prefer read-only/testnet until strategy guardrails are validated.'
+  },
+  kraken: { key: 'kraken-api-key', secret: 'kraken-private-secret', passphrase: 'optional otp', note: 'Keep withdrawal disabled for simulation.' },
+  alpaca: { key: 'alpaca-key-id', secret: 'alpaca-secret-key', passphrase: '', note: 'Paper endpoint recommended for first validation.' },
+  ibkr: { key: 'gateway-account-id', secret: 'client-secret', passphrase: 'optional account alias', note: 'Treat as broker credential profile.' },
+  oanda: { key: 'oanda-account-id', secret: 'oanda-api-token', passphrase: '', note: 'Start with read/trade scoped token.' }
+};
+
 const createDefaultPassport = () => ({
   profileName: 'CRE8 Operator',
   executionMode: 'paper',
@@ -43,6 +57,7 @@ const createEmptyForm = () => ({
 export default function AccountPage() {
   const [passport, setPassport] = useState(createDefaultPassport);
   const [linkForm, setLinkForm] = useState(createEmptyForm);
+  const [showSecrets, setShowSecrets] = useState(false);
   const [message, setMessage] = useState('');
 
   useEffect(() => {
@@ -77,6 +92,60 @@ export default function AccountPage() {
     const perProvider = Math.max(0, Number(passport.maxOrderNotional) || 0);
     return perProvider * linkedCount;
   }, [linkedCount, passport.maxOrderNotional]);
+
+  const selectedProviderInfo = useMemo(() => {
+    return PROVIDER_OPTIONS.find((row) => row.id === linkForm.provider) || PROVIDER_OPTIONS[0];
+  }, [linkForm.provider]);
+
+  const selectedProviderHint = useMemo(() => {
+    return PROVIDER_HINTS[linkForm.provider] || PROVIDER_HINTS[selectedProviderInfo.id] || PROVIDER_HINTS.binance;
+  }, [linkForm.provider, selectedProviderInfo.id]);
+
+  const onProviderSelect = (providerId) => {
+    const providerInfo = PROVIDER_OPTIONS.find((row) => row.id === providerId) || PROVIDER_OPTIONS[0];
+    setLinkForm((previous) => {
+      const accountLabel = previous.accountLabel.trim() ? previous.accountLabel : `${providerInfo.label} account`;
+      return {
+        ...previous,
+        provider: providerInfo.id,
+        accountLabel
+      };
+    });
+  };
+
+  const applyPermissionPreset = (presetId) => {
+    if (presetId === 'read-only') {
+      setLinkForm((previous) => ({
+        ...previous,
+        read: true,
+        trade: false,
+        withdraw: false,
+        testnet: true
+      }));
+      return;
+    }
+
+    if (presetId === 'trade-guarded') {
+      setLinkForm((previous) => ({
+        ...previous,
+        read: true,
+        trade: true,
+        withdraw: false,
+        testnet: true
+      }));
+      return;
+    }
+
+    if (presetId === 'live-wire') {
+      setLinkForm((previous) => ({
+        ...previous,
+        read: true,
+        trade: true,
+        withdraw: false,
+        testnet: false
+      }));
+    }
+  };
 
   const onLinkProvider = (event) => {
     event.preventDefault();
@@ -232,10 +301,28 @@ export default function AccountPage() {
           </div>
 
           <form className="passport-form" onSubmit={onLinkProvider}>
+            <div className="passport-form-help">
+              <p>
+                <strong>{selectedProviderInfo.label}</strong> | {selectedProviderInfo.assetClass}
+              </p>
+              <p>{selectedProviderHint.note}</p>
+              <div className="section-actions">
+                <button type="button" className="btn secondary" onClick={() => applyPermissionPreset('read-only')}>
+                  Preset Read-Only
+                </button>
+                <button type="button" className="btn secondary" onClick={() => applyPermissionPreset('trade-guarded')}>
+                  Preset Guarded Trade
+                </button>
+                <button type="button" className="btn secondary" onClick={() => applyPermissionPreset('live-wire')}>
+                  Preset Live Wire
+                </button>
+              </div>
+            </div>
+
             <div className="passport-form-grid">
               <label className="control-field">
                 <span>Provider</span>
-                <select value={linkForm.provider} onChange={(event) => setLinkForm((previous) => ({ ...previous, provider: event.target.value }))}>
+                <select value={linkForm.provider} onChange={(event) => onProviderSelect(event.target.value)}>
                   {PROVIDER_OPTIONS.map((provider) => (
                     <option key={provider.id} value={provider.id}>
                       {provider.label}
@@ -256,9 +343,10 @@ export default function AccountPage() {
               <label className="control-field">
                 <span>API Key</span>
                 <input
+                  required
                   value={linkForm.apiKey}
                   onChange={(event) => setLinkForm((previous) => ({ ...previous, apiKey: event.target.value }))}
-                  placeholder="key"
+                  placeholder={selectedProviderHint.key || 'api-key'}
                   autoComplete="off"
                 />
               </label>
@@ -266,20 +354,23 @@ export default function AccountPage() {
               <label className="control-field">
                 <span>API Secret</span>
                 <input
+                  required
+                  type={showSecrets ? 'text' : 'password'}
                   value={linkForm.apiSecret}
                   onChange={(event) => setLinkForm((previous) => ({ ...previous, apiSecret: event.target.value }))}
-                  placeholder="secret"
-                  autoComplete="off"
+                  placeholder={selectedProviderHint.secret || 'api-secret'}
+                  autoComplete="new-password"
                 />
               </label>
 
               <label className="control-field">
                 <span>Passphrase (optional)</span>
                 <input
+                  type={showSecrets ? 'text' : 'password'}
                   value={linkForm.passphrase}
                   onChange={(event) => setLinkForm((previous) => ({ ...previous, passphrase: event.target.value }))}
-                  placeholder="passphrase"
-                  autoComplete="off"
+                  placeholder={selectedProviderHint.passphrase || 'optional'}
+                  autoComplete="new-password"
                 />
               </label>
             </div>
@@ -309,11 +400,18 @@ export default function AccountPage() {
                 />
                 <span>Testnet</span>
               </label>
+              <label className="toggle-label">
+                <input checked={showSecrets} onChange={(event) => setShowSecrets(event.target.checked)} type="checkbox" />
+                <span>Show secrets</span>
+              </label>
             </div>
 
             <div className="hero-actions">
               <button type="submit" className="btn primary">
                 Link Provider
+              </button>
+              <button type="button" className="btn secondary" onClick={() => setLinkForm(createEmptyForm())}>
+                Reset Form
               </button>
             </div>
           </form>

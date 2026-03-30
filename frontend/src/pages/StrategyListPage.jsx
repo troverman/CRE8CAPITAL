@@ -53,7 +53,10 @@ export default function StrategyListPage({ snapshot }) {
           <h1>Strategies</h1>
           <div className="section-actions">
             <span>{filtered.length} shown</span>
-            <Link to="/strategy" className="inline-link">
+            <Link to="/strategy" className="btn primary">
+              Create Strategy
+            </Link>
+            <Link to="/strategy" className="btn secondary">
               Open Strategy Lab
             </Link>
           </div>

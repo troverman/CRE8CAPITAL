@@ -46,6 +46,84 @@ const MARKET_SUBTAB_DEFS = [
   }
 ];
 
+const pickFirstFinite = (...values) => {
+  for (const value of values) {
+    if (value === null || value === undefined || value === '') continue;
+    if (typeof value === 'boolean') continue;
+    const numeric = Number(value);
+    if (Number.isFinite(numeric)) return numeric;
+  }
+  return null;
+};
+
+const normalizeDepthSide = (levels, side) => {
+  return (Array.isArray(levels) ? levels : [])
+    .map((level) => ({
+      price: Number(Array.isArray(level) ? level[0] : level?.price),
+      size: Number(Array.isArray(level) ? level[1] : level?.size)
+    }))
+    .filter((level) => Number.isFinite(level.price) && level.price > 0 && Number.isFinite(level.size) && level.size > 0)
+    .sort((a, b) => (side === 'bid' ? b.price - a.price : a.price - b.price))
+    .slice(0, DEPTH_LEVEL_LIMIT);
+};
+
+const normalizeDepthPayload = (depth, fallbackProviderName) => {
+  if (!depth) return null;
+  const bids = normalizeDepthSide(depth?.bids, 'bid');
+  const asks = normalizeDepthSide(depth?.asks, 'ask');
+  if (bids.length === 0 && asks.length === 0) return null;
+
+  return {
+    providerId: String(depth?.providerId || ''),
+    providerName: String(depth?.providerName || fallbackProviderName || ''),
+    symbol: depth?.symbol || null,
+    assetClass: depth?.assetClass || null,
+    venue: depth?.venue || null,
+    timestamp: pickFirstFinite(depth?.timestamp, Date.now()),
+    bids,
+    asks
+  };
+};
+
+const buildDerivedDepth = ({ midPrice, spreadBps, baseSize, symbol, assetClass, timestamp }) => {
+  const safeMidPrice = Number(midPrice);
+  if (!Number.isFinite(safeMidPrice) || safeMidPrice <= 0) return null;
+
+  const safeSpreadBps = pickFirstFinite(spreadBps, 8);
+  const halfSpread = Math.max((safeMidPrice * Math.max(safeSpreadBps, 0.35)) / 20000, safeMidPrice * 0.00003);
+  const stepBase = Math.max(halfSpread * 0.6, safeMidPrice * 0.00006);
+  const safeBaseSize = Math.max(Number(baseSize) || 0, 0.0001);
+
+  const bids = [];
+  const asks = [];
+  for (let index = 0; index < DEPTH_LEVEL_LIMIT; index += 1) {
+    const depthLevel = index + 1;
+    const distance = halfSpread + stepBase * depthLevel;
+    const sizeScale = (1 / Math.sqrt(depthLevel)) * (1 + (DEPTH_LEVEL_LIMIT - depthLevel) * 0.03);
+    const size = safeBaseSize * sizeScale;
+
+    bids.push({
+      price: Math.max(safeMidPrice - distance, 0.00000001),
+      size
+    });
+    asks.push({
+      price: safeMidPrice + distance,
+      size: Math.max(size * (0.92 + depthLevel * 0.01), safeBaseSize * 0.18)
+    });
+  }
+
+  return {
+    providerId: 'socket.local.derivedDepth',
+    providerName: 'Derived Local Depth',
+    symbol: symbol || null,
+    assetClass: assetClass || null,
+    venue: 'LOCAL',
+    timestamp: pickFirstFinite(timestamp, Date.now()),
+    bids,
+    asks
+  };
+};
+
 export default function MarketDetailPage({ marketId, snapshot, historyByMarket, onRefresh, syncing }) {
   const normalizedId = String(marketId || '').toLowerCase();
   const market = snapshot.markets.find((item) => {
@@ -96,6 +174,83 @@ export default function MarketDetailPage({ marketId, snapshot, historyByMarket, 
     depthByProvider
   });
 
+  const resolvedDepth = useMemo(() => {
+    const primaryResolved = normalizeDepthPayload(primaryDepth, primaryProvider?.name || primaryProvider?.id || null);
+    if (primaryResolved) {
+      return {
+        depth: primaryResolved,
+        providerName: primaryResolved.providerName || primaryProvider?.name || null,
+        sourceLabel: ''
+      };
+    }
+
+    for (const provider of providerStates) {
+      const fallbackResolved = normalizeDepthPayload(depthByProvider[provider.id], provider.name || provider.id);
+      if (fallbackResolved) {
+        return {
+          depth: fallbackResolved,
+          providerName: fallbackResolved.providerName || provider.name || null,
+          sourceLabel: provider.connected ? 'fallback provider' : 'cached fallback'
+        };
+      }
+    }
+
+    const latestSeriesPoint = primarySeries[primarySeries.length - 1] || null;
+    const runtimeProvider = (market?.providers || []).find((provider) => {
+      const price = Number(provider?.price);
+      return Number.isFinite(price) && price > 0;
+    });
+    const midPrice = pickFirstFinite(primaryProvider?.price, latestSeriesPoint?.price, runtimeProvider?.price, market?.referencePrice);
+    if (!Number.isFinite(midPrice) || midPrice <= 0) {
+      return {
+        depth: null,
+        providerName: null,
+        sourceLabel: ''
+      };
+    }
+
+    const bid = pickFirstFinite(primaryProvider?.bid, runtimeProvider?.bid);
+    const ask = pickFirstFinite(primaryProvider?.ask, runtimeProvider?.ask);
+    const liveSpreadBps =
+      Number.isFinite(bid) && Number.isFinite(ask) && ask > bid ? ((ask - bid) / Math.max(midPrice, 1e-9)) * 10000 : null;
+    const spreadBps = pickFirstFinite(liveSpreadBps, market?.spreadBps, 8);
+    const quoteVolume = pickFirstFinite(primaryProvider?.volume, runtimeProvider?.volume, market?.totalVolume, 100000);
+    const baseSize = Math.max(quoteVolume / Math.max(midPrice, 1) / 1900, 0.01);
+    const derivedDepth = buildDerivedDepth({
+      midPrice,
+      spreadBps,
+      baseSize,
+      symbol: market?.symbol,
+      assetClass: market?.assetClass,
+      timestamp: pickFirstFinite(primaryProvider?.lastTickAt, latestSeriesPoint?.t, runtimeProvider?.timestamp)
+    });
+    const normalizedDerived = normalizeDepthPayload(derivedDepth, 'Derived Local Depth');
+
+    return {
+      depth: normalizedDerived,
+      providerName: normalizedDerived?.providerName || null,
+      sourceLabel: 'derived fallback'
+    };
+  }, [
+    depthByProvider,
+    market?.assetClass,
+    market?.providers,
+    market?.referencePrice,
+    market?.spreadBps,
+    market?.symbol,
+    market?.totalVolume,
+    primaryDepth,
+    primaryProvider?.ask,
+    primaryProvider?.bid,
+    primaryProvider?.id,
+    primaryProvider?.lastTickAt,
+    primaryProvider?.name,
+    primaryProvider?.price,
+    primaryProvider?.volume,
+    primarySeries,
+    providerStates
+  ]);
+
   useEffect(() => {
     setActiveSubtab('overview');
     setShowOrderBook3D(false);
@@ -116,27 +271,17 @@ export default function MarketDetailPage({ marketId, snapshot, historyByMarket, 
   }, [activeSubtab, marketSubtabs]);
 
   useEffect(() => {
-    if (!socketLiveEnabled || !primaryDepth) return;
-    const normalizeSide = (levels, side) => {
-      const rows = (Array.isArray(levels) ? levels : [])
-        .map((level) => ({
-          price: Number(level?.price),
-          size: Number(level?.size)
-        }))
-        .filter((level) => Number.isFinite(level.price) && level.price > 0 && Number.isFinite(level.size) && level.size > 0)
-        .sort((a, b) => (side === 'bid' ? b.price - a.price : a.price - b.price))
-        .slice(0, DEPTH_LEVEL_LIMIT);
-      return rows;
-    };
+    const activeDepth = resolvedDepth.depth;
+    if (!socketLiveEnabled || !activeDepth) return;
 
-    const bids = normalizeSide(primaryDepth.bids, 'bid');
-    const asks = normalizeSide(primaryDepth.asks, 'ask');
+    const bids = normalizeDepthSide(activeDepth.bids, 'bid');
+    const asks = normalizeDepthSide(activeDepth.asks, 'ask');
     if (bids.length === 0 && asks.length === 0) return;
 
-    const timestamp = Number(primaryDepth.timestamp) || Date.now();
+    const timestamp = pickFirstFinite(activeDepth.timestamp, Date.now());
     const snapshotRow = {
-      providerId: String(primaryDepth.providerId || ''),
-      providerName: String(primaryDepth.providerName || ''),
+      providerId: String(activeDepth.providerId || primaryProvider?.id || ''),
+      providerName: String(activeDepth.providerName || resolvedDepth.providerName || ''),
       timestamp,
       bids,
       asks
@@ -153,7 +298,7 @@ export default function MarketDetailPage({ marketId, snapshot, historyByMarket, 
       }
       return next;
     });
-  }, [primaryDepth, socketLiveEnabled]);
+  }, [primaryProvider?.id, resolvedDepth.depth, resolvedDepth.providerName, socketLiveEnabled]);
 
   if (!market) {
     return (
@@ -255,9 +400,9 @@ export default function MarketDetailPage({ marketId, snapshot, historyByMarket, 
   };
 
   const depthBook = useMemo(() => {
-    const activeDepth = primaryDepth || null;
-    const bids = (activeDepth?.bids || []).slice(0, 12);
-    const asks = (activeDepth?.asks || []).slice(0, 12);
+    const activeDepth = resolvedDepth.depth || null;
+    const bids = normalizeDepthSide(activeDepth?.bids, 'bid');
+    const asks = normalizeDepthSide(activeDepth?.asks, 'ask');
     const maxSize = Math.max(1, ...bids.map((level) => Number(level.size) || 0), ...asks.map((level) => Number(level.size) || 0));
     const bidNotional = bids.reduce((sum, level) => sum + (Number(level.price) || 0) * (Number(level.size) || 0), 0);
     const askNotional = asks.reduce((sum, level) => sum + (Number(level.price) || 0) * (Number(level.size) || 0), 0);
@@ -271,9 +416,10 @@ export default function MarketDetailPage({ marketId, snapshot, historyByMarket, 
       askNotional,
       imbalance,
       timestamp: activeDepth?.timestamp || null,
-      providerName: activeDepth?.providerName || primaryProvider?.name || null
+      providerName: resolvedDepth.providerName || null,
+      sourceLabel: resolvedDepth.sourceLabel || ''
     };
-  }, [primaryDepth, primaryProvider?.name]);
+  }, [resolvedDepth]);
 
   const quoteRows = useMemo(() => {
     const runtimeRows = market.providers.map((provider) => ({
@@ -596,7 +742,11 @@ export default function MarketDetailPage({ marketId, snapshot, historyByMarket, 
           <div className="section-head">
             <h2>Order Book Depth</h2>
             <div className="section-actions">
-              <span>{depthBook.providerName ? `${depthBook.providerName}` : 'No provider depth yet'}</span>
+              <span>
+                {depthBook.providerName
+                  ? `${depthBook.providerName}${depthBook.sourceLabel ? ` (${depthBook.sourceLabel})` : ''}`
+                  : 'No provider depth yet'}
+              </span>
               <button
                 type="button"
                 className="btn secondary"

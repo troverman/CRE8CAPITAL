@@ -17,6 +17,11 @@ const PASSPORT_STORAGE_KEY = 'cre8capital.account-passport.v1';
 const MAX_EQUITY_POINTS = 420;
 const MAX_TRADES = 180;
 const DEFAULT_START_CASH = 100000;
+const RUNTIME_SYNC_TABS = [
+  { id: 'summary', label: 'Summary' },
+  { id: 'strategies', label: 'Strategies' },
+  { id: 'trades', label: 'Trades' }
+];
 
 const clamp = (value, min, max) => {
   const num = Number(value);
@@ -38,6 +43,8 @@ const trimHead = (list, maxLength) => {
   if (list.length <= maxLength) return list;
   return list.slice(0, maxLength);
 };
+
+const randBetween = (min, max) => min + Math.random() * (max - min);
 
 const createDefaultWalletLab = () => ({
   wallet: createWalletState(DEFAULT_START_CASH),
@@ -238,7 +245,6 @@ export default function WalletPage({ snapshot }) {
   const clearPaperAccounts = useStrategyLabStore((state) => state.clearWalletAccounts);
   const setActivePaperAccount = useStrategyLabStore((state) => state.setActiveWalletAccount);
   const txEvents = useExecutionFeedStore((state) => state.txEvents);
-  const positionEvents = useExecutionFeedStore((state) => state.positionEvents);
   const enabledByKey = useStrategyToggleStore((state) => state.enabledByKey);
   const ensureStrategies = useStrategyToggleStore((state) => state.ensureStrategies);
 
@@ -269,6 +275,7 @@ export default function WalletPage({ snapshot }) {
           id: strategy.id,
           name: strategy.name,
           description: strategy.description || '',
+          decisionCount: toNum(strategy.decisionCount, 0),
           enabled
         };
       })
@@ -287,11 +294,6 @@ export default function WalletPage({ snapshot }) {
     return filterRowsByAccountId(txEvents, activePaperAccount.id).slice(0, 180);
   }, [activePaperAccount?.id, txEvents]);
 
-  const activeRuntimePosition = useMemo(() => {
-    if (!activePaperAccount?.id) return positionEvents[0] || null;
-    return filterRowsByAccountId(positionEvents, activePaperAccount.id)[0] || null;
-  }, [activePaperAccount?.id, positionEvents]);
-
   const selectedStrategyStatus = useMemo(() => {
     const key = toStrategyKey(strategyId);
     return strategyStatusRows.find((strategy) => strategy.key === key) || null;
@@ -303,11 +305,26 @@ export default function WalletPage({ snapshot }) {
     return activeRuntimeTxEvents.filter((event) => toStrategyKey(event.strategyId) === key).slice(0, 180);
   }, [activeRuntimeTxEvents, strategyId]);
 
+  const activeRuntimeWallet = activePaperAccount?.wallet || null;
+  const runtimeEquity = toNum(activeRuntimeWallet?.equity, 0);
+  const runtimeCash = toNum(activeRuntimeWallet?.cash, 0);
+  const runtimeUnits = toNum(activeRuntimeWallet?.units, 0);
+  const runtimeRealizedPnl = toNum(activeRuntimeWallet?.realizedPnl, 0);
+  const runtimeUnrealizedPnl = toNum(activeRuntimeWallet?.unrealizedPnl, 0);
+
   const [walletLab, setWalletLab] = useState(createDefaultWalletLab);
   const [passportSummary, setPassportSummary] = useState(() => readPassportSummary());
   const [message, setMessage] = useState('');
   const [paperName, setPaperName] = useState('');
   const [paperCash, setPaperCash] = useState(100000);
+  const [runtimeSyncTab, setRuntimeSyncTab] = useState('summary');
+  const [runtimeTradeScope, setRuntimeTradeScope] = useState('selected');
+
+  const runtimeTradeRows = useMemo(() => {
+    return runtimeTradeScope === 'all' ? activeRuntimeTxEvents : selectedStrategyRuntimeTxEvents;
+  }, [activeRuntimeTxEvents, runtimeTradeScope, selectedStrategyRuntimeTxEvents]);
+
+  const latestRuntimeTrade = runtimeTradeRows[0] || null;
 
   useEffect(() => {
     try {
@@ -365,26 +382,19 @@ export default function WalletPage({ snapshot }) {
     setWalletLab((previous) => {
       const markedWallet = markWallet(previous.wallet, marketPrice);
       const tail = previous.equityHistory[previous.equityHistory.length - 1];
-      const shouldAppend = !tail || Math.abs(toNum(tail.price, 0) - marketPrice) > 1e-10 || now - toNum(tail.t, 0) >= 4000;
-      const nextHistory = shouldAppend
-        ? trimTail(
-            [
-              ...previous.equityHistory,
-              {
-                t: now,
-                equity: markedWallet.equity,
-                price: marketPrice
-              }
-            ],
-            MAX_EQUITY_POINTS
-          )
-        : previous.equityHistory;
       const nextHoldings = {};
+      let holdingsMarketValue = 0;
+      let holdingsUnrealized = 0;
       for (const [key, holding] of Object.entries(previous.assetHoldings || {})) {
         const market = marketByKey.get(key);
         const lastPrice = Math.max(0, toNum(market?.referencePrice, holding.lastPrice));
         const units = toNum(holding.units, 0);
         if (Math.abs(units) <= 1e-9) continue;
+        const avgEntry = holding?.avgEntry === null ? null : toNum(holding?.avgEntry, null);
+        holdingsMarketValue += units * lastPrice;
+        if (avgEntry !== null) {
+          holdingsUnrealized += units > 0 ? (lastPrice - avgEntry) * Math.abs(units) : (avgEntry - lastPrice) * Math.abs(units);
+        }
         nextHoldings[key] = {
           ...holding,
           symbol: String(market?.symbol || holding.symbol || key).toUpperCase(),
@@ -393,9 +403,45 @@ export default function WalletPage({ snapshot }) {
           updatedAt: now
         };
       }
+
+      const selectedHolding = nextHoldings[selectedMarket.key] || null;
+      const selectedHoldingMatchesWallet =
+        selectedHolding &&
+        Math.abs(toNum(selectedHolding.units, 0) - toNum(markedWallet.units, 0)) <= 1e-8;
+
+      if (!selectedHoldingMatchesWallet && Math.abs(toNum(markedWallet.units, 0)) > 1e-9) {
+        const units = toNum(markedWallet.units, 0);
+        const avgEntry = markedWallet.avgEntry === null ? null : toNum(markedWallet.avgEntry, null);
+        holdingsMarketValue += units * marketPrice;
+        if (avgEntry !== null) {
+          holdingsUnrealized += units > 0 ? (marketPrice - avgEntry) * Math.abs(units) : (avgEntry - marketPrice) * Math.abs(units);
+        }
+      }
+
+      const aggregateWallet = {
+        ...markedWallet,
+        unrealizedPnl: holdingsUnrealized,
+        equity: toNum(markedWallet.cash, 0) + holdingsMarketValue
+      };
+
+      const shouldAppend = !tail || Math.abs(toNum(tail.price, 0) - marketPrice) > 1e-10 || now - toNum(tail.t, 0) >= 4000;
+      const nextHistory = shouldAppend
+        ? trimTail(
+            [
+              ...previous.equityHistory,
+              {
+                t: now,
+                equity: aggregateWallet.equity,
+                price: marketPrice
+              }
+            ],
+            MAX_EQUITY_POINTS
+          )
+        : previous.equityHistory;
+
       return {
         ...previous,
-        wallet: markedWallet,
+        wallet: aggregateWallet,
         assetHoldings: nextHoldings,
         equityHistory: nextHistory
       };
@@ -529,6 +575,136 @@ export default function WalletPage({ snapshot }) {
     setMessage('Wallet lab reset to defaults.');
   };
 
+  const handleGenerateRandomPortfolio = useCallback(() => {
+    const marketPool = rankedMarkets.filter((market) => toNum(market?.referencePrice, 0) > 0).slice(0, 72);
+    if (marketPool.length < 2) {
+      setMessage('Not enough market price data to generate a random paper portfolio yet.');
+      return;
+    }
+
+    const targetPickCount = Math.min(marketPool.length, Math.max(3, Math.floor(randBetween(3, 9))));
+    const usedIndexes = new Set();
+    const pickedMarkets = [];
+    while (pickedMarkets.length < targetPickCount && usedIndexes.size < marketPool.length) {
+      const index = Math.floor(Math.random() * marketPool.length);
+      if (usedIndexes.has(index)) continue;
+      usedIndexes.add(index);
+      pickedMarkets.push(marketPool[index]);
+    }
+
+    const now = Date.now();
+    let generatedCount = 0;
+    let generatedEquity = 0;
+    setWalletLab((previous) => {
+      const startEquity = Math.max(1000, toNum(previous.wallet?.equity, DEFAULT_START_CASH));
+      const investRatio = randBetween(0.42, 0.82);
+      const investBudget = startEquity * investRatio;
+      const rawWeights = pickedMarkets.map(() => randBetween(0.25, 1.35));
+      const weightSum = rawWeights.reduce((sum, weight) => sum + weight, 0);
+
+      const nextHoldings = {};
+      const generatedTrades = [];
+      let investedCost = 0;
+      let holdingsUnrealized = 0;
+      let holdingsMarketValue = 0;
+
+      pickedMarkets.forEach((market, index) => {
+        const marketKey = String(market?.key || '');
+        const symbol = String(market?.symbol || marketKey || 'MARKET').toUpperCase();
+        const assetClass = String(market?.assetClass || 'unknown').toLowerCase();
+        const markPrice = Math.max(0, toNum(market?.referencePrice, 0));
+        if (!marketKey || markPrice <= 0) return;
+
+        const weight = rawWeights[index] / Math.max(weightSum, 1e-9);
+        const targetCost = investBudget * weight;
+        const entryDrift = randBetween(-0.02, 0.025);
+        const avgEntry = markPrice * (1 - entryDrift);
+        const units = Math.max(0.000001, targetCost / Math.max(avgEntry, 1e-9));
+        const cost = units * avgEntry;
+        const marketValue = units * markPrice;
+        const unrealized = (markPrice - avgEntry) * units;
+
+        investedCost += cost;
+        holdingsUnrealized += unrealized;
+        holdingsMarketValue += marketValue;
+
+        nextHoldings[marketKey] = {
+          marketKey,
+          symbol,
+          assetClass,
+          units,
+          avgEntry,
+          realizedPnl: 0,
+          lastPrice: markPrice,
+          updatedAt: now
+        };
+
+        generatedTrades.push({
+          id: `seed:${marketKey}:${now}:${index}`,
+          timestamp: now - index * 250,
+          marketKey,
+          symbol,
+          assetClass,
+          action: 'accumulate',
+          unitsDelta: units,
+          unitsAfter: units,
+          fillPrice: avgEntry,
+          markPrice,
+          spreadBps: toNum(market?.spreadBps, 0),
+          realizedDelta: 0,
+          score: 0,
+          reason: 'seeded random portfolio'
+        });
+      });
+
+      generatedCount = Object.keys(nextHoldings).length;
+      if (generatedCount === 0) return previous;
+
+      const remainingCash = Math.max(0, startEquity - investedCost);
+      const aggregateEquity = remainingCash + holdingsMarketValue;
+      generatedEquity = aggregateEquity;
+      const historyPrice = marketPrice > 0 ? marketPrice : Math.max(0.0001, toNum(pickedMarkets[0]?.referencePrice, 1));
+      const nextHistory = trimTail(
+        [
+          ...previous.equityHistory,
+          {
+            t: now,
+            equity: aggregateEquity,
+            price: historyPrice
+          }
+        ],
+        MAX_EQUITY_POINTS
+      );
+
+      return {
+        ...previous,
+        selectedMarketKey: previous.selectedMarketKey || String(pickedMarkets[0]?.key || ''),
+        wallet: {
+          ...previous.wallet,
+          cash: remainingCash,
+          units: 0,
+          avgEntry: null,
+          realizedPnl: 0,
+          unrealizedPnl: holdingsUnrealized,
+          equity: aggregateEquity,
+          tradeCount: generatedTrades.length,
+          winCount: 0,
+          lossCount: 0,
+          lastActionAt: now
+        },
+        assetHoldings: nextHoldings,
+        tradeLog: generatedTrades,
+        equityHistory: nextHistory
+      };
+    });
+
+    if (generatedCount > 0) {
+      setMessage(`Generated random paper portfolio: ${fmtInt(generatedCount)} assets | equity ${fmtNum(generatedEquity, 2)}.`);
+    } else {
+      setMessage('Random portfolio generation skipped because no valid market prices were available.');
+    }
+  }, [marketPrice, rankedMarkets]);
+
   const refreshPassportSummary = () => {
     setPassportSummary(readPassportSummary());
     setMessage('Passport summary refreshed from account settings.');
@@ -597,16 +773,16 @@ export default function WalletPage({ snapshot }) {
 
       <div className="detail-stat-grid">
         <GlowCard className="stat-card">
-          <span>Wallet Equity</span>
-          <strong className={walletLab.wallet.equity >= DEFAULT_START_CASH ? 'up' : 'down'}>{fmtNum(walletLab.wallet.equity, 2)}</strong>
+          <span>Active Runtime Equity</span>
+          <strong className={runtimeEquity >= toNum(activePaperAccount?.startCash, DEFAULT_START_CASH) ? 'up' : 'down'}>{fmtNum(runtimeEquity, 2)}</strong>
         </GlowCard>
         <GlowCard className="stat-card">
-          <span>Realized PnL</span>
-          <strong className={walletLab.wallet.realizedPnl >= 0 ? 'up' : 'down'}>{fmtNum(walletLab.wallet.realizedPnl, 2)}</strong>
+          <span>Runtime Realized PnL</span>
+          <strong className={runtimeRealizedPnl >= 0 ? 'up' : 'down'}>{fmtNum(runtimeRealizedPnl, 2)}</strong>
         </GlowCard>
         <GlowCard className="stat-card">
-          <span>Unrealized PnL</span>
-          <strong className={walletLab.wallet.unrealizedPnl >= 0 ? 'up' : 'down'}>{fmtNum(walletLab.wallet.unrealizedPnl, 2)}</strong>
+          <span>Runtime Unrealized PnL</span>
+          <strong className={runtimeUnrealizedPnl >= 0 ? 'up' : 'down'}>{fmtNum(runtimeUnrealizedPnl, 2)}</strong>
         </GlowCard>
         <GlowCard className="stat-card">
           <span>Open Notional</span>
@@ -617,87 +793,169 @@ export default function WalletPage({ snapshot }) {
       <GlowCard className="panel-card">
         <div className="section-head">
           <h2>Strategy Runtime Sync</h2>
-          <span>{fmtInt(selectedStrategyRuntimeTxEvents.length)} linked trades</span>
+          <span>{fmtInt(activeRuntimeTxEvents.length)} account trades</span>
         </div>
         <p className="socket-status-copy">
-          selected strategy {selectedStrategyStatus?.name || strategyId || '-'} ({selectedStrategyStatus?.enabled === false ? 'disabled' : 'enabled'}) | active wallet{' '}
-          {activePaperAccount?.name || '-'} ({activePaperAccount?.enabled ? 'enabled' : 'paused'})
+          Active wallet {activePaperAccount?.name || '-'} ({activePaperAccount?.enabled ? 'enabled' : 'paused'}) | strategy focus{' '}
+          {selectedStrategyStatus?.name || strategyId || '-'} ({selectedStrategyStatus?.enabled === false ? 'disabled' : 'enabled'})
         </p>
-        <div className="tensor-metrics">
-          <article>
-            <span>Enabled Strategies</span>
-            <strong>
-              {fmtInt(enabledStrategyCount)} / {fmtInt(strategyStatusRows.length)}
-            </strong>
-          </article>
-          <article>
-            <span>Enabled Wallets</span>
-            <strong>
-              {fmtInt(enabledPaperCount)} / {fmtInt(paperAccounts.length)}
-            </strong>
-          </article>
-          <article>
-            <span>Runtime Equity</span>
-            <strong>{fmtNum(activeRuntimePosition?.wallet?.equity ?? activePaperAccount?.wallet?.equity, 2)}</strong>
-          </article>
-          <article>
-            <span>Runtime Cash</span>
-            <strong>{fmtNum(activeRuntimePosition?.wallet?.cash ?? activePaperAccount?.wallet?.cash, 2)}</strong>
-          </article>
-          <article>
-            <span>Runtime Units</span>
-            <strong>{fmtNum(activeRuntimePosition?.wallet?.units ?? activePaperAccount?.wallet?.units, 4)}</strong>
-          </article>
-          <article>
-            <span>Latest Runtime Fill</span>
-            <strong>{fmtTime(selectedStrategyRuntimeTxEvents[0]?.timestamp)}</strong>
-          </article>
+        <div className="strategy-lab-tab-row" role="tablist" aria-label="Runtime sync views">
+          {RUNTIME_SYNC_TABS.map((tab) => (
+            <button
+              key={tab.id}
+              type="button"
+              role="tab"
+              aria-selected={runtimeSyncTab === tab.id}
+              className={runtimeSyncTab === tab.id ? 'strategy-lab-tab active' : 'strategy-lab-tab'}
+              onClick={() => setRuntimeSyncTab(tab.id)}
+            >
+              {tab.label}
+            </button>
+          ))}
         </div>
-        <div className="two-col">
-          <GlowCard className="panel-card">
+
+        {runtimeSyncTab === 'summary' ? (
+          <div className="list-stack">
+            <div className="tensor-metrics">
+              <article>
+                <span>Enabled Strategies</span>
+                <strong>
+                  {fmtInt(enabledStrategyCount)} / {fmtInt(strategyStatusRows.length)}
+                </strong>
+              </article>
+              <article>
+                <span>Enabled Wallets</span>
+                <strong>
+                  {fmtInt(enabledPaperCount)} / {fmtInt(paperAccounts.length)}
+                </strong>
+              </article>
+              <article>
+                <span>Runtime Equity</span>
+                <strong>{fmtNum(runtimeEquity, 2)}</strong>
+              </article>
+              <article>
+                <span>Runtime Cash</span>
+                <strong>{fmtNum(runtimeCash, 2)}</strong>
+              </article>
+              <article>
+                <span>Runtime Units</span>
+                <strong>{fmtNum(runtimeUnits, 4)}</strong>
+              </article>
+              <article>
+                <span>Latest Runtime Fill</span>
+                <strong>{fmtTime(activeRuntimeTxEvents[0]?.timestamp)}</strong>
+              </article>
+            </div>
+            <div className="item-meta">
+              <small>
+                active wallet:{' '}
+                {activePaperAccount?.id ? (
+                  <Link to={`/wallet/${encodeURIComponent(activePaperAccount.id)}`} className="inline-link">
+                    {activePaperAccount.name || activePaperAccount.id}
+                  </Link>
+                ) : (
+                  '-'
+                )}
+              </small>
+              <small>
+                strategy:{' '}
+                <Link to={`/strategy/${encodeURIComponent(selectedStrategyStatus?.id || strategyId || 'tensor-lite')}`} className="inline-link">
+                  {selectedStrategyStatus?.name || strategyId || 'tensor-lite'}
+                </Link>
+              </small>
+              <small>
+                trade scope {runtimeTradeScope === 'all' ? 'all strategies' : 'selected strategy'} ({fmtInt(runtimeTradeRows.length)} rows)
+              </small>
+            </div>
+            {latestRuntimeTrade ? (
+              <article className="list-item">
+                <strong className={latestRuntimeTrade.action === 'accumulate' ? 'up' : latestRuntimeTrade.action === 'reduce' ? 'down' : ''}>
+                  latest {latestRuntimeTrade.action} | {latestRuntimeTrade.symbol || latestRuntimeTrade.marketKey || '-'} | {latestRuntimeTrade.strategyId}
+                </strong>
+                <p>{latestRuntimeTrade.reason || 'strategy execution'}</p>
+                <div className="item-meta">
+                  <small>fill {fmtNum(latestRuntimeTrade.fillPrice, 4)}</small>
+                  <small>delta {fmtNum(latestRuntimeTrade.unitsDelta, 4)}</small>
+                  <small>units {fmtNum(latestRuntimeTrade.unitsAfter, 4)}</small>
+                  <small>pnl {fmtNum(latestRuntimeTrade.realizedDelta, 2)}</small>
+                  <small>{fmtTime(latestRuntimeTrade.timestamp)}</small>
+                </div>
+              </article>
+            ) : (
+              <p className="action-message">No runtime fills yet for the active wallet.</p>
+            )}
+          </div>
+        ) : null}
+
+        {runtimeSyncTab === 'strategies' ? (
+          <div className="list-stack">
             <div className="section-head">
-              <h2>Strategy Toggles</h2>
+              <h2>Strategy Runtime Map</h2>
               <span>{fmtInt(strategyStatusRows.length)} total</span>
             </div>
-            <div className="list-stack">
-              {strategyStatusRows.map((strategy) => {
-                const selected = toStrategyKey(strategy.id) === toStrategyKey(strategyId);
-                return (
-                  <article key={`wallet-strategy:${strategy.key}`} className="list-item">
-                    <strong>
-                      {selected ? (
-                        <span>
-                          {strategy.name} | selected
-                        </span>
-                      ) : (
-                        <Link to={`/strategy/${encodeURIComponent(strategy.id || strategy.name || strategy.key)}`} className="inline-link">
-                          {strategy.name}
-                        </Link>
-                      )}
-                    </strong>
-                    <p>{strategy.description || 'No description available yet.'}</p>
-                    <div className="item-meta">
-                      <small>id {strategy.id || strategy.key}</small>
-                      <small>{strategy.enabled ? 'enabled' : 'disabled'}</small>
-                    </div>
-                  </article>
-                );
-              })}
-              {strategyStatusRows.length === 0 ? <p className="action-message">No strategies detected yet.</p> : null}
-            </div>
-          </GlowCard>
+            <p className="socket-status-copy">
+              This list is status-only in wallet view. Configure strategy enable/disable in Strategy Lab, then use Trades tab here to verify live fills.
+            </p>
+            {strategyStatusRows.map((strategy) => {
+              const selected = toStrategyKey(strategy.id) === toStrategyKey(strategyId);
+              return (
+                <article key={`wallet-strategy:${strategy.key}`} className="list-item">
+                  <strong>
+                    {selected ? (
+                      <span>
+                        {strategy.name} | selected focus
+                      </span>
+                    ) : (
+                      <Link to={`/strategy/${encodeURIComponent(strategy.id || strategy.name || strategy.key)}`} className="inline-link">
+                        {strategy.name}
+                      </Link>
+                    )}
+                  </strong>
+                  <p>{strategy.description || 'No description available yet.'}</p>
+                  <div className="item-meta">
+                    <small>id {strategy.id || strategy.key}</small>
+                    <small>{strategy.enabled ? 'enabled' : 'disabled'}</small>
+                    <small>decisions {fmtInt(strategy.decisionCount || 0)}</small>
+                  </div>
+                </article>
+              );
+            })}
+            {strategyStatusRows.length === 0 ? <p className="action-message">No strategies detected yet.</p> : null}
+          </div>
+        ) : null}
 
-          <GlowCard className="panel-card">
+        {runtimeSyncTab === 'trades' ? (
+          <>
             <div className="section-head">
               <h2>Live Runtime Trades</h2>
-              <span>{fmtInt(selectedStrategyRuntimeTxEvents.length)} rows</span>
+              <span>{fmtInt(runtimeTradeRows.length)} rows</span>
             </div>
+            <div className="hero-actions">
+              <button
+                type="button"
+                className={runtimeTradeScope === 'selected' ? 'btn primary' : 'btn secondary'}
+                onClick={() => setRuntimeTradeScope('selected')}
+              >
+                Selected Strategy
+              </button>
+              <button
+                type="button"
+                className={runtimeTradeScope === 'all' ? 'btn primary' : 'btn secondary'}
+                onClick={() => setRuntimeTradeScope('all')}
+              >
+                All Strategies
+              </button>
+            </div>
+            <p className="socket-status-copy">
+              scope {runtimeTradeScope === 'selected' ? selectedStrategyStatus?.name || strategyId || '-' : 'all enabled strategies'} | wallet{' '}
+              {activePaperAccount?.name || '-'}
+            </p>
             <FlashList
-              items={selectedStrategyRuntimeTxEvents}
+              items={runtimeTradeRows}
               height={330}
               itemHeight={74}
               className="tick-flash-list"
-              emptyCopy="No runtime trades for the active wallet + selected strategy yet."
+              emptyCopy={runtimeTradeScope === 'selected' ? 'No runtime trades for the selected strategy yet.' : 'No runtime trades for the active wallet yet.'}
               keyExtractor={(event) => event.id}
               renderItem={(event) => (
                 <article className="tensor-event-row">
@@ -712,8 +970,8 @@ export default function WalletPage({ snapshot }) {
                 </article>
               )}
             />
-          </GlowCard>
-        </div>
+          </>
+        ) : null}
       </GlowCard>
 
       <GlowCard className="panel-card">
@@ -876,6 +1134,9 @@ export default function WalletPage({ snapshot }) {
             </button>
             <button type="button" className="btn secondary" onClick={() => executeManual('reduce')}>
               Sell
+            </button>
+            <button type="button" className="btn secondary" onClick={handleGenerateRandomPortfolio}>
+              Generate Portfolio
             </button>
             <button type="button" className="btn secondary" onClick={handleReset}>
               Reset Wallet

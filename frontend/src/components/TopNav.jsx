@@ -4,13 +4,12 @@ const navItems = [
   { to: '/', label: 'Overview' },
   { to: '/assets', label: 'Assets' },
   { to: '/markets', label: 'Markets' },
-  { to: '/graph', label: 'Graph' },
   { to: '/strategies', label: 'Strategies' },
   { to: '/signals', label: 'Signals' },
   { to: '/decisions', label: 'Decisions' },
-  { to: '/other', label: 'Other' },
   { to: '/wallet', label: 'Wallet' },
-  { to: '/account', label: 'Account' }
+  { to: '/account', label: 'Account' },
+  { to: '/other', label: 'Other' }
 ];
 
 export default function TopNav({ pathname, connected, transport, localFallback }) {
@@ -25,6 +24,8 @@ export default function TopNav({ pathname, connected, transport, localFallback }
     if (to === '/other') {
       return (
         path === '/other' ||
+        path === '/graph' ||
+        path === '/exchange' ||
         path === '/derivatives' ||
         path === '/deriv' ||
         path === '/knowledge' ||
@@ -37,7 +38,6 @@ export default function TopNav({ pathname, connected, transport, localFallback }
     if (to === '/account') return path === '/account' || path === '/settings';
     if (to === '/wallet') return path === '/wallet' || path.startsWith('/wallet/');
     if (to === '/assets') return path === '/assets' || path.startsWith('/asset/');
-    if (to === '/graph') return path === '/graph';
     return path === to;
   };
 

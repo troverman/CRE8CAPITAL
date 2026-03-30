@@ -1,7 +1,11 @@
+import { useMemo } from 'react';
 import GlowCard from '../components/GlowCard';
+import { buildDecisionWalletLinkIndex } from '../lib/decisionWalletLink';
 import { fmtInt, fmtNum, fmtTime } from '../lib/format';
 import { Link } from '../lib/router';
 import { getDisplaySignals } from '../lib/signalView';
+import { useExecutionFeedStore } from '../store/executionFeedStore';
+import { useStrategyLabStore } from '../store/strategyLabStore';
 
 const toText = (value, fallback = '-') => {
   const text = String(value || '').trim();
@@ -18,22 +22,38 @@ const toNum = (value, fallback = 0) => {
 const toIdentity = (symbol, assetClass) => `${String(symbol || '').toUpperCase()}|${String(assetClass || '').toLowerCase()}`;
 
 export default function DecisionDetailPage({ decisionId, snapshot }) {
-  const decisions = [...(snapshot?.decisions || [])]
-    .map((decision, index) => ({
-      id: toText(decision?.id, `decision:${index}`),
-      strategyName: toText(decision?.strategyName || decision?.strategy, 'unknown'),
-      action: toAction(decision?.action),
-      reason: toText(decision?.reason, 'No reason provided'),
-      trigger: toText(decision?.trigger),
-      score: toNum(decision?.score, 0),
-      symbol: toText(decision?.symbol),
-      assetClass: toText(decision?.assetClass, 'unknown'),
-      timestamp: toNum(decision?.timestamp, 0)
-    }))
-    .sort((a, b) => b.timestamp - a.timestamp);
+  const walletAccounts = useStrategyLabStore((state) => state.walletAccounts);
+  const txEvents = useExecutionFeedStore((state) => state.txEvents);
+  const decisions = useMemo(() => {
+    return [...(snapshot?.decisions || [])]
+      .map((decision, index) => ({
+        id: toText(decision?.id, `decision:${index}`),
+        strategyName: toText(decision?.strategyName || decision?.strategy, 'unknown'),
+        action: toAction(decision?.action),
+        reason: toText(decision?.reason, 'No reason provided'),
+        trigger: toText(decision?.trigger),
+        score: toNum(decision?.score, 0),
+        symbol: toText(decision?.symbol),
+        assetClass: toText(decision?.assetClass, 'unknown'),
+        timestamp: toNum(decision?.timestamp, 0),
+        accountId: toText(decision?.accountId || decision?.walletAccountId || decision?.walletId || decision?.account?.id || ''),
+        accountName: toText(decision?.accountName || decision?.walletName || decision?.account?.name || '')
+      }))
+      .sort((a, b) => b.timestamp - a.timestamp);
+  }, [snapshot?.decisions]);
+
+  const walletLinkByDecisionId = useMemo(() => {
+    return buildDecisionWalletLinkIndex({
+      decisions,
+      walletAccounts,
+      txEvents,
+      timeWindowMs: 210000
+    });
+  }, [decisions, txEvents, walletAccounts]);
 
   const targetId = String(decisionId || '');
   const decision = decisions.find((item) => String(item.id) === targetId) || null;
+  const walletLink = decision ? walletLinkByDecisionId.get(String(decision.id || '')) || null : null;
 
   if (!decision) {
     return (
@@ -83,6 +103,11 @@ export default function DecisionDetailPage({ decisionId, snapshot }) {
                 market
               </Link>
             ) : null}
+            {walletLink ? (
+              <Link to={`/wallet/${encodeURIComponent(walletLink.accountId)}`} className="inline-link">
+                wallet:{walletLink.accountName}
+              </Link>
+            ) : null}
           </div>
         </div>
         <p>
@@ -107,6 +132,18 @@ export default function DecisionDetailPage({ decisionId, snapshot }) {
           <span>Timestamp</span>
           <strong>{fmtTime(decision.timestamp)}</strong>
         </GlowCard>
+        <GlowCard className="stat-card">
+          <span>Wallet</span>
+          <strong>
+            {walletLink ? (
+              <Link to={`/wallet/${encodeURIComponent(walletLink.accountId)}`} className="inline-link">
+                {walletLink.accountName}
+              </Link>
+            ) : (
+              '-'
+            )}
+          </strong>
+        </GlowCard>
       </div>
 
       <GlowCard className="panel-card">
@@ -125,6 +162,7 @@ export default function DecisionDetailPage({ decisionId, snapshot }) {
           <div className="list-stack">
             {strategyDecisions.map((item) => {
               const isCurrent = String(item.id) === String(decision.id);
+              const itemWalletLink = walletLinkByDecisionId.get(String(item.id || '')) || null;
               return (
                 <article key={`strategy-context:${item.id}:${item.timestamp}`} className="list-item">
                   <strong>
@@ -143,6 +181,13 @@ export default function DecisionDetailPage({ decisionId, snapshot }) {
                     <small>trigger {item.trigger}</small>
                     <small>score {fmtNum(item.score, 2)}</small>
                     <small>{fmtTime(item.timestamp)}</small>
+                    {itemWalletLink ? (
+                      <small>
+                        <Link to={`/wallet/${encodeURIComponent(itemWalletLink.accountId)}`} className="inline-link">
+                          wallet:{itemWalletLink.accountName}
+                        </Link>
+                      </small>
+                    ) : null}
                   </div>
                 </article>
               );
@@ -158,6 +203,7 @@ export default function DecisionDetailPage({ decisionId, snapshot }) {
           <div className="list-stack">
             {marketDecisions.map((item) => {
               const isCurrent = String(item.id) === String(decision.id);
+              const itemWalletLink = walletLinkByDecisionId.get(String(item.id || '')) || null;
               return (
                 <article key={`market-context:${item.id}:${item.timestamp}`} className="list-item">
                   <strong>
@@ -176,6 +222,13 @@ export default function DecisionDetailPage({ decisionId, snapshot }) {
                     <small>trigger {item.trigger}</small>
                     <small>score {fmtNum(item.score, 2)}</small>
                     <small>{fmtTime(item.timestamp)}</small>
+                    {itemWalletLink ? (
+                      <small>
+                        <Link to={`/wallet/${encodeURIComponent(itemWalletLink.accountId)}`} className="inline-link">
+                          wallet:{itemWalletLink.accountName}
+                        </Link>
+                      </small>
+                    ) : null}
                   </div>
                 </article>
               );

@@ -8,10 +8,25 @@ const buildOtherLinks = (snapshot) => {
   const signals = Array.isArray(snapshot?.signals) ? snapshot.signals : [];
   const decisions = Array.isArray(snapshot?.decisions) ? snapshot.decisions : [];
   const feed = Array.isArray(snapshot?.feed) ? snapshot.feed : [];
+  const strategyCount = Array.isArray(snapshot?.strategies) ? snapshot.strategies.length : 0;
 
   const derivativeCount = markets.filter((market) => String(market?.assetClass || '').toLowerCase() === 'derivative').length;
 
   return [
+    {
+      id: 'graph',
+      label: 'Graph',
+      to: '/graph',
+      description: 'Topology map for market/provider/signal/strategy links and runtime graph exploration.',
+      meta: `${fmtInt(markets.length)} markets | ${fmtInt(providers.length)} providers`
+    },
+    {
+      id: 'exchange',
+      label: 'Exchange',
+      to: '/exchange',
+      description: 'Stubbed exchange workspace for passport wiring and future cross-exchange operations.',
+      meta: `${fmtInt(providers.length)} provider routes planned`
+    },
     {
       id: 'probability',
       label: 'PDF Lab',
@@ -45,7 +60,7 @@ const buildOtherLinks = (snapshot) => {
       label: 'Strategy Lab',
       to: '/strategy',
       description: 'Realtime paper execution lab, wallet simulation, and linked tx/position traces.',
-      meta: `${fmtInt(decisions.length)} decisions tracked`
+      meta: `${fmtInt(decisions.length)} decisions | ${fmtInt(strategyCount)} strategies`
     }
   ];
 };
