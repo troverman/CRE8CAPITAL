@@ -1,8 +1,10 @@
+import { useMemo } from 'react';
 import FlashList from '../components/FlashList';
 import GlowCard from '../components/GlowCard';
 import LineChart from '../components/LineChart';
 import useStrategyLab from '../hooks/useStrategyLab';
 import { fmtInt, fmtNum, fmtPct, fmtTime } from '../lib/format';
+import { buildClassicAnalysis } from '../lib/indicators';
 import { Link } from '../lib/router';
 
 const toneClass = (value) => {
@@ -58,6 +60,49 @@ export default function StrategyLabPage({ snapshot, historyByMarket }) {
   const runtimePriceSeries = runtimeSeries.map((point) => point.price);
   const runtimeSpreadSeries = runtimeSeries.map((point) => point.spread);
   const backtestEquitySeries = backtest?.equitySeries || [];
+  const runtimeClassic = useMemo(() => {
+    return buildClassicAnalysis(runtimePriceSeries, {
+      fastPeriod: 20,
+      slowPeriod: 50,
+      emaPeriod: 21,
+      bbPeriod: 20,
+      bbMultiplier: 2
+    });
+  }, [runtimePriceSeries]);
+  const runtimeTaOverlays = useMemo(() => {
+    return [
+      {
+        key: 'lab-sma-fast',
+        label: `SMA${runtimeClassic.periods.fastPeriod}`,
+        points: runtimeClassic.series.smaFast,
+        stroke: '#98b4ff',
+        strokeWidth: 1.5
+      },
+      {
+        key: 'lab-ema',
+        label: `EMA${runtimeClassic.periods.emaPeriod}`,
+        points: runtimeClassic.series.ema,
+        stroke: '#62ffcc',
+        strokeWidth: 1.6
+      },
+      {
+        key: 'lab-bb-upper',
+        label: `BB Upper ${runtimeClassic.periods.bbPeriod}`,
+        points: runtimeClassic.series.bbUpper,
+        stroke: '#ffb372',
+        strokeWidth: 1.35,
+        dasharray: '6 5'
+      },
+      {
+        key: 'lab-bb-lower',
+        label: `BB Lower ${runtimeClassic.periods.bbPeriod}`,
+        points: runtimeClassic.series.bbLower,
+        stroke: '#ff87b1',
+        strokeWidth: 1.35,
+        dasharray: '6 5'
+      }
+    ];
+  }, [runtimeClassic]);
   const backtestStats = backtest?.stats || {
     pnl: 0,
     returnPct: 0,
@@ -249,11 +294,12 @@ export default function StrategyLabPage({ snapshot, historyByMarket }) {
 
       <GlowCard className="chart-card">
         <LineChart
-          title={`Realtime Price - ${selectedMarket?.symbol || 'SIM'}`}
+          title={`Realtime Price + Classic TA - ${selectedMarket?.symbol || 'SIM'}`}
           points={runtimePriceSeries}
           stroke="#63f7c1"
           fillFrom="rgba(58, 227, 171, 0.34)"
           fillTo="rgba(58, 227, 171, 0.03)"
+          overlays={runtimeTaOverlays}
         />
       </GlowCard>
 

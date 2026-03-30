@@ -6,13 +6,62 @@ const toNumber = (value) => {
   return Number.isFinite(num) ? num : null;
 };
 
-const buildChartPoints = ({ points, width, height, min, max, pad }) => {
+const buildPathFromSeries = ({ series, width, height, min, max, pad }) => {
+  const values = Array.isArray(series) ? series : [];
+  if (!values.length) return '';
   const range = max - min || 1;
-  return points.map((point, idx) => {
-    const x = (idx / Math.max(points.length - 1, 1)) * width;
-    const y = height - pad - ((point - min) / range) * (height - pad * 2);
-    return { x, y };
-  });
+  const denominator = Math.max(values.length - 1, 1);
+  let path = '';
+  let active = false;
+
+  for (let index = 0; index < values.length; index += 1) {
+    const value = toNumber(values[index]);
+    if (value === null) {
+      active = false;
+      continue;
+    }
+    const x = (index / denominator) * width;
+    const y = height - pad - ((value - min) / range) * (height - pad * 2);
+    path += `${active ? ' L' : 'M'} ${x} ${y}`;
+    active = true;
+  }
+
+  return path.trim();
+};
+
+const buildAreaPathFromSeries = ({ series, width, height, min, max, pad }) => {
+  const values = Array.isArray(series) ? series : [];
+  if (!values.length) return '';
+  const range = max - min || 1;
+  const denominator = Math.max(values.length - 1, 1);
+  let path = '';
+  let segment = [];
+
+  const flushSegment = () => {
+    if (segment.length < 2) {
+      segment = [];
+      return;
+    }
+    const head = segment[0];
+    const tail = segment[segment.length - 1];
+    const line = segment.map((point, index) => `${index === 0 ? 'M' : 'L'} ${point.x} ${point.y}`).join(' ');
+    path += `${line} L ${tail.x} ${height} L ${head.x} ${height} Z `;
+    segment = [];
+  };
+
+  for (let index = 0; index < values.length; index += 1) {
+    const value = toNumber(values[index]);
+    if (value === null) {
+      flushSegment();
+      continue;
+    }
+    const x = (index / denominator) * width;
+    const y = height - pad - ((value - min) / range) * (height - pad * 2);
+    segment.push({ x, y });
+  }
+
+  flushSegment();
+  return path.trim();
 };
 
 export default function LineChart({
@@ -23,29 +72,56 @@ export default function LineChart({
   fillFrom = 'rgba(75, 181, 255, 0.34)',
   fillTo = 'rgba(75, 181, 255, 0.02)',
   title = 'Chart',
-  unit = ''
+  unit = '',
+  overlays = []
 }) {
   const gradientId = useId();
-  const values = useMemo(() => points.map(toNumber).filter((value) => value !== null), [points]);
+  const baseSeries = useMemo(() => (Array.isArray(points) ? points.map(toNumber) : []), [points]);
+  const values = useMemo(() => baseSeries.filter((value) => value !== null), [baseSeries]);
+  const overlaySeries = useMemo(() => {
+    if (!Array.isArray(overlays)) return [];
+    return overlays
+      .map((overlay, index) => {
+        const series = Array.isArray(overlay?.points) ? overlay.points.map(toNumber) : [];
+        return {
+          key: overlay?.key || overlay?.label || `overlay-${index}`,
+          label: overlay?.label || `overlay ${index + 1}`,
+          stroke: overlay?.stroke || '#8db3ff',
+          strokeWidth: Number(overlay?.strokeWidth) > 0 ? Number(overlay.strokeWidth) : 1.5,
+          dasharray: overlay?.dasharray || '',
+          series
+        };
+      })
+      .filter((overlay) => overlay.series.some((value) => value !== null));
+  }, [overlays]);
+  const overlayValues = useMemo(() => {
+    return overlaySeries.flatMap((overlay) => overlay.series).filter((value) => value !== null);
+  }, [overlaySeries]);
 
   if (values.length < 2) {
     return <div className="chart-empty">Waiting for live data...</div>;
   }
 
-  const min = Math.min(...values);
-  const max = Math.max(...values);
+  const domainValues = overlayValues.length ? [...values, ...overlayValues] : values;
+  const min = Math.min(...domainValues);
+  const max = Math.max(...domainValues);
   const pad = 12;
-  const graphPoints = buildChartPoints({
-    points: values,
+  const linePath = buildPathFromSeries({
+    series: baseSeries,
     width,
     height,
     min,
     max,
     pad
   });
-
-  const linePath = graphPoints.map((point, idx) => `${idx === 0 ? 'M' : 'L'} ${point.x} ${point.y}`).join(' ');
-  const areaPath = `${linePath} L ${width} ${height} L 0 ${height} Z`;
+  const areaPath = buildAreaPathFromSeries({
+    series: baseSeries,
+    width,
+    height,
+    min,
+    max,
+    pad
+  });
   const latest = values[values.length - 1];
   const delta = latest - values[Math.max(values.length - 2, 0)];
 
@@ -70,7 +146,45 @@ export default function LineChart({
 
         <path d={areaPath} fill={`url(#${gradientId})`} />
         <path d={linePath} fill="none" stroke={stroke} strokeWidth="2.1" strokeLinecap="round" strokeLinejoin="round" />
+        {overlaySeries.map((overlay) => {
+          const path = buildPathFromSeries({
+            series: overlay.series,
+            width,
+            height,
+            min,
+            max,
+            pad
+          });
+          if (!path) return null;
+          return (
+            <path
+              key={overlay.key}
+              d={path}
+              fill="none"
+              stroke={overlay.stroke}
+              strokeWidth={overlay.strokeWidth}
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              strokeDasharray={overlay.dasharray}
+            />
+          );
+        })}
       </svg>
+
+      {overlaySeries.length ? (
+        <div className="chart-legend">
+          <span className="chart-legend-item">
+            <span className="chart-legend-swatch" style={{ background: stroke }} />
+            <small>price</small>
+          </span>
+          {overlaySeries.map((overlay) => (
+            <span key={`legend:${overlay.key}`} className="chart-legend-item">
+              <span className="chart-legend-swatch" style={{ background: overlay.stroke }} />
+              <small>{overlay.label}</small>
+            </span>
+          ))}
+        </div>
+      ) : null}
 
       <div className="chart-foot">
         <span>
@@ -89,4 +203,3 @@ export default function LineChart({
     </div>
   );
 }
-

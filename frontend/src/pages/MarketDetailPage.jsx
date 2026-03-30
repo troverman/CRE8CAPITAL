@@ -6,6 +6,7 @@ import Sparkline from '../components/Sparkline';
 import useSocketProviders from '../hooks/useSocketProviders';
 import useTensorStrategy from '../hooks/useTensorStrategy';
 import { fmtCompact, fmtInt, fmtNum, fmtPct, fmtTime, severityClass } from '../lib/format';
+import { buildClassicAnalysis } from '../lib/indicators';
 import { Link } from '../lib/router';
 
 export default function MarketDetailPage({ marketId, snapshot, historyByMarket, onRefresh, syncing }) {
@@ -81,6 +82,75 @@ export default function MarketDetailPage({ marketId, snapshot, historyByMarket, 
   const spreadSeries = useSocketAsPrimary ? socketSpreadSeries : runtimeSpreadSeries;
   const sourceLabel = useSocketAsPrimary ? `${primaryProvider?.name || 'Socket'} feed` : 'Runtime feed';
   const tensorActionClass = tensorStrategy.action === 'accumulate' ? 'up' : tensorStrategy.action === 'reduce' ? 'down' : '';
+  const classicAnalysis = useMemo(() => {
+    return buildClassicAnalysis(priceSeries, {
+      fastPeriod: 20,
+      slowPeriod: 50,
+      emaPeriod: 21,
+      bbPeriod: 20,
+      bbMultiplier: 2
+    });
+  }, [priceSeries]);
+  const taOverlays = useMemo(() => {
+    return [
+      {
+        key: 'sma-fast',
+        label: `SMA${classicAnalysis.periods.fastPeriod}`,
+        points: classicAnalysis.series.smaFast,
+        stroke: '#98b4ff',
+        strokeWidth: 1.6
+      },
+      {
+        key: 'sma-slow',
+        label: `SMA${classicAnalysis.periods.slowPeriod}`,
+        points: classicAnalysis.series.smaSlow,
+        stroke: '#af8dff',
+        strokeWidth: 1.5
+      },
+      {
+        key: 'ema',
+        label: `EMA${classicAnalysis.periods.emaPeriod}`,
+        points: classicAnalysis.series.ema,
+        stroke: '#62ffcc',
+        strokeWidth: 1.6
+      },
+      {
+        key: 'bb-upper',
+        label: `BB Upper ${classicAnalysis.periods.bbPeriod}`,
+        points: classicAnalysis.series.bbUpper,
+        stroke: '#ffb372',
+        strokeWidth: 1.35,
+        dasharray: '6 5'
+      },
+      {
+        key: 'bb-lower',
+        label: `BB Lower ${classicAnalysis.periods.bbPeriod}`,
+        points: classicAnalysis.series.bbLower,
+        stroke: '#ff87b1',
+        strokeWidth: 1.35,
+        dasharray: '6 5'
+      }
+    ];
+  }, [classicAnalysis]);
+
+  const taTrendTone = classicAnalysis.states.trend === 'bullish' ? 'up' : classicAnalysis.states.trend === 'bearish' ? 'down' : '';
+  const taBandTone = classicAnalysis.states.bandState === 'upper-break' ? 'up' : classicAnalysis.states.bandState === 'lower-break' ? 'down' : '';
+  const taCrossTone = classicAnalysis.states.crossover === 'bull-cross' ? 'up' : classicAnalysis.states.crossover === 'bear-cross' ? 'down' : '';
+  const taSmaSpreadTone =
+    Number.isFinite(classicAnalysis.metrics.fastVsSlowPct) && classicAnalysis.metrics.fastVsSlowPct !== 0
+      ? classicAnalysis.metrics.fastVsSlowPct > 0
+        ? 'up'
+        : 'down'
+      : '';
+  const taEmaSlopeTone =
+    Number.isFinite(classicAnalysis.metrics.emaSlopePct) && classicAnalysis.metrics.emaSlopePct !== 0
+      ? classicAnalysis.metrics.emaSlopePct > 0
+        ? 'up'
+        : 'down'
+      : '';
+  const formatRawPercent = (value) => {
+    return Number.isFinite(value) ? `${fmtNum(value, 2)}%` : '-';
+  };
 
   const depthBook = useMemo(() => {
     const activeDepth = primaryDepth || null;
@@ -195,7 +265,51 @@ export default function MarketDetailPage({ marketId, snapshot, historyByMarket, 
           stroke="#77dcff"
           fillFrom="rgba(58, 147, 255, 0.36)"
           fillTo="rgba(58, 147, 255, 0.02)"
+          overlays={taOverlays}
         />
+      </GlowCard>
+
+      <GlowCard className="panel-card">
+        <div className="section-head">
+          <h2>Classic Analysis</h2>
+          <span>{classicAnalysis.sampleSize} samples</span>
+        </div>
+        <p className="socket-status-copy">
+          {classicAnalysis.ready
+            ? `Bollinger(${classicAnalysis.periods.bbPeriod},${classicAnalysis.periods.bbMultiplier}) + moving averages on ${sourceLabel}.`
+            : `Collecting data for classic indicators (${classicAnalysis.periods.bbPeriod} points required).`}
+        </p>
+        <div className="ta-grid">
+          <article className="ta-item">
+            <span>Price vs SMA{classicAnalysis.periods.fastPeriod}</span>
+            <strong className={taTrendTone}>{fmtPct(classicAnalysis.metrics.priceVsFastPct)}</strong>
+          </article>
+          <article className="ta-item">
+            <span>SMA{classicAnalysis.periods.fastPeriod} vs SMA{classicAnalysis.periods.slowPeriod}</span>
+            <strong className={taSmaSpreadTone}>{fmtPct(classicAnalysis.metrics.fastVsSlowPct)}</strong>
+          </article>
+          <article className="ta-item">
+            <span>EMA Slope (5)</span>
+            <strong className={taEmaSlopeTone}>{fmtPct(classicAnalysis.metrics.emaSlopePct)}</strong>
+          </article>
+          <article className="ta-item">
+            <span>Band Width</span>
+            <strong>{formatRawPercent(classicAnalysis.metrics.bbWidthPct)}</strong>
+          </article>
+          <article className="ta-item">
+            <span>Band Position</span>
+            <strong>{formatRawPercent(classicAnalysis.metrics.bbPositionPct)}</strong>
+          </article>
+          <article className="ta-item">
+            <span>Price / EMA{classicAnalysis.periods.emaPeriod}</span>
+            <strong>{fmtNum(classicAnalysis.latest.price, 4)} / {fmtNum(classicAnalysis.latest.ema, 4)}</strong>
+          </article>
+        </div>
+        <div className="ta-chip-row">
+          <span className={`status-pill ${taTrendTone}`}>trend {classicAnalysis.states.trend}</span>
+          <span className={`status-pill ${taBandTone}`}>band {classicAnalysis.states.bandState}</span>
+          <span className={`status-pill ${taCrossTone}`}>cross {classicAnalysis.states.crossover}</span>
+        </div>
       </GlowCard>
 
       <GlowCard className="chart-card">
