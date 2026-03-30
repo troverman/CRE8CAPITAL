@@ -591,6 +591,103 @@ a {
   height: 15px;
 }
 
+.account-grid {
+  display: grid;
+  gap: 0.55rem;
+  grid-template-columns: 1.2fr 1fr;
+}
+
+.passport-card {
+  gap: 0.65rem;
+}
+
+.passport-config-grid {
+  display: grid;
+  gap: 0.5rem;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.passport-toggle {
+  border: 1px solid rgba(124, 143, 205, 0.3);
+  border-radius: 11px;
+  background: rgba(8, 12, 24, 0.8);
+  padding: 0.48rem 0.56rem;
+}
+
+.passport-form {
+  display: grid;
+  gap: 0.55rem;
+}
+
+.passport-form-grid {
+  display: grid;
+  gap: 0.5rem;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.passport-permissions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  border: 1px solid rgba(124, 143, 205, 0.26);
+  border-radius: 11px;
+  background: rgba(8, 12, 24, 0.7);
+  padding: 0.45rem 0.52rem;
+}
+
+.passport-provider-grid {
+  display: grid;
+  gap: 0.5rem;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.passport-provider-card {
+  position: relative;
+  overflow: hidden;
+  border: 1px solid rgba(120, 139, 199, 0.38);
+  border-radius: 12px;
+  background: rgba(8, 12, 24, 0.86);
+  padding: 0.54rem;
+  display: grid;
+  gap: 0.26rem;
+}
+
+.passport-provider-card::before {
+  content: '';
+  position: absolute;
+  inset: -70%;
+  background: conic-gradient(from 150deg, transparent, rgba(95, 214, 255, 0.15), transparent, rgba(130, 136, 255, 0.17), transparent);
+  animation: spin 12s linear infinite;
+  opacity: 0.7;
+  pointer-events: none;
+}
+
+.passport-provider-card > * {
+  position: relative;
+  z-index: 1;
+}
+
+.passport-provider-card p {
+  color: var(--ink-soft);
+  font-size: 0.74rem;
+}
+
+.passport-provider-card small {
+  color: var(--ink-soft);
+  font-size: 0.69rem;
+}
+
+.passport-provider-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 0.45rem;
+}
+
+.passport-provider-head strong {
+  font-size: 0.84rem;
+}
+
 .chart-card {
   padding-top: 0.6rem;
 }
@@ -1210,6 +1307,18 @@ th {
     grid-template-columns: 1fr;
   }
 
+  .account-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .passport-config-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .passport-provider-grid {
+    grid-template-columns: 1fr;
+  }
+
   .tensor-grid {
     grid-template-columns: 1fr;
   }
@@ -1262,6 +1371,11 @@ th {
 
   .strategy-control-grid,
   .strategy-risk-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .passport-config-grid,
+  .passport-form-grid {
     grid-template-columns: 1fr;
   }
 }

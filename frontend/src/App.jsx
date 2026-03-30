@@ -7,6 +7,7 @@ import { fmtTime } from './lib/format';
 import { usePathname } from './lib/router';
 import AssetDetailPage from './pages/AssetDetailPage';
 import AssetListPage from './pages/AssetListPage';
+import AccountPage from './pages/AccountPage';
 import HomePage from './pages/HomePage';
 import GraphPage from './pages/GraphPage';
 import MarketDetailPage from './pages/MarketDetailPage';
@@ -28,6 +29,7 @@ const parseRoute = (pathname) => {
   if (routePath === '/signals') return { name: 'signals' };
   if (routePath === '/strategies') return { name: 'strategies' };
   if (routePath === '/strategy') return { name: 'strategy' };
+  if (routePath === '/account' || routePath === '/settings') return { name: 'account' };
 
   const marketMatch = routePath.match(/^\/market\/(.+)$/);
   if (marketMatch) {
@@ -57,7 +59,7 @@ const NotFoundPage = () => {
     <section className="page-grid">
       <GlowCard className="detail-card">
         <h1>Route not found</h1>
-        <p>Try `/markets`, `/assets`, `/signals`, `/strategies`, `/graph`, `/strategy`, `/signal/:id`, or `/strategy/:id`.</p>
+        <p>Try `/markets`, `/assets`, `/signals`, `/strategies`, `/graph`, `/strategy`, `/account`, `/signal/:id`, or `/strategy/:id`.</p>
       </GlowCard>
     </section>
   );
@@ -139,6 +141,8 @@ export default function App() {
       {route.name === 'graph' ? <GraphPage snapshot={snapshot} /> : null}
 
       {route.name === 'strategy' ? <StrategyLabPage snapshot={snapshot} historyByMarket={historyByMarket} /> : null}
+
+      {route.name === 'account' ? <AccountPage /> : null}
 
       {route.name === 'not-found' ? <NotFoundPage /> : null}
     </main>
