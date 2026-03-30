@@ -8,6 +8,7 @@ import { usePathname } from './lib/router';
 import AssetDetailPage from './pages/AssetDetailPage';
 import AssetListPage from './pages/AssetListPage';
 import AccountPage from './pages/AccountPage';
+import DerivativesPage from './pages/DerivativesPage';
 import HomePage from './pages/HomePage';
 import GraphPage from './pages/GraphPage';
 import MarketDetailPage from './pages/MarketDetailPage';
@@ -16,7 +17,10 @@ import DecisionListPage from './pages/DecisionListPage';
 import DecisionDetailPage from './pages/DecisionDetailPage';
 import SignalDetailPage from './pages/SignalDetailPage';
 import SignalListPage from './pages/SignalListPage';
+import KnowledgePage from './pages/KnowledgePage';
 import ProbabilityLabPage from './pages/ProbabilityLabPage';
+import ProviderDetailPage from './pages/ProviderDetailPage';
+import ProviderListPage from './pages/ProviderListPage';
 import StrategyLabPage from './pages/StrategyLabPage';
 import StrategyDetailPage from './pages/StrategyDetailPage';
 import StrategyListPage from './pages/StrategyListPage';
@@ -30,7 +34,10 @@ const parseRoute = (pathname) => {
   if (routePath === '/') return { name: 'home' };
   if (routePath === '/markets') return { name: 'markets' };
   if (routePath === '/assets') return { name: 'assets' };
+  if (routePath === '/derivatives' || routePath === '/deriv') return { name: 'derivatives' };
   if (routePath === '/graph') return { name: 'graph' };
+  if (routePath === '/knowledge') return { name: 'knowledge' };
+  if (routePath === '/providers') return { name: 'providers' };
   if (routePath === '/signals') return { name: 'signals' };
   if (routePath === '/decisions') return { name: 'decisions' };
   if (routePath === '/probability') return { name: 'probability' };
@@ -69,6 +76,11 @@ const parseRoute = (pathname) => {
     return { name: 'wallet-detail', id: decodeURIComponent(walletDetailMatch[1]) };
   }
 
+  const providerDetailMatch = routePath.match(/^\/provider\/(.+)$/);
+  if (providerDetailMatch) {
+    return { name: 'provider-detail', id: decodeURIComponent(providerDetailMatch[1]) };
+  }
+
   return { name: 'not-found' };
 };
 
@@ -78,8 +90,8 @@ const NotFoundPage = () => {
       <GlowCard className="detail-card">
         <h1>Route not found</h1>
         <p>
-          Try `/markets`, `/assets`, `/signals`, `/decisions`, `/probability`, `/strategies`, `/graph`, `/strategy`, `/account`, `/wallet`, `/signal/:id`, or
-          `/decision/:id`, `/strategy/:id`, `/wallet/:id`.
+          Try `/markets`, `/assets`, `/derivatives`, `/knowledge`, `/providers`, `/signals`, `/decisions`, `/probability`, `/strategies`, `/graph`, `/strategy`, `/account`, `/wallet`,
+          `/signal/:id`, `/decision/:id`, `/strategy/:id`, `/wallet/:id`, or `/provider/:id`.
         </p>
       </GlowCard>
     </section>
@@ -150,6 +162,14 @@ export default function App() {
       {route.name === 'assets' ? <AssetListPage markets={snapshot.markets} /> : null}
 
       {route.name === 'asset' ? <AssetDetailPage assetId={route.id} markets={snapshot.markets} historyByMarket={historyByMarket} /> : null}
+
+      {route.name === 'derivatives' ? <DerivativesPage snapshot={snapshot} /> : null}
+
+      {route.name === 'knowledge' ? <KnowledgePage snapshot={snapshot} /> : null}
+
+      {route.name === 'providers' ? <ProviderListPage snapshot={snapshot} /> : null}
+
+      {route.name === 'provider-detail' ? <ProviderDetailPage providerId={route.id} snapshot={snapshot} /> : null}
 
       {route.name === 'signals' ? <SignalListPage snapshot={snapshot} /> : null}
 

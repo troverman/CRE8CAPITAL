@@ -233,6 +233,26 @@ export const STRATEGY_OPTIONS = [
     description: 'Conservative drift-aware posture that avoids noise and spread-heavy conditions.'
   },
   {
+    id: 'funding-carry',
+    label: 'Funding Carry',
+    description: 'Derivative strategy that leans into favorable perp funding dislocations with open-interest confirmation.'
+  },
+  {
+    id: 'basis-arb',
+    label: 'Basis Arb',
+    description: 'Trades futures basis mean reversion against underlying drift when carry disconnects from spot.'
+  },
+  {
+    id: 'iv-reversion',
+    label: 'IV Reversion',
+    description: 'Options-vol strategy that reacts to implied-vs-realized volatility dislocations.'
+  },
+  {
+    id: 'gamma-squeeze',
+    label: 'Gamma Squeeze',
+    description: 'Options-flow strategy keyed to open-interest acceleration, skew, and put/call pressure.'
+  },
+  {
     id: 'signal-single',
     label: 'Signal Single',
     description: 'Acts off the strongest active signal with minimal aggregation.'
@@ -262,6 +282,7 @@ export const SOURCE_OPTIONS = [
 ];
 
 const SIGNAL_STRATEGIES = new Set(['signal-single', 'signal-consensus', 'signal-cluster']);
+const DERIVATIVE_STRATEGIES = new Set(['funding-carry', 'basis-arb', 'iv-reversion', 'gamma-squeeze']);
 
 const severityWeight = (severity) => {
   const value = String(severity || '').toLowerCase();
@@ -464,7 +485,7 @@ const priceResult = ({ action = 'hold', score = 0, reason = '', triggerKind = 'p
   };
 };
 
-const evaluatePriceStrategy = ({ strategyId, series = [] }) => {
+const evaluatePriceStrategy = ({ strategyId, series = [], selectedMarket = null }) => {
   if (!Array.isArray(series) || series.length < 2) {
     return priceResult({
       action: 'hold',
@@ -503,6 +524,27 @@ const evaluatePriceStrategy = ({ strategyId, series = [] }) => {
   const emaSlowPrev = ema(prices.slice(0, prices.length - 1), 21) || emaSlow;
   const rsi14 = rsi(prices, 14);
   const accelBps = ((latest - prev) / Math.max(latest, 1e-9)) * 10000;
+  const marketAssetClass = String(selectedMarket?.assetClass || '').toLowerCase();
+  const marketSymbol = String(selectedMarket?.symbol || '').toUpperCase();
+  const instrumentType = String(selectedMarket?.instrumentType || '').toLowerCase();
+  const isOption =
+    instrumentType === 'option' || marketSymbol.includes('-C') || marketSymbol.includes('-P') || marketSymbol.includes('CALL') || marketSymbol.includes('PUT');
+  const isFuture = instrumentType === 'future' || marketSymbol.includes('PERP') || marketSymbol.includes('FUT');
+  const isDerivativeMarket = marketAssetClass === 'derivative' || isOption || isFuture;
+  const basisBps = toNum(selectedMarket?.basisBps, ((latest - medium) / Math.max(latest, 1e-9)) * 10000);
+  const fundingRateBps = toNum(selectedMarket?.fundingRateBps, 0);
+  const openInterestChangePct = toNum(selectedMarket?.openInterestChangePct, 0);
+  const impliedVolPct = toNum(selectedMarket?.impliedVolPct, clamp(volatilityPct * 60, 4, 250));
+  const optionSkewPct = toNum(selectedMarket?.optionSkewPct, 0);
+  const putCallRatio = clamp(toNum(selectedMarket?.putCallRatio, 1), 0.05, 6);
+
+  if (DERIVATIVE_STRATEGIES.has(strategyId) && !isDerivativeMarket) {
+    return priceResult({
+      action: 'hold',
+      score: 0,
+      reason: 'Derivative strategy requires a futures/options market'
+    });
+  }
 
   if (strategyId === 'mean-reversion') {
     const window = prices.slice(-20);
@@ -669,6 +711,78 @@ const evaluatePriceStrategy = ({ strategyId, series = [] }) => {
     });
   }
 
+  if (strategyId === 'funding-carry') {
+    const score = -fundingRateBps * 2.6 + trendBps * 0.22 + openInterestChangePct * 0.95 - spreadPenalty * 1.1;
+    const action =
+      fundingRateBps <= -0.9 && score > 1.8 && latestSpread < 52
+        ? 'accumulate'
+        : fundingRateBps >= 0.9 && score < -1.8 && latestSpread < 52
+          ? 'reduce'
+          : 'hold';
+    return priceResult({
+      action,
+      score,
+      reason: `funding ${fundingRateBps.toFixed(2)} bps, oi ${openInterestChangePct.toFixed(2)}%, trend ${trendBps.toFixed(2)} bps`
+    });
+  }
+
+  if (strategyId === 'basis-arb') {
+    const score = -basisBps * 0.34 + momentumPct * 3.4 + openInterestChangePct * 0.32 - spreadPenalty * 0.9;
+    const action = basisBps <= -10 && latestSpread < 54 ? 'accumulate' : basisBps >= 10 && latestSpread < 54 ? 'reduce' : 'hold';
+    return priceResult({
+      action,
+      score,
+      reason: `basis ${basisBps.toFixed(2)} bps, momentum ${momentumPct.toFixed(2)}%, oi ${openInterestChangePct.toFixed(2)}%`
+    });
+  }
+
+  if (strategyId === 'iv-reversion') {
+    if (!isOption) {
+      return priceResult({
+        action: 'hold',
+        score: 0,
+        reason: 'IV Reversion requires an options contract market'
+      });
+    }
+    const realizedProxy = clamp(volatilityPct * 100, 1, 220);
+    const volPremium = impliedVolPct - realizedProxy;
+    const score = -volPremium * 0.11 + momentumPct * 1.55 + optionSkewPct * 0.26 - spreadPenalty * 0.85;
+    const action =
+      volPremium <= -5 && momentumPct > -0.45 && latestSpread < 68
+        ? 'accumulate'
+        : volPremium >= 8 && momentumPct < 0.45 && latestSpread < 68
+          ? 'reduce'
+          : 'hold';
+    return priceResult({
+      action,
+      score,
+      reason: `iv ${impliedVolPct.toFixed(2)}% vs rv ${realizedProxy.toFixed(2)}%, skew ${optionSkewPct.toFixed(2)}`
+    });
+  }
+
+  if (strategyId === 'gamma-squeeze') {
+    if (!isOption) {
+      return priceResult({
+        action: 'hold',
+        score: 0,
+        reason: 'Gamma Squeeze requires an options contract market'
+      });
+    }
+    const squeezePressure = openInterestChangePct * 2.2 + (1.02 - putCallRatio) * 5 + momentumPct * 1.35 + optionSkewPct * 0.18;
+    const score = squeezePressure - spreadPenalty;
+    const action =
+      openInterestChangePct > 1.1 && putCallRatio < 0.95 && momentumPct > 0 && latestSpread < 72
+        ? 'accumulate'
+        : openInterestChangePct > 1.1 && putCallRatio > 1.08 && momentumPct < 0 && latestSpread < 72
+          ? 'reduce'
+          : 'hold';
+    return priceResult({
+      action,
+      score,
+      reason: `gamma pressure oi ${openInterestChangePct.toFixed(2)}%, p/c ${putCallRatio.toFixed(2)}, skew ${optionSkewPct.toFixed(2)}`
+    });
+  }
+
   const confidenceBoost = clamp(Math.abs(trendBps) / 22, 0, 3.4);
   const score = trendBps * 0.62 + momentumPct * 8.6 + confidenceBoost - spreadPenalty * 1.45;
   const action = score >= 5.2 && latestSpread < 40 ? 'accumulate' : score <= -5.2 && latestSpread < 40 ? 'reduce' : 'hold';
@@ -808,7 +922,7 @@ export const evaluateStrategy = ({ strategyId, series = [], signalRows = [], sel
       selectedMarket
     });
   }
-  return evaluatePriceStrategy({ strategyId, series });
+  return evaluatePriceStrategy({ strategyId, series, selectedMarket });
 };
 
 export const executeWalletAction = ({

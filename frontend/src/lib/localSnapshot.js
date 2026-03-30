@@ -9,23 +9,60 @@ const randomBetween = (min, max) => min + Math.random() * (max - min);
 
 const cryptoProviders = [
   { id: 'binance', name: 'Binance Socket', venue: 'BINANCE' },
-  { id: 'coinbase', name: 'Coinbase Socket', venue: 'COINBASE' }
+  { id: 'coinbase', name: 'Coinbase Socket', venue: 'COINBASE' },
+  { id: 'kraken', name: 'Kraken Socket', venue: 'KRAKEN' },
+  { id: 'okx', name: 'OKX Socket', venue: 'OKX' },
+  { id: 'bybit', name: 'Bybit Socket', venue: 'BYBIT' }
 ];
-const equityProviders = [{ id: 'paper-equity', name: 'Paper Equity Feed', venue: 'SIM' }];
-const fxProviders = [{ id: 'paper-fx', name: 'Paper FX Feed', venue: 'SIM' }];
-const commodityProviders = [{ id: 'paper-commodities', name: 'Paper Commodities Feed', venue: 'SIM' }];
-const indexProviders = [{ id: 'paper-index', name: 'Paper Index Feed', venue: 'SIM' }];
-const ratesProviders = [{ id: 'paper-rates', name: 'Paper Rates Feed', venue: 'SIM' }];
+const equityProviders = [
+  { id: 'paper-equity', name: 'Paper Equity Feed', venue: 'SIM' },
+  { id: 'iex-equity', name: 'IEX Equity Feed', venue: 'IEX' },
+  { id: 'polygon-equity', name: 'Polygon Equity Feed', venue: 'POLYGON' },
+  { id: 'alpaca-equity', name: 'Alpaca Equity Feed', venue: 'ALPACA' }
+];
+const fxProviders = [
+  { id: 'paper-fx', name: 'Paper FX Feed', venue: 'SIM' },
+  { id: 'oanda-fx', name: 'Oanda FX Feed', venue: 'OANDA' },
+  { id: 'fxcm-fx', name: 'FXCM FX Feed', venue: 'FXCM' }
+];
+const commodityProviders = [
+  { id: 'paper-commodities', name: 'Paper Commodities Feed', venue: 'SIM' },
+  { id: 'cme-commodities', name: 'CME Commodities Feed', venue: 'CME' },
+  { id: 'ice-commodities', name: 'ICE Commodities Feed', venue: 'ICE' }
+];
+const indexProviders = [
+  { id: 'paper-index', name: 'Paper Index Feed', venue: 'SIM' },
+  { id: 'cboe-index', name: 'CBOE Index Feed', venue: 'CBOE' },
+  { id: 'eurex-index', name: 'Eurex Index Feed', venue: 'EUREX' }
+];
+const ratesProviders = [
+  { id: 'paper-rates', name: 'Paper Rates Feed', venue: 'SIM' },
+  { id: 'cme-rates', name: 'CME Rates Feed', venue: 'CME' },
+  { id: 'ust-rates', name: 'UST Rates Feed', venue: 'UST' }
+];
+const futuresProviders = [
+  { id: 'binance-futures', name: 'Binance Futures', venue: 'BINANCE' },
+  { id: 'bybit-futures', name: 'Bybit Futures', venue: 'BYBIT' },
+  { id: 'deribit-futures', name: 'Deribit Futures', venue: 'DERIBIT' },
+  { id: 'cme-futures', name: 'CME Futures', venue: 'CME' }
+];
+const optionsProviders = [
+  { id: 'deribit-options', name: 'Deribit Options', venue: 'DERIBIT' },
+  { id: 'cboe-options', name: 'CBOE Options', venue: 'CBOE' },
+  { id: 'cme-options', name: 'CME Options', venue: 'CME' }
+];
 
 const toSeed = (assetClass, row, providers) => {
+  const { symbol, referencePrice, spreadBps, totalVolume, volatility, ...rest } = row;
   return {
-    key: `${assetClass}:${String(row.symbol).toLowerCase()}`,
-    symbol: row.symbol,
+    key: `${assetClass}:${String(symbol).toLowerCase()}`,
+    symbol,
     assetClass,
-    referencePrice: row.referencePrice,
-    spreadBps: row.spreadBps,
-    totalVolume: row.totalVolume,
-    volatility: row.volatility,
+    referencePrice,
+    spreadBps,
+    totalVolume,
+    volatility,
+    ...rest,
     providers
   };
 };
@@ -114,7 +151,221 @@ const marketSeeds = [
     { symbol: 'US30Y', referencePrice: 4.46, spreadBps: 2.3, totalVolume: 111000000, volatility: 0.0012 },
     { symbol: 'DE10Y', referencePrice: 2.42, spreadBps: 2.1, totalVolume: 92000000, volatility: 0.0012 },
     { symbol: 'JP10Y', referencePrice: 1.08, spreadBps: 2.4, totalVolume: 87000000, volatility: 0.0015 }
-  ].map((row) => toSeed('rates', row, ratesProviders))
+  ].map((row) => toSeed('rates', row, ratesProviders)),
+  ...[
+    {
+      symbol: 'BTC-PERP',
+      referencePrice: 69105.4,
+      spreadBps: 9.8,
+      totalVolume: 2180000000,
+      volatility: 0.0054,
+      instrumentType: 'future',
+      underlying: 'BTCUSDT',
+      expiry: 'PERP',
+      basisBps: 16.4,
+      fundingRateBps: 1.9,
+      openInterest: 9650000000,
+      openInterestChangePct: 1.4
+    },
+    {
+      symbol: 'ETH-PERP',
+      referencePrice: 3481.2,
+      spreadBps: 10.6,
+      totalVolume: 1730000000,
+      volatility: 0.0061,
+      instrumentType: 'future',
+      underlying: 'ETHUSDT',
+      expiry: 'PERP',
+      basisBps: 13.2,
+      fundingRateBps: 1.4,
+      openInterest: 5420000000,
+      openInterestChangePct: 1.1
+    },
+    {
+      symbol: 'SOL-PERP',
+      referencePrice: 183.1,
+      spreadBps: 12.9,
+      totalVolume: 822000000,
+      volatility: 0.0098,
+      instrumentType: 'future',
+      underlying: 'SOLUSDT',
+      expiry: 'PERP',
+      basisBps: 19.6,
+      fundingRateBps: 2.4,
+      openInterest: 2610000000,
+      openInterestChangePct: 1.7
+    },
+    {
+      symbol: 'ESM26',
+      referencePrice: 5425.25,
+      spreadBps: 2.8,
+      totalVolume: 642000000,
+      volatility: 0.0022,
+      instrumentType: 'future',
+      underlying: 'SPY',
+      expiry: '2026-06-19',
+      basisBps: 6.1,
+      fundingRateBps: 0.3,
+      openInterest: 4280000000,
+      openInterestChangePct: 0.7
+    },
+    {
+      symbol: 'NQM26',
+      referencePrice: 19142.8,
+      spreadBps: 3.3,
+      totalVolume: 528000000,
+      volatility: 0.0028,
+      instrumentType: 'future',
+      underlying: 'QQQ',
+      expiry: '2026-06-19',
+      basisBps: 7.6,
+      fundingRateBps: 0.4,
+      openInterest: 3640000000,
+      openInterestChangePct: 0.9
+    },
+    {
+      symbol: 'CLM26',
+      referencePrice: 82.54,
+      spreadBps: 4.4,
+      totalVolume: 371000000,
+      volatility: 0.0049,
+      instrumentType: 'future',
+      underlying: 'WTIUSD',
+      expiry: '2026-06-20',
+      basisBps: -4.8,
+      fundingRateBps: -0.2,
+      openInterest: 1980000000,
+      openInterestChangePct: 0.6
+    }
+  ].map((row) => toSeed('derivative', row, futuresProviders)),
+  ...[
+    {
+      symbol: 'BTC-30JUN26-70000-C',
+      referencePrice: 5942.6,
+      spreadBps: 21.8,
+      totalVolume: 432000000,
+      volatility: 0.0182,
+      instrumentType: 'option',
+      underlying: 'BTCUSDT',
+      expiry: '2026-06-30',
+      strike: 70000,
+      optionType: 'call',
+      impliedVolPct: 58.4,
+      optionSkewPct: 4.2,
+      putCallRatio: 0.91,
+      openInterest: 1480000000,
+      openInterestChangePct: 2.1,
+      delta: 0.56,
+      gamma: 0.0024,
+      vega: 22.8,
+      theta: -14.2
+    },
+    {
+      symbol: 'BTC-30JUN26-65000-P',
+      referencePrice: 4218.9,
+      spreadBps: 23.4,
+      totalVolume: 388000000,
+      volatility: 0.0174,
+      instrumentType: 'option',
+      underlying: 'BTCUSDT',
+      expiry: '2026-06-30',
+      strike: 65000,
+      optionType: 'put',
+      impliedVolPct: 61.3,
+      optionSkewPct: 5.7,
+      putCallRatio: 1.08,
+      openInterest: 1320000000,
+      openInterestChangePct: 1.8,
+      delta: -0.47,
+      gamma: 0.0021,
+      vega: 20.6,
+      theta: -12.8
+    },
+    {
+      symbol: 'ETH-30JUN26-3600-C',
+      referencePrice: 482.1,
+      spreadBps: 24.8,
+      totalVolume: 314000000,
+      volatility: 0.0197,
+      instrumentType: 'option',
+      underlying: 'ETHUSDT',
+      expiry: '2026-06-30',
+      strike: 3600,
+      optionType: 'call',
+      impliedVolPct: 64.5,
+      optionSkewPct: 6.4,
+      putCallRatio: 0.95,
+      openInterest: 1010000000,
+      openInterestChangePct: 1.6,
+      delta: 0.52,
+      gamma: 0.0031,
+      vega: 11.9,
+      theta: -6.4
+    },
+    {
+      symbol: 'ETH-30JUN26-3200-P',
+      referencePrice: 433.5,
+      spreadBps: 25.2,
+      totalVolume: 286000000,
+      volatility: 0.0191,
+      instrumentType: 'option',
+      underlying: 'ETHUSDT',
+      expiry: '2026-06-30',
+      strike: 3200,
+      optionType: 'put',
+      impliedVolPct: 66.8,
+      optionSkewPct: 7.3,
+      putCallRatio: 1.1,
+      openInterest: 942000000,
+      openInterestChangePct: 1.4,
+      delta: -0.45,
+      gamma: 0.0028,
+      vega: 10.7,
+      theta: -5.8
+    },
+    {
+      symbol: 'SPY-17JUL26-560-C',
+      referencePrice: 18.42,
+      spreadBps: 14.6,
+      totalVolume: 221000000,
+      volatility: 0.0128,
+      instrumentType: 'option',
+      underlying: 'SPY',
+      expiry: '2026-07-17',
+      strike: 560,
+      optionType: 'call',
+      impliedVolPct: 22.7,
+      optionSkewPct: -1.8,
+      putCallRatio: 0.86,
+      openInterest: 622000000,
+      openInterestChangePct: 1.1,
+      delta: 0.49,
+      gamma: 0.0142,
+      vega: 0.68,
+      theta: -0.34
+    },
+    {
+      symbol: 'SPY-17JUL26-530-P',
+      referencePrice: 14.74,
+      spreadBps: 15.1,
+      totalVolume: 206000000,
+      volatility: 0.0123,
+      instrumentType: 'option',
+      underlying: 'SPY',
+      expiry: '2026-07-17',
+      strike: 530,
+      optionType: 'put',
+      impliedVolPct: 24.1,
+      optionSkewPct: 2.3,
+      putCallRatio: 1.07,
+      openInterest: 598000000,
+      openInterestChangePct: 0.9,
+      delta: -0.43,
+      gamma: 0.0128,
+      vega: 0.61,
+      theta: -0.29
+    }
+  ].map((row) => toSeed('derivative', row, optionsProviders))
 ];
 
 const fallbackProviderCatalog = (() => {
@@ -167,6 +418,51 @@ export const buildLocalFallbackSnapshot = (previousSnapshot) => {
     const providers = seed.providers.map((provider) => buildProviderQuote({ provider, referencePrice, spreadBps, now }));
     const prevAnchor = toNum(previous?.referencePrice, seed.referencePrice);
     const changePct = ((referencePrice - prevAnchor) / Math.max(prevAnchor, 0.0000001)) * 100;
+    const instrumentType = String(seed?.instrumentType || '').toLowerCase();
+
+    const previousOpenInterest = Math.max(toNum(previous?.openInterest, seed?.openInterest), 1);
+    const openInterest = instrumentType
+      ? Math.max(previousOpenInterest * (1 + randomBetween(-0.012, 0.016)), 1)
+      : undefined;
+    const openInterestChangePct = instrumentType ? ((openInterest - previousOpenInterest) / Math.max(previousOpenInterest, 1e-9)) * 100 : undefined;
+    const basisBps =
+      instrumentType === 'future'
+        ? clamp(toNum(previous?.basisBps, toNum(seed?.basisBps, 0)) + randomBetween(-2.4, 2.4) + changePct * 0.06, -180, 180)
+        : undefined;
+    const fundingRateBps =
+      instrumentType === 'future' && String(seed?.expiry || '').toUpperCase() === 'PERP'
+        ? clamp(toNum(previous?.fundingRateBps, toNum(seed?.fundingRateBps, 0)) + randomBetween(-0.55, 0.55), -12, 12)
+        : instrumentType === 'future'
+          ? clamp(toNum(previous?.fundingRateBps, toNum(seed?.fundingRateBps, 0)) + randomBetween(-0.12, 0.12), -2.5, 2.5)
+          : undefined;
+    const impliedVolPct =
+      instrumentType === 'option'
+        ? clamp(toNum(previous?.impliedVolPct, toNum(seed?.impliedVolPct, 35)) + randomBetween(-1.4, 1.4) + Math.abs(changePct) * 0.22, 8, 220)
+        : undefined;
+    const optionSkewPct =
+      instrumentType === 'option'
+        ? clamp(toNum(previous?.optionSkewPct, toNum(seed?.optionSkewPct, 0)) + randomBetween(-0.55, 0.55), -28, 28)
+        : undefined;
+    const putCallRatio =
+      instrumentType === 'option'
+        ? clamp(toNum(previous?.putCallRatio, toNum(seed?.putCallRatio, 1)) + randomBetween(-0.06, 0.06), 0.2, 2.8)
+        : undefined;
+    const delta =
+      instrumentType === 'option'
+        ? clamp(toNum(previous?.delta, toNum(seed?.delta, 0.4)) + randomBetween(-0.03, 0.03), -0.99, 0.99)
+        : undefined;
+    const gamma =
+      instrumentType === 'option'
+        ? clamp(toNum(previous?.gamma, toNum(seed?.gamma, 0.002)) + randomBetween(-0.00025, 0.00025), 0.00001, 0.4)
+        : undefined;
+    const vega =
+      instrumentType === 'option'
+        ? clamp(toNum(previous?.vega, toNum(seed?.vega, 1)) + randomBetween(-0.2, 0.2), 0.01, 600)
+        : undefined;
+    const theta =
+      instrumentType === 'option'
+        ? clamp(toNum(previous?.theta, toNum(seed?.theta, -0.2)) + randomBetween(-0.08, 0.08), -500, 100)
+        : undefined;
 
     return {
       key: seed.key,
@@ -179,6 +475,22 @@ export const buildLocalFallbackSnapshot = (previousSnapshot) => {
       providerCount: providers.length,
       venueCount: new Set(providers.map((provider) => provider.venue)).size,
       providers,
+      instrumentType: seed.instrumentType,
+      underlying: seed.underlying,
+      expiry: seed.expiry,
+      strike: seed.strike,
+      optionType: seed.optionType,
+      basisBps,
+      fundingRateBps,
+      openInterest,
+      openInterestChangePct,
+      impliedVolPct,
+      optionSkewPct,
+      putCallRatio,
+      delta,
+      gamma,
+      vega,
+      theta,
       updatedAt: now
     };
   });

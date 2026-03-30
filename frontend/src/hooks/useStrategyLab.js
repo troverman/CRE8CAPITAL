@@ -8,6 +8,7 @@ import {
   STRATEGY_OPTIONS,
   toNum
 } from '../lib/strategyEngine';
+import { selectActiveWalletAccount } from '../lib/strategyLabSelectors';
 import useSocketProviders from './useSocketProviders';
 import { useStrategyLabStore } from '../store/strategyLabStore';
 
@@ -349,6 +350,12 @@ export default function useStrategyLab({ snapshot, historyByMarket }) {
     resetRuntime({ price: basePrice, preserveBacktest: true });
   }, [basePrice, resetRuntime]);
 
+  const activeExecutionAccount = useMemo(() => {
+    return selectActiveWalletAccount(walletAccounts, activeWalletAccountId);
+  }, [activeWalletAccountId, walletAccounts]);
+
+  const activeExecutionWallet = activeExecutionAccount?.wallet || wallet;
+
   return {
     markets,
     selectedMarket,
@@ -364,8 +371,10 @@ export default function useStrategyLab({ snapshot, historyByMarket }) {
     runtimeSeries,
     runtimeEquity,
     wallet,
+    activeExecutionWallet,
     walletAccounts,
     activeWalletAccountId,
+    activeExecutionAccount,
     eventLog,
     tradeLog,
     backtest,

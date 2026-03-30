@@ -633,6 +633,695 @@ const buildPriceMapByKey = (markets = []) => {
   return map;
 };
 
+const QUOTE_HINTS = [
+  'USDT',
+  'USDC',
+  'BUSD',
+  'DAI',
+  'USDP',
+  'TUSD',
+  'FDUSD',
+  'USD',
+  'BTC',
+  'ETH',
+  'EUR',
+  'JPY',
+  'GBP',
+  'AUD',
+  'CAD',
+  'CHF',
+  'TRY',
+  'BRL',
+  'MXN',
+  'SGD',
+  'HKD',
+  'KRW',
+  'CNH'
+];
+
+const STABLE_QUOTE_SET = new Set(['USDT', 'USDC', 'BUSD', 'DAI', 'USDP', 'TUSD', 'FDUSD', 'USD']);
+
+const splitSymbolToAssets = (symbol) => {
+  const raw = String(symbol || '')
+    .trim()
+    .toUpperCase();
+  if (!raw) return { base: 'UNK', quote: 'USD' };
+
+  const separators = ['/', '-', '_', ':'];
+  for (const separator of separators) {
+    if (!raw.includes(separator)) continue;
+    const parts = raw.split(separator).filter(Boolean);
+    if (parts.length >= 2) {
+      return {
+        base: parts[0],
+        quote: parts[1]
+      };
+    }
+  }
+
+  for (const quote of QUOTE_HINTS) {
+    if (raw.endsWith(quote) && raw.length > quote.length + 1) {
+      return {
+        base: raw.slice(0, raw.length - quote.length),
+        quote
+      };
+    }
+  }
+
+  return {
+    base: raw,
+    quote: 'USD'
+  };
+};
+
+const computeSeriesReturnPct = (series = [], lookback = 16) => {
+  if (!Array.isArray(series) || series.length < 2) return 0;
+  const safeLookback = clamp(Math.round(toNum(lookback, 16)), 1, series.length - 1);
+  const last = toNum(series[series.length - 1]?.price, NaN);
+  const anchor = toNum(series[series.length - 1 - safeLookback]?.price, NaN);
+  if (!Number.isFinite(last) || !Number.isFinite(anchor) || anchor <= 0) return 0;
+  return ((last - anchor) / anchor) * 100;
+};
+
+const computeSeriesVolatilityPct = (series = [], lookback = 28) => {
+  if (!Array.isArray(series) || series.length < 3) return 0;
+  const safeLookback = clamp(Math.round(toNum(lookback, 28)), 2, series.length - 1);
+  const start = series.length - 1 - safeLookback;
+  const returns = [];
+  for (let index = Math.max(start + 1, 1); index < series.length; index += 1) {
+    const current = toNum(series[index]?.price, NaN);
+    const previous = toNum(series[index - 1]?.price, NaN);
+    if (!Number.isFinite(current) || !Number.isFinite(previous) || previous <= 0) continue;
+    returns.push(((current - previous) / previous) * 100);
+  }
+  if (returns.length < 2) return 0;
+  const mean = returns.reduce((sum, value) => sum + value, 0) / returns.length;
+  const variance = returns.reduce((sum, value) => sum + (value - mean) ** 2, 0) / returns.length;
+  return Math.sqrt(Math.max(variance, 0));
+};
+
+export const buildMarketTensorSnapshot = ({ markets = [], historyByMarket = {}, now = Date.now(), limit = 160 } = {}) => {
+  const watchedMarkets = rankedMarkets(markets, Math.max(12, Math.min(220, Math.round(toNum(limit, 160)))));
+  if (!watchedMarkets.length) {
+    return {
+      timestamp: now,
+      markets: [],
+      nodes: [],
+      edges: [],
+      metrics: {
+        marketCount: 0,
+        nodeCount: 0,
+        edgeCount: 0,
+        totalVolume: 0,
+        averageSpreadBps: 0,
+        tensorDriftPct: 0,
+        breadth: 0,
+        stress: 0,
+        positiveCount: 0,
+        negativeCount: 0,
+        centralAsset: '-',
+        centrality: 0
+      }
+    };
+  }
+
+  const nodeMap = new Map();
+  const edgeRows = [];
+  const marketRows = [];
+
+  const ensureNode = (asset) => {
+    const safeAsset = String(asset || 'UNK').toUpperCase();
+    if (!nodeMap.has(safeAsset)) {
+      nodeMap.set(safeAsset, {
+        asset: safeAsset,
+        degree: 0,
+        edgeWeight: 0,
+        volume: 0,
+        tensor: 0
+      });
+    }
+    return nodeMap.get(safeAsset);
+  };
+
+  let totalVolume = 0;
+  let spreadWeighted = 0;
+  let driftWeighted = 0;
+  let weightSum = 0;
+  let positiveCount = 0;
+  let negativeCount = 0;
+
+  for (const market of watchedMarkets) {
+    const selected = chooseSeriesForMarket({
+      market,
+      historyByMarket,
+      now,
+      minPoints: 36,
+      maxPoints: 220
+    });
+    const series = selected.series || [];
+
+    const changePct = toNum(market?.changePct, 0);
+    const trendFastPct = computeSeriesReturnPct(series, 6);
+    const trendSlowPct = computeSeriesReturnPct(series, 24);
+    const momentumPct = changePct * 0.48 + trendFastPct * 0.22 + trendSlowPct * 0.3;
+    const seriesVolatilityPct = computeSeriesVolatilityPct(series, 28);
+    const spreadBps = clamp(toNum(market?.spreadBps, 8), 0.1, 260);
+    const totalVolumeMarket = Math.max(toNum(market?.totalVolume, 1), 1);
+    const liquidityLog = Math.log1p(totalVolumeMarket);
+    const confidence = clamp((liquidityLog / 22) * 0.62 + (1 / (1 + spreadBps / 18)) * 0.38, 0, 1);
+    const frictionPenalty = 1 + spreadBps / 28;
+    const baseTensor = (momentumPct / frictionPenalty) * (0.1 + liquidityLog / 26);
+    const volatilityPenalty = 1 / (1 + seriesVolatilityPct / 4.2);
+    const tensorScore = clamp(baseTensor * (0.68 + volatilityPenalty * 0.32), -4.2, 4.2);
+    const weight = Math.max(0.001, liquidityLog * (0.35 + confidence * 0.65));
+
+    const { base, quote } = splitSymbolToAssets(market?.symbol);
+    const baseNode = ensureNode(base);
+    const quoteNode = ensureNode(quote);
+
+    const edgeWeight = Math.sqrt(totalVolumeMarket) * (0.2 + confidence * 0.8);
+    baseNode.degree += 1;
+    quoteNode.degree += 1;
+    baseNode.edgeWeight += edgeWeight;
+    quoteNode.edgeWeight += edgeWeight;
+    baseNode.volume += totalVolumeMarket;
+    quoteNode.volume += totalVolumeMarket * 0.75;
+    baseNode.tensor += tensorScore * confidence;
+    quoteNode.tensor -= tensorScore * confidence * 0.82;
+
+    edgeRows.push({
+      id: `edge:${market.key}:${base}:${quote}`,
+      key: market.key,
+      symbol: market.symbol,
+      assetClass: market.assetClass,
+      from: base,
+      to: quote,
+      weight: edgeWeight,
+      confidence,
+      tensorScore,
+      momentumPct
+    });
+
+    marketRows.push({
+      key: market.key,
+      symbol: market.symbol,
+      assetClass: market.assetClass,
+      baseAsset: base,
+      quoteAsset: quote,
+      source: selected.source,
+      historySamples: selected.sampleCount,
+      referencePrice: toNum(market.referencePrice, toNum(series[series.length - 1]?.price, 0)),
+      spreadBps,
+      totalVolume: totalVolumeMarket,
+      changePct,
+      momentumPct,
+      volatilityPct: seriesVolatilityPct,
+      confidence,
+      tensorScore,
+      connectionScore: 0,
+      weight
+    });
+
+    totalVolume += totalVolumeMarket;
+    spreadWeighted += spreadBps * weight;
+    driftWeighted += momentumPct * weight;
+    weightSum += weight;
+    if (tensorScore > 0.00001) positiveCount += 1;
+    else if (tensorScore < -0.00001) negativeCount += 1;
+  }
+
+  const btcNode = ensureNode('BTC');
+  if (btcNode && btcNode.degree > 0) {
+    for (const row of marketRows) {
+      if (String(row.assetClass || '').toLowerCase() !== 'crypto') continue;
+      if (row.baseAsset === 'BTC') continue;
+      if (!STABLE_QUOTE_SET.has(row.quoteAsset)) continue;
+      const syntheticWeight = row.weight * 0.26;
+      const syntheticEdgeWeight = Math.sqrt(Math.max(row.totalVolume, 1)) * 0.16;
+
+      const baseNode = ensureNode(row.baseAsset);
+      baseNode.degree += 0.34;
+      baseNode.edgeWeight += syntheticEdgeWeight;
+      baseNode.tensor += row.tensorScore * 0.08;
+
+      btcNode.degree += 0.34;
+      btcNode.edgeWeight += syntheticEdgeWeight;
+      btcNode.tensor += row.tensorScore * 0.13;
+
+      row.connectionScore += syntheticWeight / 10;
+
+      edgeRows.push({
+        id: `edge:anchor-btc:${row.key}:${row.baseAsset}`,
+        key: row.key,
+        symbol: row.symbol,
+        assetClass: row.assetClass,
+        from: row.baseAsset,
+        to: 'BTC',
+        weight: syntheticEdgeWeight,
+        confidence: clamp(row.confidence * 0.82, 0, 1),
+        tensorScore: row.tensorScore * 0.5,
+        momentumPct: row.momentumPct,
+        synthetic: true
+      });
+    }
+  }
+
+  const nodes = [...nodeMap.values()]
+    .map((node) => {
+      const centrality = node.degree * 0.6 + Math.log1p(node.edgeWeight) * 1.7 + Math.sqrt(Math.max(node.volume, 0)) / 8200;
+      const pressure = node.tensor / Math.max(node.degree, 1e-9);
+      return {
+        ...node,
+        centrality,
+        pressure
+      };
+    })
+    .sort((a, b) => b.centrality - a.centrality);
+
+  const nodeByAsset = new Map(nodes.map((node) => [node.asset, node]));
+  for (const row of marketRows) {
+    const baseNode = nodeByAsset.get(row.baseAsset);
+    const quoteNode = nodeByAsset.get(row.quoteAsset);
+    const baseCentrality = toNum(baseNode?.centrality, 0);
+    const quoteCentrality = toNum(quoteNode?.centrality, 0);
+    row.connectionScore += (baseCentrality + quoteCentrality) / 16;
+  }
+
+  const sortedMarkets = marketRows
+    .map((row) => ({
+      ...row,
+      compositeScore: row.tensorScore * 1.1 + row.connectionScore * 0.9 + row.momentumPct * 0.08
+    }))
+    .sort((a, b) => b.compositeScore - a.compositeScore);
+
+  const tensorDriftPct = driftWeighted / Math.max(weightSum, 1e-9);
+  const averageSpreadBps = spreadWeighted / Math.max(weightSum, 1e-9);
+  const breadth = (positiveCount - negativeCount) / Math.max(positiveCount + negativeCount, 1);
+  const stress = clamp(averageSpreadBps / 24 + Math.abs(breadth) * 0.28 + Math.abs(tensorDriftPct) * 0.08, 0, 3.6);
+  const centralNode = nodes[0] || null;
+
+  return {
+    timestamp: now,
+    markets: sortedMarkets,
+    nodes,
+    edges: edgeRows.sort((a, b) => b.weight - a.weight),
+    metrics: {
+      marketCount: sortedMarkets.length,
+      nodeCount: nodes.length,
+      edgeCount: edgeRows.length,
+      totalVolume,
+      averageSpreadBps,
+      tensorDriftPct,
+      breadth,
+      stress,
+      positiveCount,
+      negativeCount,
+      centralAsset: centralNode?.asset || '-',
+      centrality: toNum(centralNode?.centrality, 0)
+    }
+  };
+};
+
+const buildMarketBookProfile = ({ market = null, tensorRow = null, bandOffsets = [] }) => {
+  const spreadBps = clamp(toNum(market?.spreadBps, toNum(tensorRow?.spreadBps, 8)), 0.2, 280);
+  const totalVolume = Math.max(toNum(market?.totalVolume, toNum(tensorRow?.totalVolume, 1)), 1);
+  const providerRows = Array.isArray(market?.providers) ? market.providers : [];
+
+  let bidLiquidity = 0;
+  let askLiquidity = 0;
+  let l1SpreadBps = spreadBps;
+  let l1Count = 0;
+  const referencePrice = Math.max(toNum(market?.referencePrice, toNum(tensorRow?.referencePrice, 1)), 1e-9);
+
+  for (const provider of providerRows) {
+    const bid = toNum(provider?.bid, NaN);
+    const ask = toNum(provider?.ask, NaN);
+    const volume = Math.max(toNum(provider?.volume, 0), 0);
+    if (Number.isFinite(bid) && bid > 0) bidLiquidity += volume > 0 ? volume : referencePrice * 10;
+    if (Number.isFinite(ask) && ask > 0) askLiquidity += volume > 0 ? volume : referencePrice * 10;
+    if (Number.isFinite(bid) && Number.isFinite(ask) && ask > bid && referencePrice > 0) {
+      l1SpreadBps += ((ask - bid) / referencePrice) * 10000;
+      l1Count += 1;
+    }
+  }
+
+  if (l1Count > 0) {
+    l1SpreadBps /= l1Count + 1;
+  }
+
+  let imbalance;
+  if (bidLiquidity + askLiquidity > 0.000001) {
+    imbalance = (bidLiquidity - askLiquidity) / (bidLiquidity + askLiquidity);
+  } else {
+    const momentum = toNum(tensorRow?.momentumPct, toNum(market?.changePct, 0));
+    imbalance = clamp(momentum / 5.5, -0.86, 0.86);
+  }
+
+  const sigma = clamp(1.15 + l1SpreadBps / 12, 0.95, 4.8);
+  const depthScale = clamp(Math.log1p(totalVolume) / 20, 0.2, 1.9);
+  const cells = [];
+  let bidPressure = 0;
+  let askPressure = 0;
+
+  for (const offset of bandOffsets) {
+    const side = offset <= 0 ? 1 : -1;
+    const distance = Math.abs(offset);
+    const core = Math.exp(-(distance * distance) / (2 * sigma * sigma));
+    const slope = Math.max(0.18, 1 - distance / Math.max(Math.abs(bandOffsets[0] || 1), 1));
+    const skew = 1 + side * imbalance * 0.52;
+    const signedPressure = core * depthScale * slope * skew * side;
+    cells.push(signedPressure);
+    if (offset <= 0) bidPressure += Math.max(0, signedPressure);
+    if (offset > 0) askPressure += Math.max(0, -signedPressure);
+  }
+
+  const microShiftBps = clamp(imbalance * Math.max(1.2, spreadBps * 0.7), -38, 38);
+
+  return {
+    cells,
+    bidPressure,
+    askPressure,
+    imbalance,
+    microShiftBps,
+    spreadBps: l1SpreadBps,
+    hasProviderBook: providerRows.length > 0
+  };
+};
+
+export const buildMarketImageSnapshot = ({ markets = [], tensorSnapshot = null, depthBands = 13 } = {}) => {
+  const watched = rankedMarkets(markets, 96);
+  const safeBands = clamp(Math.round(toNum(depthBands, 13)), 5, 29);
+  const half = Math.floor(safeBands / 2);
+  const bandOffsets = [];
+  for (let offset = -half; offset <= half; offset += 1) {
+    bandOffsets.push(offset);
+  }
+  if (!bandOffsets.includes(0)) bandOffsets.splice(Math.floor(bandOffsets.length / 2), 0, 0);
+
+  const tensorByKey = new Map((tensorSnapshot?.markets || []).map((row) => [row.key, row]));
+  const rows = [];
+  const aggregate = new Array(bandOffsets.length).fill(0);
+  let aggregateWeight = 0;
+  let aggregateBid = 0;
+  let aggregateAsk = 0;
+  let providerBackedCount = 0;
+
+  for (const market of watched) {
+    const tensorRow = tensorByKey.get(market.key) || null;
+    const profile = buildMarketBookProfile({
+      market,
+      tensorRow,
+      bandOffsets
+    });
+    const weight = Math.max(0.001, Math.log1p(Math.max(toNum(market?.totalVolume, 1), 1)));
+    aggregateWeight += weight;
+    aggregateBid += profile.bidPressure * weight;
+    aggregateAsk += profile.askPressure * weight;
+    if (profile.hasProviderBook) providerBackedCount += 1;
+    for (let index = 0; index < profile.cells.length; index += 1) {
+      aggregate[index] += profile.cells[index] * weight;
+    }
+
+    rows.push({
+      key: market.key,
+      symbol: market.symbol,
+      assetClass: market.assetClass,
+      referencePrice: toNum(market.referencePrice, 0),
+      totalVolume: Math.max(toNum(market.totalVolume, 1), 1),
+      spreadBps: profile.spreadBps,
+      bidPressure: profile.bidPressure,
+      askPressure: profile.askPressure,
+      imbalance: profile.imbalance,
+      microShiftBps: profile.microShiftBps,
+      cells: profile.cells
+    });
+  }
+
+  const aggregateCells = aggregate.map((value) => value / Math.max(aggregateWeight, 1e-9));
+  const aggregateImbalance = aggregateBid + aggregateAsk > 1e-9 ? (aggregateBid - aggregateAsk) / (aggregateBid + aggregateAsk) : 0;
+  const maxAbsCell = rows.reduce((maxValue, row) => {
+    const rowMax = row.cells.reduce((innerMax, value) => Math.max(innerMax, Math.abs(toNum(value, 0))), 0);
+    return Math.max(maxValue, rowMax);
+  }, aggregateCells.reduce((maxValue, value) => Math.max(maxValue, Math.abs(toNum(value, 0))), 0));
+
+  return {
+    timestamp: tensorSnapshot?.timestamp || Date.now(),
+    bands: bandOffsets.map((offset) => offset * 5),
+    rows: rows.sort((a, b) => Math.abs(b.imbalance) * b.totalVolume - Math.abs(a.imbalance) * a.totalVolume),
+    aggregate: {
+      cells: aggregateCells,
+      bidPressure: aggregateBid / Math.max(aggregateWeight, 1e-9),
+      askPressure: aggregateAsk / Math.max(aggregateWeight, 1e-9),
+      imbalance: aggregateImbalance
+    },
+    metrics: {
+      rowCount: rows.length,
+      bandCount: bandOffsets.length,
+      providerCoveragePct: rows.length > 0 ? (providerBackedCount / rows.length) * 100 : 0,
+      maxAbsCell,
+      bookEnergy: aggregateCells.reduce((sum, value) => sum + Math.abs(toNum(value, 0)), 0)
+    }
+  };
+};
+
+export const buildTensorPdfFromHistory = ({
+  tensorHistory = [],
+  buckets = [],
+  horizons = PDF_HORIZONS,
+  horizon = 3,
+  marketImage = null,
+  tensorSnapshot = null
+} = {}) => {
+  const safeBuckets = Array.isArray(buckets) ? buckets : [];
+  if (!safeBuckets.length) {
+    return {
+      horizons: [],
+      buckets: [],
+      horizon: Math.max(1, Math.round(toNum(horizon, 3))),
+      column: [],
+      summary: summarizeProbabilityColumn({ column: [], buckets: [] }),
+      recommendation: recommendPdfAction({ summary: { upProb: 0, downProb: 0, expectedMovePct: 0, skew: 0, confidencePct: 0 } }),
+      sampleCount: 0,
+      aggregateImbalance: 0,
+      driftNow: 0,
+      stressNow: 0,
+      centerPct: 0,
+      sigmaPct: 1
+    };
+  }
+
+  const safeHistory = [...(Array.isArray(tensorHistory) ? tensorHistory : [])]
+    .map((row) => ({
+      timestamp: toNum(row?.timestamp, Date.now()),
+      tensorDriftPct: toNum(row?.tensorDriftPct, 0),
+      breadth: toNum(row?.breadth, 0),
+      stress: Math.max(0, toNum(row?.stress, 0)),
+      imageImbalance: clamp(toNum(row?.imageImbalance, 0), -1, 1)
+    }))
+    .sort((a, b) => a.timestamp - b.timestamp)
+    .slice(-820);
+
+  const aggregateImbalance = clamp(toNum(marketImage?.aggregate?.imbalance, 0), -1, 1);
+  const driftNow = toNum(tensorSnapshot?.metrics?.tensorDriftPct, safeHistory[safeHistory.length - 1]?.tensorDriftPct);
+  const stressNow = Math.max(0, toNum(tensorSnapshot?.metrics?.stress, safeHistory[safeHistory.length - 1]?.stress));
+  const centerPct = clamp(driftNow * 0.42 + aggregateImbalance * 0.72, -3.4, 3.4);
+  const sigmaPct = clamp(0.58 + stressNow * 0.32, 0.24, 3.6);
+
+  if (safeHistory.length < 10) {
+    const gaussian = buildGaussianColumn({
+      buckets: safeBuckets,
+      centerPct,
+      sigmaPct
+    });
+    const summary = summarizeProbabilityColumn({
+      column: gaussian,
+      buckets: safeBuckets
+    });
+    return {
+      horizons: [...horizons],
+      buckets: safeBuckets,
+      horizon: Math.max(1, Math.round(toNum(horizon, 3))),
+      column: gaussian,
+      summary,
+      recommendation: recommendPdfAction({
+        summary,
+        upThreshold: 0.54,
+        downThreshold: 0.54,
+        minExpectedMovePct: 0.028,
+        minSkew: 0.05
+      }),
+      sampleCount: safeHistory.length,
+      aggregateImbalance,
+      driftNow,
+      stressNow,
+      centerPct,
+      sigmaPct
+    };
+  }
+
+  let level = 100;
+  const series = safeHistory.map((row) => {
+    const movePct = clamp(row.tensorDriftPct * 0.34 + row.breadth * 0.58 + row.imageImbalance * 0.42, -2.8, 2.8);
+    level = Math.max(20, level * (1 + movePct / 100));
+    return {
+      t: row.timestamp,
+      price: level,
+      spread: row.stress * 12,
+      volume: 1
+    };
+  });
+
+  const probability = buildProbabilityColumns({
+    series,
+    horizons,
+    buckets: safeBuckets,
+    halfLife: Math.max(20, Math.round(series.length * 0.45))
+  });
+  const horizonIndex = findNearestHorizonIndex(probability.horizons, horizon);
+  const baseColumn = horizonIndex >= 0 ? normalizeColumn(probability.columns[horizonIndex]) : [];
+  const overlay = buildGaussianColumn({
+    buckets: probability.buckets.length ? probability.buckets : safeBuckets,
+    centerPct,
+    sigmaPct
+  });
+  const composite = normalizeColumn(
+    (baseColumn.length ? baseColumn : overlay).map((value, index) => value * 0.66 + toNum(overlay[index], 0) * 0.34)
+  );
+  const activeBuckets = probability.buckets.length ? probability.buckets : safeBuckets;
+  const summary = summarizeProbabilityColumn({
+    column: composite,
+    buckets: activeBuckets
+  });
+
+  return {
+    horizons: probability.horizons,
+    buckets: activeBuckets,
+    horizon: horizonIndex >= 0 ? probability.horizons[horizonIndex] : Math.max(1, Math.round(toNum(horizon, 3))),
+    column: composite,
+    summary,
+    recommendation: recommendPdfAction({
+      summary,
+      upThreshold: 0.54,
+      downThreshold: 0.54,
+      minExpectedMovePct: 0.028,
+      minSkew: 0.05
+    }),
+    sampleCount: series.length,
+    aggregateImbalance,
+    driftNow,
+    stressNow,
+    centerPct,
+    sigmaPct
+  };
+};
+
+export const rankMarketsByTensorPdf = ({ baseRankings = [], tensorSnapshot = null, marketImage = null, tensorPdf = null } = {}) => {
+  const baseRows = Array.isArray(baseRankings) ? baseRankings : [];
+  if (!baseRows.length) return [];
+
+  const tensorByKey = new Map((tensorSnapshot?.markets || []).map((row) => [row.key, row]));
+  const imageByKey = new Map((marketImage?.rows || []).map((row) => [row.key, row]));
+  const globalSkew = toNum(tensorPdf?.summary?.skew, 0);
+  const globalMove = toNum(tensorPdf?.summary?.expectedMovePct, 0);
+  const globalConfidence = clamp(toNum(tensorPdf?.summary?.confidencePct, 0) / 100, 0, 1);
+  const aggregateImbalance = clamp(toNum(marketImage?.aggregate?.imbalance, 0), -1, 1);
+  const regime = clamp(globalSkew * 0.86 + globalMove * 0.24 + aggregateImbalance * 0.52, -2.8, 2.8);
+
+  return baseRows
+    .map((row, index) => {
+      const tensorRow = tensorByKey.get(row.key);
+      const imageRow = imageByKey.get(row.key);
+
+      const tensorScore = toNum(tensorRow?.tensorScore, 0);
+      const connectionScore = toNum(tensorRow?.connectionScore, 0);
+      const imageImbalance = clamp(toNum(imageRow?.imbalance, 0), -1, 1);
+      const microShiftBps = toNum(imageRow?.microShiftBps, 0);
+
+      let upProb =
+        toNum(row.upProb, 0.5) +
+        Math.max(0, regime) * 0.06 +
+        Math.max(0, tensorScore) * 0.04 +
+        Math.max(0, imageImbalance) * 0.05 +
+        globalConfidence * 0.02;
+      let downProb =
+        toNum(row.downProb, 0.5) +
+        Math.max(0, -regime) * 0.06 +
+        Math.max(0, -tensorScore) * 0.04 +
+        Math.max(0, -imageImbalance) * 0.05 +
+        globalConfidence * 0.02;
+
+      upProb = clamp(upProb, 0.01, 0.98);
+      downProb = clamp(downProb, 0.01, 0.98);
+      const pairProb = upProb + downProb;
+      if (pairProb > 0.97) {
+        const scale = 0.97 / pairProb;
+        upProb *= scale;
+        downProb *= scale;
+      }
+
+      const flatProb = Math.max(0.001, 1 - upProb - downProb);
+      const skew = upProb - downProb;
+      const expectedMovePct =
+        toNum(row.expectedMovePct, 0) + globalMove * 0.32 + tensorScore * 0.26 + imageImbalance * 0.92 + microShiftBps / 118;
+      const confidencePct = clamp(
+        toNum(row.confidencePct, 0) * 0.62 +
+          Math.abs(skew) * 34 +
+          globalConfidence * 21 +
+          Math.abs(tensorScore) * 8 +
+          Math.abs(imageImbalance) * 10,
+        0,
+        99
+      );
+
+      const summary = {
+        upProb,
+        downProb,
+        flatProb,
+        expectedMovePct,
+        volatilityPct: toNum(row.volatilityPct, 0),
+        skew,
+        confidencePct
+      };
+      const recommendation = recommendPdfAction({
+        summary,
+        upThreshold: 0.54,
+        downThreshold: 0.54,
+        minExpectedMovePct: 0.028,
+        minSkew: 0.05
+      });
+
+      const upScore =
+        toNum(row.upScore, 0) +
+        tensorScore * 14 +
+        connectionScore * 10 +
+        imageImbalance * 18 +
+        regime * 10 +
+        expectedMovePct * 4 +
+        (confidencePct - toNum(row.confidencePct, 0)) * 0.12;
+
+      return {
+        ...row,
+        rank: index + 1,
+        source: `${row.source || 'pdf'}+tensor`,
+        tensorScore,
+        connectionScore,
+        imageImbalance,
+        microShiftBps,
+        tensorRegime: regime,
+        upProb,
+        downProb,
+        flatProb,
+        expectedMovePct,
+        skew,
+        confidencePct,
+        recommendation,
+        baseUpScore: toNum(row.upScore, 0),
+        upScore
+      };
+    })
+    .sort((a, b) => b.upScore - a.upScore);
+};
+
 export const createPdfPortfolioState = ({ startCash = 100000 } = {}) => {
   const cash = Math.max(100, toNum(startCash, 100000));
   return {

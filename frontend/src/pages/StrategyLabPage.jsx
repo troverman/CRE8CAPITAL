@@ -1,13 +1,33 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import FlashList from '../components/FlashList';
 import GlowCard from '../components/GlowCard';
 import LineChart from '../components/LineChart';
+import WalletAccountSelectField from '../components/WalletAccountSelectField';
 import useStrategyLab from '../hooks/useStrategyLab';
 import { fmtInt, fmtNum, fmtPct, fmtTime } from '../lib/format';
 import { buildClassicAnalysis } from '../lib/indicators';
-import { buildPdfBuckets, createPdfPortfolioState, markPdfPortfolio, PDF_HORIZONS, rankMarketsByPdf, simulatePdfPortfolioCycle } from '../lib/probabilityLab';
+import {
+  buildMarketImageSnapshot,
+  buildMarketTensorSnapshot,
+  buildPdfBuckets,
+  buildTensorPdfFromHistory,
+  createPdfPortfolioState,
+  markPdfPortfolio,
+  PDF_HORIZONS,
+  rankMarketsByPdf,
+  rankMarketsByTensorPdf,
+  simulatePdfPortfolioCycle
+} from '../lib/probabilityLab';
 import { Link } from '../lib/router';
+import { buildStrategyLabSelectionModel } from '../lib/strategyLabSelectors';
 import { useExecutionFeedStore } from '../store/executionFeedStore';
+
+const clamp = (value, min, max) => Math.min(max, Math.max(min, value));
+
+const toNum = (value, fallback = 0) => {
+  const num = Number(value);
+  return Number.isFinite(num) ? num : fallback;
+};
 
 const toneClass = (value) => {
   const num = Number(value);
@@ -19,6 +39,29 @@ const actionClass = (action) => {
   if (action === 'accumulate' || action === 'buy') return 'up';
   if (action === 'reduce' || action === 'sell') return 'down';
   return '';
+};
+
+const buildMarketImageCellStyle = (value, maxAbs) => {
+  const safeMax = Math.max(toNum(maxAbs, 0), 0.00001);
+  const signed = toNum(value, 0);
+  const intensity = clamp(Math.abs(signed) / safeMax, 0, 1);
+  const hue = signed >= 0 ? 156 : 352;
+  const sat = 48 + intensity * 36;
+  const lightA = 8 + intensity * 22;
+  const lightB = 6 + intensity * 10;
+  const alphaA = 0.22 + intensity * 0.62;
+  const borderAlpha = 0.16 + intensity * 0.58;
+
+  return {
+    background: `linear-gradient(160deg, hsla(${hue}, ${sat}%, ${lightA}%, ${alphaA}), hsla(${hue}, ${Math.max(24, sat - 16)}%, ${lightB}%, 0.9))`,
+    borderColor: `hsla(${hue}, 82%, 72%, ${borderAlpha})`
+  };
+};
+
+const fmtSigned = (value, digits = 2) => {
+  const num = Number(value);
+  if (!Number.isFinite(num)) return '-';
+  return `${num > 0 ? '+' : ''}${num.toFixed(digits)}`;
 };
 
 const findNearestPointIndexByTime = (rows, targetTime) => {
@@ -79,7 +122,8 @@ export default function StrategyLabPage({ snapshot, historyByMarket }) {
     cooldownMs,
     runtimeSeries,
     runtimeEquity,
-    wallet,
+    activeExecutionWallet,
+    activeExecutionAccount,
     walletAccounts,
     activeWalletAccountId,
     eventLog,
@@ -166,92 +210,49 @@ export default function StrategyLabPage({ snapshot, historyByMarket }) {
   const [solverHorizon, setSolverHorizon] = useState(3);
   const [solverMinConfidence, setSolverMinConfidence] = useState(45);
   const [solverFeeBps, setSolverFeeBps] = useState(8);
+  const [solverMode, setSolverMode] = useState('tensor');
   const [solverAuto, setSolverAuto] = useState(false);
   const [solverPortfolio, setSolverPortfolio] = useState(() => createPdfPortfolioState({ startCash: 100000 }));
   const [solverOrderLog, setSolverOrderLog] = useState([]);
+  const [tensorHistory, setTensorHistory] = useState([]);
   const [labView, setLabView] = useState('overview');
   const [drilldownAccountId, setDrilldownAccountId] = useState('');
+  const tensorHistoryRef = useRef('');
 
-  const activeAccount = useMemo(() => {
-    return walletAccounts.find((account) => account.id === activeWalletAccountId) || walletAccounts[0] || null;
-  }, [activeWalletAccountId, walletAccounts]);
+  const selectionModel = useMemo(() => {
+    return buildStrategyLabSelectionModel({
+      walletAccounts,
+      activeWalletAccountId,
+      requestedDrilldownAccountId: drilldownAccountId,
+      strategyOptions,
+      strategyId,
+      tradeLog,
+      txEvents,
+      positionEvents
+    });
+  }, [activeWalletAccountId, drilldownAccountId, positionEvents, strategyId, strategyOptions, tradeLog, txEvents, walletAccounts]);
+
+  const {
+    resolvedDrilldownAccountId,
+    selectedDrillAccount,
+    enabledAccountCount,
+    strategyLabel,
+    strategyDescription,
+    selectedAccountTradeRows,
+    selectedAccountTxRows,
+    selectedAccountPositionRows,
+    selectedAccountEquitySeries,
+    selectedStrategyTradeRows,
+    selectedStrategyTxRows,
+    selectedStrategyPositionRows,
+    selectedStrategyWinRate
+  } = selectionModel;
 
   useEffect(() => {
-    if (walletAccounts.length === 0) {
-      if (drilldownAccountId) setDrilldownAccountId('');
-      return;
+    if (resolvedDrilldownAccountId !== drilldownAccountId) {
+      setDrilldownAccountId(resolvedDrilldownAccountId);
     }
-    if (drilldownAccountId && walletAccounts.some((account) => account.id === drilldownAccountId)) return;
-    if (activeWalletAccountId && walletAccounts.some((account) => account.id === activeWalletAccountId)) {
-      setDrilldownAccountId(activeWalletAccountId);
-      return;
-    }
-    setDrilldownAccountId(walletAccounts[0].id);
-  }, [activeWalletAccountId, drilldownAccountId, walletAccounts]);
-
-  const selectedDrillAccount = useMemo(() => {
-    if (!drilldownAccountId) return null;
-    return walletAccounts.find((account) => account.id === drilldownAccountId) || null;
-  }, [drilldownAccountId, walletAccounts]);
-
-  const enabledAccountCount = useMemo(() => {
-    return walletAccounts.filter((account) => account.enabled).length;
-  }, [walletAccounts]);
-
-  const strategyMeta = useMemo(() => {
-    return strategyOptions.find((option) => option.id === strategyId) || null;
-  }, [strategyId, strategyOptions]);
-
-  const strategyLabel = strategyMeta?.label || strategyId;
-  const strategyDescription = strategyMeta?.description || 'No description available yet.';
-
-  const selectedAccountTradeRows = useMemo(() => {
-    if (!selectedDrillAccount) return [];
-    return tradeLog.filter((trade) => trade.accountId === selectedDrillAccount.id);
-  }, [selectedDrillAccount, tradeLog]);
-
-  const selectedAccountTxRows = useMemo(() => {
-    if (!selectedDrillAccount) return [];
-    return txEvents.filter((row) => row.accountId === selectedDrillAccount.id);
-  }, [selectedDrillAccount, txEvents]);
-
-  const selectedAccountPositionRows = useMemo(() => {
-    if (!selectedDrillAccount) return [];
-    return positionEvents.filter((row) => row.accountId === selectedDrillAccount.id);
-  }, [positionEvents, selectedDrillAccount]);
-
-  const selectedAccountEquitySeries = useMemo(() => {
-    if (!selectedDrillAccount) return [];
-    const points = selectedAccountPositionRows
-      .slice()
-      .sort((a, b) => (Number(a.timestamp) || 0) - (Number(b.timestamp) || 0))
-      .map((row) => Number(row?.wallet?.equity))
-      .filter((value) => Number.isFinite(value))
-      .slice(-320);
-    if (points.length >= 2) return points;
-    const start = Number(selectedDrillAccount.startCash) || 100000;
-    const current = Number(selectedDrillAccount.wallet?.equity);
-    const safeCurrent = Number.isFinite(current) ? current : start;
-    return [start, safeCurrent];
-  }, [selectedAccountPositionRows, selectedDrillAccount]);
-
-  const selectedStrategyTradeRows = useMemo(() => {
-    return tradeLog.filter((trade) => String(trade.strategyId || strategyId) === strategyId);
-  }, [strategyId, tradeLog]);
-
-  const selectedStrategyTxRows = useMemo(() => {
-    return txEvents.filter((event) => String(event.strategyId || '') === strategyId);
-  }, [strategyId, txEvents]);
-
-  const selectedStrategyPositionRows = useMemo(() => {
-    return positionEvents.filter((event) => String(event.strategyId || '') === strategyId);
-  }, [positionEvents, strategyId]);
-
-  const selectedStrategyWinRate = useMemo(() => {
-    if (!selectedStrategyTradeRows.length) return 0;
-    const wins = selectedStrategyTradeRows.filter((trade) => Number(trade.realizedDelta) > 0).length;
-    return (wins / selectedStrategyTradeRows.length) * 100;
-  }, [selectedStrategyTradeRows]);
+  }, [drilldownAccountId, resolvedDrilldownAccountId]);
 
   const runtimeTradeMarkers = useMemo(() => {
     const timeSeries = runtimeSeries
@@ -359,7 +360,7 @@ export default function StrategyLabPage({ snapshot, historyByMarket }) {
 
   const solverBuckets = useMemo(() => buildPdfBuckets({ minPct: -4.5, maxPct: 4.5, stepPct: 0.25 }), []);
 
-  const solverRankings = useMemo(() => {
+  const solverBaseRankings = useMemo(() => {
     return rankMarketsByPdf({
       markets: snapshot?.markets || [],
       historyByMarket,
@@ -369,6 +370,101 @@ export default function StrategyLabPage({ snapshot, historyByMarket }) {
       now: snapshot?.now || Date.now()
     });
   }, [historyByMarket, snapshot?.markets, snapshot?.now, solverBuckets, solverHorizon]);
+
+  const marketTensorSnapshot = useMemo(() => {
+    return buildMarketTensorSnapshot({
+      markets: snapshot?.markets || [],
+      historyByMarket,
+      now: snapshot?.now || Date.now(),
+      limit: 168
+    });
+  }, [historyByMarket, snapshot?.markets, snapshot?.now]);
+
+  const marketImageSnapshot = useMemo(() => {
+    return buildMarketImageSnapshot({
+      markets: snapshot?.markets || [],
+      tensorSnapshot: marketTensorSnapshot,
+      depthBands: 13
+    });
+  }, [marketTensorSnapshot, snapshot?.markets]);
+
+  useEffect(() => {
+    const timestamp = toNum(marketTensorSnapshot?.timestamp, NaN);
+    if (!Number.isFinite(timestamp)) return;
+    const nextSignature = `${timestamp}:${toNum(marketTensorSnapshot?.metrics?.tensorDriftPct, 0).toFixed(6)}:${toNum(marketImageSnapshot?.aggregate?.imbalance, 0).toFixed(
+      6
+    )}`;
+    if (tensorHistoryRef.current === nextSignature) return;
+    tensorHistoryRef.current = nextSignature;
+
+    setTensorHistory((previous) => {
+      const nextRow = {
+        timestamp,
+        tensorDriftPct: toNum(marketTensorSnapshot?.metrics?.tensorDriftPct, 0),
+        breadth: toNum(marketTensorSnapshot?.metrics?.breadth, 0),
+        stress: toNum(marketTensorSnapshot?.metrics?.stress, 0),
+        imageImbalance: toNum(marketImageSnapshot?.aggregate?.imbalance, 0)
+      };
+      return [...previous, nextRow].slice(-920);
+    });
+  }, [marketImageSnapshot?.aggregate?.imbalance, marketTensorSnapshot?.metrics?.breadth, marketTensorSnapshot?.metrics?.stress, marketTensorSnapshot?.metrics?.tensorDriftPct, marketTensorSnapshot?.timestamp]);
+
+  const tensorPdfModel = useMemo(() => {
+    return buildTensorPdfFromHistory({
+      tensorHistory,
+      buckets: solverBuckets,
+      horizons: PDF_HORIZONS,
+      horizon: solverHorizon,
+      marketImage: marketImageSnapshot,
+      tensorSnapshot: marketTensorSnapshot
+    });
+  }, [marketImageSnapshot, marketTensorSnapshot, solverBuckets, solverHorizon, tensorHistory]);
+
+  const tensorSolverRankings = useMemo(() => {
+    return rankMarketsByTensorPdf({
+      baseRankings: solverBaseRankings,
+      tensorSnapshot: marketTensorSnapshot,
+      marketImage: marketImageSnapshot,
+      tensorPdf: tensorPdfModel
+    });
+  }, [marketImageSnapshot, marketTensorSnapshot, solverBaseRankings, tensorPdfModel]);
+
+  const solverRankings = useMemo(() => {
+    return solverMode === 'tensor' ? tensorSolverRankings : solverBaseRankings;
+  }, [solverBaseRankings, solverMode, tensorSolverRankings]);
+
+  const marketImageRows = useMemo(() => {
+    const rows = (marketImageSnapshot?.rows || []).slice(0, 16);
+    const aggregateRow = {
+      key: '__aggregate__',
+      symbol: 'ALL',
+      assetClass: 'tensor',
+      spreadBps: marketTensorSnapshot?.metrics?.averageSpreadBps || 0,
+      imbalance: marketImageSnapshot?.aggregate?.imbalance || 0,
+      microShiftBps: (marketImageSnapshot?.aggregate?.imbalance || 0) * 100,
+      bidPressure: marketImageSnapshot?.aggregate?.bidPressure || 0,
+      askPressure: marketImageSnapshot?.aggregate?.askPressure || 0,
+      cells: marketImageSnapshot?.aggregate?.cells || []
+    };
+    return [aggregateRow, ...rows];
+  }, [
+    marketImageSnapshot?.aggregate?.askPressure,
+    marketImageSnapshot?.aggregate?.bidPressure,
+    marketImageSnapshot?.aggregate?.cells,
+    marketImageSnapshot?.aggregate?.imbalance,
+    marketImageSnapshot?.rows,
+    marketTensorSnapshot?.metrics?.averageSpreadBps
+  ]);
+
+  const marketImageMaxAbs = useMemo(() => {
+    let max = 0;
+    for (const row of marketImageRows) {
+      for (const cell of row.cells || []) {
+        max = Math.max(max, Math.abs(toNum(cell, 0)));
+      }
+    }
+    return Math.max(max, 0.00001);
+  }, [marketImageRows]);
 
   const markedSolverPortfolio = useMemo(() => {
     return markPdfPortfolio({
@@ -418,21 +514,26 @@ export default function StrategyLabPage({ snapshot, historyByMarket }) {
           id: `pdf-cycle:${timestamp}`,
           kind: 'cycle',
           source,
+          mode: solverMode,
           timestamp,
           picks: result.picked.length,
           orders: result.orders.length,
           equityStart: result.equityStart,
-          equityEnd: result.equityEnd
+          equityEnd: result.equityEnd,
+          tensorDriftPct: toNum(marketTensorSnapshot?.metrics?.tensorDriftPct, 0),
+          tensorImbalance: toNum(marketImageSnapshot?.aggregate?.imbalance, 0),
+          tensorConfidencePct: toNum(tensorPdfModel?.summary?.confidencePct, 0)
         };
         const orderEvents = result.orders.map((order) => ({
           ...order,
           kind: 'order',
-          source
+          source,
+          mode: solverMode
         }));
         return [cycleEvent, ...orderEvents, ...previous].slice(0, 320);
       });
     },
-    [snapshot?.markets, solverFeeBps, solverMinConfidence, solverPortfolio, solverRankings, solverTopN]
+    [marketImageSnapshot?.aggregate?.imbalance, marketTensorSnapshot?.metrics?.tensorDriftPct, snapshot?.markets, solverFeeBps, solverMinConfidence, solverMode, solverPortfolio, solverRankings, solverTopN, tensorPdfModel?.summary?.confidencePct]
   );
 
   useEffect(() => {
@@ -446,7 +547,11 @@ export default function StrategyLabPage({ snapshot, historyByMarket }) {
   const resetPdfSolver = useCallback(() => {
     setSolverPortfolio(createPdfPortfolioState({ startCash: 100000 }));
     setSolverOrderLog([]);
+    setTensorHistory([]);
+    tensorHistoryRef.current = '';
   }, []);
+
+  const solverModeLabel = solverMode === 'tensor' ? 'tensor snapshot + market image' : 'baseline PDF';
 
   return (
     <section className="page-grid">
@@ -591,24 +696,24 @@ export default function StrategyLabPage({ snapshot, historyByMarket }) {
         <GlowCard className="panel-card strategy-lab-overview-card">
           <div className="section-head">
             <h2>Session Overview</h2>
-            <span>{activeAccount?.name || 'paper account'}</span>
+            <span>{activeExecutionAccount?.name || 'paper account'}</span>
           </div>
           <div className="strategy-lab-mini-grid">
             <article className="strategy-lab-mini-stat">
               <span>Wallet Equity</span>
-              <strong className={toneClass(wallet.equity - 100000)}>{fmtNum(wallet.equity, 2)}</strong>
+              <strong className={toneClass(activeExecutionWallet.equity - 100000)}>{fmtNum(activeExecutionWallet.equity, 2)}</strong>
             </article>
             <article className="strategy-lab-mini-stat">
               <span>Realized PnL</span>
-              <strong className={toneClass(wallet.realizedPnl)}>{fmtNum(wallet.realizedPnl, 2)}</strong>
+              <strong className={toneClass(activeExecutionWallet.realizedPnl)}>{fmtNum(activeExecutionWallet.realizedPnl, 2)}</strong>
             </article>
             <article className="strategy-lab-mini-stat">
               <span>Unrealized PnL</span>
-              <strong className={toneClass(wallet.unrealizedPnl)}>{fmtNum(wallet.unrealizedPnl, 2)}</strong>
+              <strong className={toneClass(activeExecutionWallet.unrealizedPnl)}>{fmtNum(activeExecutionWallet.unrealizedPnl, 2)}</strong>
             </article>
             <article className="strategy-lab-mini-stat">
               <span>Position</span>
-              <strong>{fmtNum(wallet.units, 0)} units</strong>
+              <strong>{fmtNum(activeExecutionWallet.units, 0)} units</strong>
             </article>
             <article className="strategy-lab-mini-stat">
               <span>Backtest Return</span>
@@ -630,6 +735,9 @@ export default function StrategyLabPage({ snapshot, historyByMarket }) {
           <p className="socket-status-copy">
             tx feed {fmtInt(txEvents.length)} | position snapshots {fmtInt(positionEvents.length)} | execution rows {fmtInt(tradeLog.length)} | signal inputs{' '}
             {fmtInt(signalRows.length)}
+          </p>
+          <p className="socket-status-copy">
+            active execution account {activeExecutionAccount?.name || '-'} | drilldown account {selectedDrillAccount?.name || '-'} | selected strategy {strategyLabel}
           </p>
         </GlowCard>
       </div>
@@ -675,20 +783,14 @@ export default function StrategyLabPage({ snapshot, historyByMarket }) {
                 <span>{fmtInt(walletAccounts.length)} accounts</span>
               </div>
               <div className="strategy-drill-controls">
-                <label className="control-field">
-                  <span>Drill Account</span>
-                  <select value={drilldownAccountId} onChange={(event) => setDrilldownAccountId(event.target.value)} disabled={walletAccounts.length === 0}>
-                    {walletAccounts.length === 0 ? (
-                      <option value="">No accounts</option>
-                    ) : (
-                      walletAccounts.map((account) => (
-                        <option key={`drill:${account.id}`} value={account.id}>
-                          {account.name}
-                        </option>
-                      ))
-                    )}
-                  </select>
-                </label>
+                <WalletAccountSelectField
+                  label="Drill Account"
+                  accounts={walletAccounts}
+                  value={drilldownAccountId}
+                  onChange={setDrilldownAccountId}
+                  emptyLabel="No accounts"
+                  idPrefix="strategy-lab-overview-account"
+                />
               </div>
               <div className="strategy-lab-mini-grid">
                 <article className="strategy-lab-mini-stat">
@@ -746,20 +848,14 @@ export default function StrategyLabPage({ snapshot, historyByMarket }) {
                   </div>
                 ) : null}
                 <div className="strategy-drill-controls">
-                  <label className="control-field">
-                    <span>Selected Account</span>
-                    <select value={drilldownAccountId} onChange={(event) => setDrilldownAccountId(event.target.value)} disabled={walletAccounts.length === 0}>
-                      {walletAccounts.length === 0 ? (
-                        <option value="">No accounts</option>
-                      ) : (
-                        walletAccounts.map((account) => (
-                          <option key={`account-drill:${account.id}`} value={account.id}>
-                            {account.name}
-                          </option>
-                        ))
-                      )}
-                    </select>
-                  </label>
+                  <WalletAccountSelectField
+                    label="Selected Account"
+                    accounts={walletAccounts}
+                    value={drilldownAccountId}
+                    onChange={setDrilldownAccountId}
+                    emptyLabel="No accounts"
+                    idPrefix="strategy-lab-accounts-account"
+                  />
                 </div>
                 <div className="hero-actions">
                   <button
@@ -1016,12 +1112,19 @@ export default function StrategyLabPage({ snapshot, historyByMarket }) {
       <GlowCard className="panel-card">
         <div className="section-head">
           <h2>PDF Portfolio Solver</h2>
-          <span>multimarket top-N rebalance simulation</span>
+          <span>{solverModeLabel}</span>
         </div>
         <p className="socket-status-copy">
-          Legacy-style portfolio solver over probability density rankings. Runs weighted allocation into strongest positive-PDF markets and rebalances each cycle.
+          Whole-market strategy layer: baseline PDF ranking plus a tensor snapshot and market-image orderbook surface that extends through time.
         </p>
         <div className="pdf-solver-control-grid">
+          <label className="control-field">
+            <span>Ranking Model</span>
+            <select value={solverMode} onChange={(event) => setSolverMode(event.target.value)}>
+              <option value="tensor">Tensor Snapshot + Market Image</option>
+              <option value="pdf">Baseline PDF</option>
+            </select>
+          </label>
           <label className="control-field">
             <span>Top N Picks</span>
             <input type="number" min={1} max={12} step={1} value={solverTopN} onChange={(event) => setSolverTopN(Math.max(1, Math.min(12, Number(event.target.value) || 4)))} />
@@ -1054,7 +1157,7 @@ export default function StrategyLabPage({ snapshot, historyByMarket }) {
         </div>
         <div className="hero-actions">
           <button type="button" className="btn secondary" onClick={() => runPdfSolverCycle('manual')}>
-            Run PDF Rebalance
+            Run Solver Rebalance
           </button>
           <button type="button" className="btn secondary" onClick={resetPdfSolver}>
             Reset PDF Portfolio
@@ -1094,6 +1197,22 @@ export default function StrategyLabPage({ snapshot, historyByMarket }) {
             <strong>{fmtInt(solverOrderLog.filter((row) => row.kind === 'order').length)}</strong>
           </article>
           <article>
+            <span>Tensor Drift</span>
+            <strong className={toneClass(marketTensorSnapshot?.metrics?.tensorDriftPct)}>{fmtSigned(marketTensorSnapshot?.metrics?.tensorDriftPct, 3)}%</strong>
+          </article>
+          <article>
+            <span>Tensor Breadth</span>
+            <strong className={toneClass(marketTensorSnapshot?.metrics?.breadth)}>{fmtSigned(marketTensorSnapshot?.metrics?.breadth, 3)}</strong>
+          </article>
+          <article>
+            <span>Image Imbalance</span>
+            <strong className={toneClass(marketImageSnapshot?.aggregate?.imbalance)}>{fmtSigned((marketImageSnapshot?.aggregate?.imbalance || 0) * 100, 2)}%</strong>
+          </article>
+          <article>
+            <span>Tensor PDF Confidence</span>
+            <strong>{fmtNum(tensorPdfModel?.summary?.confidencePct, 1)}%</strong>
+          </article>
+          <article>
             <span>Last Update</span>
             <strong>{fmtTime(markedSolverPortfolio.updatedAt)}</strong>
           </article>
@@ -1103,7 +1222,7 @@ export default function StrategyLabPage({ snapshot, historyByMarket }) {
       <div className="two-col">
         <GlowCard className="panel-card">
           <div className="section-head">
-            <h2>PDF Allocation Targets</h2>
+            <h2>{solverMode === 'tensor' ? 'Tensor Allocation Targets' : 'PDF Allocation Targets'}</h2>
             <span>{solverAllocationPreview.length} picks</span>
           </div>
           <div className="list-stack">
@@ -1120,6 +1239,8 @@ export default function StrategyLabPage({ snapshot, historyByMarket }) {
                   <small>down {fmtPct((row.downProb || 0) * 100)}</small>
                   <small>expected {fmtPct(row.expectedMovePct || 0)}</small>
                   <small>confidence {fmtNum(row.confidencePct, 1)}%</small>
+                  {solverMode === 'tensor' ? <small>tensor {fmtSigned(row.tensorScore || 0, 2)}</small> : null}
+                  {solverMode === 'tensor' ? <small>connect {fmtSigned(row.connectionScore || 0, 2)}</small> : null}
                 </div>
               </article>
             ))}
@@ -1143,12 +1264,15 @@ export default function StrategyLabPage({ snapshot, historyByMarket }) {
               if (item.kind === 'cycle') {
                 return (
                   <article className="tensor-event-row">
-                    <strong>cycle | {item.source}</strong>
+                    <strong>
+                      cycle | {item.source} | {item.mode || 'pdf'}
+                    </strong>
                     <p>
                       picks {fmtInt(item.picks)} | orders {fmtInt(item.orders)}
                     </p>
                     <small>
-                      equity {fmtNum(item.equityStart, 2)} -> {fmtNum(item.equityEnd, 2)} | {fmtTime(item.timestamp)}
+                      equity {fmtNum(item.equityStart, 2)} -> {fmtNum(item.equityEnd, 2)} | drift {fmtSigned(item.tensorDriftPct || 0, 3)}% | imbalance{' '}
+                      {fmtSigned((item.tensorImbalance || 0) * 100, 2)}% | conf {fmtNum(item.tensorConfidencePct || 0, 1)}% | {fmtTime(item.timestamp)}
                     </small>
                   </article>
                 );
@@ -1162,12 +1286,138 @@ export default function StrategyLabPage({ snapshot, historyByMarket }) {
                     notional {fmtNum(item.notional, 2)} | fee {fmtNum(item.fee, 4)}
                   </p>
                   <small>
-                    price {fmtNum(item.price, 4)} | {item.assetClass} | {item.source} | {fmtTime(item.timestamp)}
+                    price {fmtNum(item.price, 4)} | {item.assetClass} | {item.source} | {item.mode || 'pdf'} | {fmtTime(item.timestamp)}
                   </small>
                 </article>
               );
             }}
           />
+        </GlowCard>
+      </div>
+
+      <div className="two-col">
+        <GlowCard className="panel-card">
+          <div className="section-head">
+            <h2>Market Tensor Snapshot</h2>
+            <span>{fmtTime(marketTensorSnapshot?.timestamp)}</span>
+          </div>
+          <p className="socket-status-copy">
+            Global tensor built from market links, liquidity, spread friction, and momentum flow. Central node and breadth drive the cross-market strategy posture.
+          </p>
+          <div className="tensor-metrics">
+            <article>
+              <span>Markets</span>
+              <strong>{fmtInt(marketTensorSnapshot?.metrics?.marketCount || 0)}</strong>
+            </article>
+            <article>
+              <span>Nodes</span>
+              <strong>{fmtInt(marketTensorSnapshot?.metrics?.nodeCount || 0)}</strong>
+            </article>
+            <article>
+              <span>Edges</span>
+              <strong>{fmtInt(marketTensorSnapshot?.metrics?.edgeCount || 0)}</strong>
+            </article>
+            <article>
+              <span>Central Asset</span>
+              <strong>{marketTensorSnapshot?.metrics?.centralAsset || '-'}</strong>
+            </article>
+            <article>
+              <span>Tensor Drift</span>
+              <strong className={toneClass(marketTensorSnapshot?.metrics?.tensorDriftPct)}>{fmtSigned(marketTensorSnapshot?.metrics?.tensorDriftPct, 3)}%</strong>
+            </article>
+            <article>
+              <span>Breadth</span>
+              <strong className={toneClass(marketTensorSnapshot?.metrics?.breadth)}>{fmtSigned(marketTensorSnapshot?.metrics?.breadth, 3)}</strong>
+            </article>
+            <article>
+              <span>Avg Spread</span>
+              <strong>{fmtNum(marketTensorSnapshot?.metrics?.averageSpreadBps, 2)} bps</strong>
+            </article>
+            <article>
+              <span>Stress</span>
+              <strong>{fmtNum(marketTensorSnapshot?.metrics?.stress, 3)}</strong>
+            </article>
+            <article>
+              <span>Tensor PDF Horizon</span>
+              <strong>{fmtInt(tensorPdfModel?.horizon || solverHorizon)}</strong>
+            </article>
+            <article>
+              <span>Tensor PDF Move</span>
+              <strong className={toneClass(tensorPdfModel?.summary?.expectedMovePct)}>{fmtSigned(tensorPdfModel?.summary?.expectedMovePct, 3)}%</strong>
+            </article>
+            <article>
+              <span>Tensor PDF Skew</span>
+              <strong className={toneClass(tensorPdfModel?.summary?.skew)}>{fmtSigned(tensorPdfModel?.summary?.skew, 3)}</strong>
+            </article>
+            <article>
+              <span>Tensor History</span>
+              <strong>{fmtInt(tensorHistory.length)} samples</strong>
+            </article>
+          </div>
+          <div className="list-stack">
+            {(marketTensorSnapshot?.nodes || []).slice(0, 10).map((node, index) => (
+              <article key={`tensor-node:${node.asset}`} className="list-item">
+                <strong>
+                  {index + 1}. {node.asset}
+                </strong>
+                <p>
+                  centrality {fmtNum(node.centrality, 3)} | pressure {fmtSigned(node.pressure, 3)} | degree {fmtNum(node.degree, 2)}
+                </p>
+                <div className="item-meta">
+                  <small>edge weight {fmtNum(node.edgeWeight, 2)}</small>
+                  <small>volume {fmtNum(node.volume, 0)}</small>
+                </div>
+              </article>
+            ))}
+          </div>
+        </GlowCard>
+
+        <GlowCard className="panel-card">
+          <div className="section-head">
+            <h2>Market Image (Orderbook Object)</h2>
+            <span>
+              {fmtInt(marketImageRows.length)} rows x {fmtInt(marketImageSnapshot?.bands?.length || 0)} bands
+            </span>
+          </div>
+          <p className="socket-status-copy">
+            Signed depth image over the whole market: positive cells imply bid pressure, negative cells imply ask pressure. Aggregate row drives tensor PDF bias.
+          </p>
+          <div className="pdf-heatmap-scroll">
+            <table className="pdf-heatmap-table">
+              <thead>
+                <tr>
+                  <th>Market</th>
+                  {(marketImageSnapshot?.bands || []).map((band) => (
+                    <th key={`book-band:${band}`}>{fmtSigned(band, 0)} bps</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {marketImageRows.map((row) => (
+                  <tr key={`book-row:${row.key}`}>
+                    <th>
+                      {row.symbol}
+                      <span>{row.assetClass}</span>
+                    </th>
+                    {(row.cells || []).map((cell, cellIndex) => (
+                      <td key={`book-cell:${row.key}:${cellIndex}`}>
+                        <div
+                          className="pdf-heat-cell"
+                          style={buildMarketImageCellStyle(cell, marketImageMaxAbs)}
+                          title={`${row.symbol} | band ${fmtSigned((marketImageSnapshot?.bands || [])[cellIndex], 0)} bps | pressure ${fmtSigned(cell, 4)} | imbalance ${fmtSigned(
+                            (row.imbalance || 0) * 100,
+                            2
+                          )}%`}
+                        >
+                          {fmtSigned(cell, 3)}
+                        </div>
+                      </td>
+                    ))}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         </GlowCard>
       </div>
 

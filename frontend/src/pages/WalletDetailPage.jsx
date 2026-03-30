@@ -2,8 +2,10 @@ import { useMemo } from 'react';
 import FlashList from '../components/FlashList';
 import GlowCard from '../components/GlowCard';
 import LineChart from '../components/LineChart';
+import WalletAccountSelectField from '../components/WalletAccountSelectField';
 import { fmtInt, fmtNum, fmtTime } from '../lib/format';
 import { Link, navigate } from '../lib/router';
+import { buildAccountEquitySeries, filterRowsByAccountId, selectActiveWalletAccount, selectWalletAccountById } from '../lib/strategyLabSelectors';
 import { useExecutionFeedStore } from '../store/executionFeedStore';
 import { useStrategyLabStore } from '../store/strategyLabStore';
 
@@ -36,30 +38,31 @@ export default function WalletDetailPage({ walletId, snapshot }) {
   const positionEvents = useExecutionFeedStore((state) => state.positionEvents);
 
   const selectedAccount = useMemo(() => {
-    const target = String(walletId || '');
-    return walletAccounts.find((account) => account.id === target) || walletAccounts.find((account) => account.id === activeWalletAccountId) || walletAccounts[0] || null;
+    return (
+      selectWalletAccountById(walletAccounts, walletId) ||
+      selectActiveWalletAccount(walletAccounts, activeWalletAccountId) ||
+      walletAccounts[0] ||
+      null
+    );
   }, [activeWalletAccountId, walletAccounts, walletId]);
 
   const selectedAccountId = selectedAccount?.id || '';
 
   const accountTxEvents = useMemo(() => {
-    if (!selectedAccountId) return [];
-    return txEvents.filter((event) => event.accountId === selectedAccountId);
+    return filterRowsByAccountId(txEvents, selectedAccountId);
   }, [selectedAccountId, txEvents]);
 
   const accountPositionEvents = useMemo(() => {
-    if (!selectedAccountId) return [];
-    return positionEvents.filter((event) => event.accountId === selectedAccountId);
+    return filterRowsByAccountId(positionEvents, selectedAccountId);
   }, [positionEvents, selectedAccountId]);
 
   const accountEquitySeries = useMemo(() => {
-    if (!selectedAccount) return [];
-    const sorted = accountPositionEvents.slice().sort((a, b) => toNum(a.timestamp, 0) - toNum(b.timestamp, 0));
-    const points = sorted.map((event) => toNum(event?.wallet?.equity, NaN)).filter((value) => Number.isFinite(value)).slice(-360);
-    if (points.length >= 2) return points;
-    const start = toNum(selectedAccount.startCash, 100000);
-    const current = toNum(selectedAccount.wallet?.equity, start);
-    return [start, current];
+    return buildAccountEquitySeries({
+      account: selectedAccount,
+      positionRows: accountPositionEvents,
+      maxPoints: 360,
+      defaultStartCash: 100000
+    });
   }, [accountPositionEvents, selectedAccount]);
 
   const touchedMarketIdentities = useMemo(() => {
@@ -119,24 +122,21 @@ export default function WalletDetailPage({ walletId, snapshot }) {
         </div>
         <p>Live account drilldown with execution feed, position updates, and linked signal/decision context.</p>
         <div className="wallet-action-row">
-          <label className="control-field" style={{ minWidth: 260 }}>
-            <span>Account</span>
-            <select
+          <div style={{ minWidth: 260 }}>
+            <WalletAccountSelectField
+              label="Account"
+              accounts={walletAccounts}
               value={selectedAccount.id}
-              onChange={(event) => {
-                const nextId = String(event.target.value || '');
-                if (!nextId) return;
-                setActiveWalletAccount(nextId);
-                navigate(`/wallet/${encodeURIComponent(nextId)}`);
+              onChange={(nextId) => {
+                const safeId = String(nextId || '');
+                if (!safeId) return;
+                setActiveWalletAccount(safeId);
+                navigate(`/wallet/${encodeURIComponent(safeId)}`);
               }}
-            >
-              {walletAccounts.map((account) => (
-                <option key={`wallet-id:${account.id}`} value={account.id}>
-                  {account.name}
-                </option>
-              ))}
-            </select>
-          </label>
+              emptyLabel="No accounts"
+              idPrefix="wallet-detail-account"
+            />
+          </div>
           <button
             type="button"
             className="btn secondary"

@@ -3,6 +3,7 @@ import FlashList from '../components/FlashList';
 import GlowCard from '../components/GlowCard';
 import LineChart from '../components/LineChart';
 import { fmtCompact, fmtInt, fmtNum, fmtPct, fmtTime } from '../lib/format';
+import { countEnabledWalletAccounts, filterRowsByAccountId, selectActiveWalletAccount } from '../lib/strategyLabSelectors';
 import { createWalletState, executeWalletAction, markWallet } from '../lib/strategyEngine';
 import { buildStrategyRows, toStrategyKey } from '../lib/strategyView';
 import { Link } from '../lib/router';
@@ -278,17 +279,17 @@ export default function WalletPage({ snapshot }) {
   }, [enabledByKey, strategyRows]);
 
   const activePaperAccount = useMemo(() => {
-    return paperAccounts.find((account) => account.id === activePaperAccountId) || paperAccounts[0] || null;
+    return selectActiveWalletAccount(paperAccounts, activePaperAccountId);
   }, [activePaperAccountId, paperAccounts]);
 
   const activeRuntimeTxEvents = useMemo(() => {
     if (!activePaperAccount?.id) return txEvents.slice(0, 180);
-    return txEvents.filter((event) => event.accountId === activePaperAccount.id).slice(0, 180);
+    return filterRowsByAccountId(txEvents, activePaperAccount.id).slice(0, 180);
   }, [activePaperAccount?.id, txEvents]);
 
   const activeRuntimePosition = useMemo(() => {
     if (!activePaperAccount?.id) return positionEvents[0] || null;
-    return positionEvents.find((event) => event.accountId === activePaperAccount.id) || null;
+    return filterRowsByAccountId(positionEvents, activePaperAccount.id)[0] || null;
   }, [activePaperAccount?.id, positionEvents]);
 
   const selectedStrategyStatus = useMemo(() => {
@@ -564,7 +565,7 @@ export default function WalletPage({ snapshot }) {
   }, [marketByKey, snapshot?.now, walletLab.assetHoldings]);
 
   const enabledPaperCount = useMemo(() => {
-    return paperAccounts.filter((account) => account.enabled).length;
+    return countEnabledWalletAccounts(paperAccounts);
   }, [paperAccounts]);
 
   const enabledStrategyCount = useMemo(() => {
