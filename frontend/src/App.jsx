@@ -17,6 +17,7 @@ import SignalListPage from './pages/SignalListPage';
 import StrategyLabPage from './pages/StrategyLabPage';
 import StrategyDetailPage from './pages/StrategyDetailPage';
 import StrategyListPage from './pages/StrategyListPage';
+import WalletPage from './pages/WalletPage';
 
 const parseRoute = (pathname) => {
   const cleanPath = pathname && pathname !== '/' ? pathname.replace(/\/+$/, '') : pathname;
@@ -30,6 +31,7 @@ const parseRoute = (pathname) => {
   if (routePath === '/strategies') return { name: 'strategies' };
   if (routePath === '/strategy') return { name: 'strategy' };
   if (routePath === '/account' || routePath === '/settings') return { name: 'account' };
+  if (routePath === '/wallet') return { name: 'wallet' };
 
   const marketMatch = routePath.match(/^\/market\/(.+)$/);
   if (marketMatch) {
@@ -59,7 +61,7 @@ const NotFoundPage = () => {
     <section className="page-grid">
       <GlowCard className="detail-card">
         <h1>Route not found</h1>
-        <p>Try `/markets`, `/assets`, `/signals`, `/strategies`, `/graph`, `/strategy`, `/account`, `/signal/:id`, or `/strategy/:id`.</p>
+        <p>Try `/markets`, `/assets`, `/signals`, `/strategies`, `/graph`, `/strategy`, `/account`, `/wallet`, `/signal/:id`, or `/strategy/:id`.</p>
       </GlowCard>
     </section>
   );
@@ -143,6 +145,8 @@ export default function App() {
       {route.name === 'strategy' ? <StrategyLabPage snapshot={snapshot} historyByMarket={historyByMarket} /> : null}
 
       {route.name === 'account' ? <AccountPage /> : null}
+
+      {route.name === 'wallet' ? <WalletPage snapshot={snapshot} /> : null}
 
       {route.name === 'not-found' ? <NotFoundPage /> : null}
     </main>

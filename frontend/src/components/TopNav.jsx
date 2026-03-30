@@ -6,6 +6,7 @@ const navItems = [
   { to: '/signals', label: 'Signals' },
   { to: '/strategies', label: 'Strategies' },
   { to: '/account', label: 'Account' },
+  { to: '/wallet', label: 'Wallet' },
   { to: '/assets', label: 'Assets' },
   { to: '/graph', label: 'Graph' },
   { to: '/strategy', label: 'Strategy Lab' }
@@ -20,6 +21,7 @@ export default function TopNav({ pathname, connected, transport, localFallback }
     if (to === '/signals') return path === '/signals' || path.startsWith('/signal/');
     if (to === '/strategies') return path === '/strategies' || path.startsWith('/strategy/');
     if (to === '/account') return path === '/account' || path === '/settings';
+    if (to === '/wallet') return path === '/wallet';
     if (to === '/assets') return path === '/assets' || path.startsWith('/asset/');
     if (to === '/graph') return path === '/graph';
     if (to === '/strategy') return path === '/strategy';
