@@ -8,6 +8,7 @@ import {
   STRATEGY_OPTIONS,
   toNum
 } from '../lib/strategyEngine';
+import useSocketProviders from './useSocketProviders';
 import { useStrategyLabStore } from '../store/strategyLabStore';
 
 const MIN_INTERVAL_MS = 280;
@@ -83,6 +84,13 @@ export default function useStrategyLab({ snapshot, historyByMarket }) {
     return markets[0] || null;
   }, [marketKey, markets]);
 
+  const supportsSocketProviders = Boolean(selectedMarket) && String(selectedMarket?.assetClass || '').toLowerCase() === 'crypto';
+  const socketRuntimeEnabled = sourceId === 'market-feed' && supportsSocketProviders;
+  const { primaryProvider, primaryDepth } = useSocketProviders({
+    market: selectedMarket,
+    enabled: socketRuntimeEnabled
+  });
+
   const liveHistorySeries = useMemo(() => {
     if (!selectedMarket?.key) return [];
     const raw = historyByMarket?.[selectedMarket.key] || [];
@@ -132,15 +140,56 @@ export default function useStrategyLab({ snapshot, historyByMarket }) {
     const state = useStrategyLabStore.getState();
     const anchor = Number(liveHistorySeries[liveHistorySeries.length - 1]?.price) || basePrice;
     const previous = Number(state.runtimeSeries[state.runtimeSeries.length - 1]?.price) || anchor;
-    const meanPull = (anchor - previous) * randBetween(0.26, 0.42);
-    const noise = anchor * randBetween(-0.0012, 0.0012);
-    const price = Math.max(previous + meanPull + noise, 0.000001);
-    const spreadCenter = Math.max(Number(selectedMarket?.spreadBps) || 8, 0.6);
-    const spread = Math.max(0.4, spreadCenter + randBetween(-2.1, 2.1));
-    const volumeAnchor = Math.max(Number(selectedMarket?.totalVolume) || 500000, 1);
-    const volume = Math.max(volumeAnchor * randBetween(0.0002, 0.0013), 1);
-    return { t: now, price, spread, volume };
-  }, [basePrice, liveHistorySeries, selectedMarket?.spreadBps, selectedMarket?.totalVolume]);
+    const providerPrice = Number(primaryProvider?.price);
+    const providerBid = Number(primaryProvider?.bid);
+    const providerAsk = Number(primaryProvider?.ask);
+    const providerVolume = Number(primaryProvider?.volume);
+    const providerHasPrice = Number.isFinite(providerPrice) && providerPrice > 0;
+    const providerHasBidAsk = Number.isFinite(providerBid) && Number.isFinite(providerAsk) && providerBid > 0 && providerAsk > 0;
+
+    let price;
+    let bid = null;
+    let ask = null;
+    let spread;
+    let volume;
+
+    if (providerHasPrice) {
+      price = providerPrice;
+      bid = providerHasBidAsk ? providerBid : null;
+      ask = providerHasBidAsk ? providerAsk : null;
+      spread = providerHasBidAsk ? ((providerAsk - providerBid) / Math.max(providerPrice, 1e-9)) * 10000 : Math.max(Number(selectedMarket?.spreadBps) || 8, 0.6);
+      volume = Math.max(Number.isFinite(providerVolume) ? providerVolume : Number(selectedMarket?.totalVolume) || 500000, 1);
+    } else {
+      const meanPull = (anchor - previous) * randBetween(0.26, 0.42);
+      const noise = anchor * randBetween(-0.0012, 0.0012);
+      price = Math.max(previous + meanPull + noise, 0.000001);
+      const spreadCenter = Math.max(Number(selectedMarket?.spreadBps) || 8, 0.6);
+      spread = Math.max(0.4, spreadCenter + randBetween(-2.1, 2.1));
+      const spreadAbs = (price * spread) / 10000;
+      bid = Math.max(price - spreadAbs / 2, 0.0000001);
+      ask = Math.max(price + spreadAbs / 2, bid + 0.0000001);
+      const volumeAnchor = Math.max(Number(selectedMarket?.totalVolume) || 500000, 1);
+      volume = Math.max(volumeAnchor * randBetween(0.0002, 0.0013), 1);
+    }
+
+    const depth =
+      primaryDepth && ((primaryDepth.bids?.length || 0) > 0 || (primaryDepth.asks?.length || 0) > 0)
+        ? {
+            bids: primaryDepth.bids || [],
+            asks: primaryDepth.asks || []
+          }
+        : null;
+
+    return {
+      t: now,
+      price,
+      spread: Math.max(0, spread),
+      volume,
+      bid,
+      ask,
+      depth
+    };
+  }, [basePrice, liveHistorySeries, primaryDepth, primaryProvider?.ask, primaryProvider?.bid, primaryProvider?.price, primaryProvider?.volume, selectedMarket?.spreadBps, selectedMarket?.totalVolume]);
 
   const buildScenarioPoint = useCallback(() => {
     if (!scenarioSeries.length) return null;

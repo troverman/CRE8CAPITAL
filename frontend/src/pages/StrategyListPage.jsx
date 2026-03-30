@@ -51,7 +51,12 @@ export default function StrategyListPage({ snapshot }) {
       <GlowCard className="list-header-card">
         <div className="section-head">
           <h1>Strategies</h1>
-          <span>{filtered.length} shown</span>
+          <div className="section-actions">
+            <span>{filtered.length} shown</span>
+            <Link to="/strategy" className="inline-link">
+              Open Strategy Lab
+            </Link>
+          </div>
         </div>
         <input
           className="filter-input"

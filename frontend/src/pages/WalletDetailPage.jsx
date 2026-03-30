@@ -162,7 +162,7 @@ export default function WalletDetailPage({ walletId, snapshot }) {
         </GlowCard>
         <GlowCard className="stat-card">
           <span>Units</span>
-          <strong>{fmtNum(selectedAccount.wallet?.units, 0)}</strong>
+          <strong>{fmtNum(selectedAccount.wallet?.units, 4)}</strong>
         </GlowCard>
         <GlowCard className="stat-card">
           <span>Realized PnL</span>
@@ -200,7 +200,7 @@ export default function WalletDetailPage({ walletId, snapshot }) {
                 </strong>
                 <p>{event.reason || 'strategy execution'}</p>
                 <small>
-                  fill {fmtNum(event.fillPrice, 4)} | delta {fmtNum(event.unitsDelta, 0)} | units {fmtNum(event.unitsAfter, 0)} | pnl {fmtNum(event.realizedDelta, 2)} |{' '}
+                  fill {fmtNum(event.fillPrice, 4)} | delta {fmtNum(event.unitsDelta, 4)} | units {fmtNum(event.unitsAfter, 4)} | pnl {fmtNum(event.realizedDelta, 2)} |{' '}
                   {fmtTime(event.timestamp)}
                 </small>
               </article>
@@ -223,7 +223,7 @@ export default function WalletDetailPage({ walletId, snapshot }) {
             renderItem={(event) => (
               <article className="tensor-event-row">
                 <strong className={actionClass(event.action)}>
-                  {event.symbol || event.marketKey || '-'} | units {fmtNum(event.wallet?.units, 0)}
+                  {event.symbol || event.marketKey || '-'} | units {fmtNum(event.wallet?.units, 4)}
                 </strong>
                 <p>{event.reason || 'position update'}</p>
                 <small>
@@ -289,4 +289,3 @@ export default function WalletDetailPage({ walletId, snapshot }) {
     </section>
   );
 }
-

@@ -5,6 +5,78 @@ export const toNum = (value, fallback = 0) => {
   return Number.isFinite(num) ? num : fallback;
 };
 
+const toFiniteOrNull = (value) => {
+  const num = Number(value);
+  return Number.isFinite(num) ? num : null;
+};
+
+const sanitizeDepthSide = (levels, side) => {
+  const list = Array.isArray(levels) ? levels : [];
+  const mapped = list
+    .map((level) => {
+      if (Array.isArray(level)) {
+        const price = toFiniteOrNull(level[0]);
+        const size = toFiniteOrNull(level[1]);
+        if (price === null || size === null || price <= 0 || size <= 0) return null;
+        return { price, size };
+      }
+      const price = toFiniteOrNull(level?.price);
+      const size = toFiniteOrNull(level?.size);
+      if (price === null || size === null || price <= 0 || size <= 0) return null;
+      return { price, size };
+    })
+    .filter((level) => Boolean(level))
+    .sort((a, b) => (side === 'bid' ? b.price - a.price : a.price - b.price));
+
+  if (mapped.length > 40) {
+    mapped.length = 40;
+  }
+  return mapped;
+};
+
+const resolveFillPriceFromBook = ({ side, quantity, markPrice, bid, ask, depth, slippageBps }) => {
+  const qty = Math.max(Number(quantity) || 0, 1e-9);
+  const bids = sanitizeDepthSide(depth?.bids, 'bid');
+  const asks = sanitizeDepthSide(depth?.asks, 'ask');
+  const topBid = toFiniteOrNull(bid) ?? bids[0]?.price ?? null;
+  const topAsk = toFiniteOrNull(ask) ?? asks[0]?.price ?? null;
+
+  const spreadMid =
+    topBid !== null && topAsk !== null && topBid > 0 && topAsk > 0 ? (topBid + topAsk) / 2 : Math.max(toNum(markPrice, 0), 1e-9);
+  const spreadBps = topBid !== null && topAsk !== null && spreadMid > 0 ? ((topAsk - topBid) / spreadMid) * 10000 : 0;
+
+  const levels = side === 'buy' ? asks : bids;
+  let remaining = qty;
+  let notional = 0;
+  for (const level of levels) {
+    if (remaining <= 1e-9) break;
+    const take = Math.min(remaining, level.size);
+    notional += take * level.price;
+    remaining -= take;
+  }
+
+  if (remaining > 1e-9) {
+    const topPrice = side === 'buy' ? topAsk ?? spreadMid : topBid ?? spreadMid;
+    const overflowImpactBps = Math.max(0, toNum(slippageBps, 0)) + Math.max(0, spreadBps) * 0.35;
+    const overflowFill = topPrice * (1 + (side === 'buy' ? 1 : -1) * (overflowImpactBps / 10000));
+    notional += remaining * Math.max(overflowFill, 1e-9);
+  }
+
+  let fillPrice = notional / qty;
+  if (!Number.isFinite(fillPrice) || fillPrice <= 0) {
+    const impactBps = Math.max(0, toNum(slippageBps, 0)) + Math.max(0, spreadBps) / 2;
+    fillPrice = Math.max(spreadMid * (1 + (side === 'buy' ? 1 : -1) * (impactBps / 10000)), 1e-9);
+  } else {
+    const residualImpact = (Math.max(0, toNum(slippageBps, 0)) / 10000) * 0.18;
+    fillPrice *= 1 + (side === 'buy' ? 1 : -1) * residualImpact;
+  }
+
+  return {
+    fillPrice,
+    spreadBps
+  };
+};
+
 const hashSeed = (text) => {
   const value = String(text || 'seed');
   let hash = 2166136261;
@@ -763,38 +835,103 @@ export const executeWalletAction = ({
 
   const direction = action === 'accumulate' ? 1 : -1;
   const unitsBefore = toNum(wallet.units, 0);
-  if (Math.abs(unitsBefore + direction) > Math.max(1, toNum(maxAbsUnits, 10))) {
+  const markPrice = Math.max(toNum(point.price, 0), 1e-9);
+  const side = direction > 0 ? 'buy' : 'sell';
+  const initialQuote = resolveFillPriceFromBook({
+    side,
+    quantity: 1,
+    markPrice,
+    bid: point?.bid,
+    ask: point?.ask,
+    depth: point?.depth || null,
+    slippageBps
+  });
+  let fillPrice = Math.max(toNum(initialQuote.fillPrice, markPrice), 1e-9);
+  let spreadBps = Math.max(0, toNum(initialQuote.spreadBps, point?.spread));
+  const cashBefore = toNum(wallet.cash, 0);
+  const maxUnits = Math.max(1e-6, toNum(maxAbsUnits, 10));
+  const minTradableUnits = Math.max(1e-6, Math.min(1, 1 / Math.max(markPrice, 1)));
+
+  let unitsStep = 1;
+
+  if (direction > 0) {
+    const affordableUnits = cashBefore / Math.max(fillPrice, 1e-9);
+    unitsStep = Math.min(unitsStep, affordableUnits);
+    if (unitsBefore >= 0) {
+      unitsStep = Math.min(unitsStep, Math.max(0, maxUnits - unitsBefore));
+    } else {
+      // If a legacy short exists, close first before allowing a new long.
+      unitsStep = Math.min(unitsStep, Math.abs(unitsBefore));
+    }
+  } else {
+    // No naked shorting in paper wallet: only reduce existing long units.
+    if (unitsBefore <= minTradableUnits) {
+      return { wallet: markWallet({ ...wallet, lastActionAt: now }, point.price), trade: null };
+    }
+    unitsStep = Math.min(unitsStep, Math.abs(unitsBefore));
+  }
+
+  if (!Number.isFinite(unitsStep) || unitsStep < minTradableUnits) {
     return { wallet: markWallet({ ...wallet, lastActionAt: now }, point.price), trade: null };
   }
 
-  const markPrice = Math.max(toNum(point.price, 0), 1e-9);
-  const spreadBps = Math.max(0, toNum(point.spread, 0));
-  const impactBps = spreadBps / 2 + Math.max(0, toNum(slippageBps, 0));
-  const fillPrice = markPrice * (1 + direction * (impactBps / 10000));
-  const unitsAfter = unitsBefore + direction;
-  const cashAfter = toNum(wallet.cash, 0) - direction * fillPrice;
+  let unitsDelta = direction * unitsStep;
+  let tradeQuote = resolveFillPriceFromBook({
+    side,
+    quantity: Math.abs(unitsDelta),
+    markPrice,
+    bid: point?.bid,
+    ask: point?.ask,
+    depth: point?.depth || null,
+    slippageBps
+  });
+  fillPrice = Math.max(toNum(tradeQuote.fillPrice, fillPrice), 1e-9);
+  spreadBps = Math.max(0, toNum(tradeQuote.spreadBps, spreadBps));
+
+  if (direction > 0 && cashBefore + 1e-9 < Math.abs(unitsDelta) * fillPrice) {
+    unitsStep = cashBefore / Math.max(fillPrice, 1e-9);
+    if (!Number.isFinite(unitsStep) || unitsStep < minTradableUnits) {
+      return { wallet: markWallet({ ...wallet, lastActionAt: now }, point.price), trade: null };
+    }
+    unitsDelta = direction * unitsStep;
+    tradeQuote = resolveFillPriceFromBook({
+      side,
+      quantity: Math.abs(unitsDelta),
+      markPrice,
+      bid: point?.bid,
+      ask: point?.ask,
+      depth: point?.depth || null,
+      slippageBps
+    });
+    fillPrice = Math.max(toNum(tradeQuote.fillPrice, fillPrice), 1e-9);
+    spreadBps = Math.max(0, toNum(tradeQuote.spreadBps, spreadBps));
+  }
+
+  const unitsAfter = unitsBefore + unitsDelta;
+  const rawCashAfter = cashBefore - unitsDelta * fillPrice;
+  const cashAfter = Math.abs(rawCashAfter) <= 1e-9 ? 0 : rawCashAfter;
 
   let avgEntryAfter = wallet.avgEntry === null ? null : toNum(wallet.avgEntry, null);
   let realizedDelta = 0;
   let closedQty = 0;
 
-  if (unitsBefore > 0 && direction < 0 && avgEntryAfter !== null) {
-    closedQty = Math.min(Math.abs(direction), Math.abs(unitsBefore));
+  if (unitsBefore > 0 && unitsDelta < 0 && avgEntryAfter !== null) {
+    closedQty = Math.min(Math.abs(unitsDelta), Math.abs(unitsBefore));
     realizedDelta += (fillPrice - avgEntryAfter) * closedQty;
   }
-  if (unitsBefore < 0 && direction > 0 && avgEntryAfter !== null) {
-    closedQty = Math.min(Math.abs(direction), Math.abs(unitsBefore));
+  if (unitsBefore < 0 && unitsDelta > 0 && avgEntryAfter !== null) {
+    closedQty = Math.min(Math.abs(unitsDelta), Math.abs(unitsBefore));
     realizedDelta += (avgEntryAfter - fillPrice) * closedQty;
   }
 
-  if (unitsAfter === 0) {
+  if (Math.abs(unitsAfter) <= 1e-9) {
     avgEntryAfter = null;
   } else if (unitsBefore === 0) {
     avgEntryAfter = fillPrice;
-  } else if (Math.sign(unitsBefore) === Math.sign(direction)) {
+  } else if (Math.sign(unitsBefore) === Math.sign(unitsDelta)) {
     const previousUnits = Math.abs(unitsBefore);
     const nextUnits = Math.abs(unitsAfter);
-    avgEntryAfter = (previousUnits * (avgEntryAfter || fillPrice) + Math.abs(direction) * fillPrice) / Math.max(nextUnits, 1);
+    avgEntryAfter = (previousUnits * (avgEntryAfter || fillPrice) + Math.abs(unitsDelta) * fillPrice) / Math.max(nextUnits, 1e-9);
   }
 
   const tradeCount = toNum(wallet.tradeCount, 0) + (closedQty > 0 ? 1 : 0);
@@ -819,10 +956,10 @@ export const executeWalletAction = ({
   return {
     wallet: nextWallet,
     trade: {
-      id: `trade:${now}:${Math.round(fillPrice * 1000)}`,
+      id: `trade:${now}:${Math.round(fillPrice * 1000)}:${Math.round(Math.abs(unitsDelta) * 1000000)}`,
       timestamp: now,
       action,
-      unitsDelta: direction,
+      unitsDelta,
       unitsAfter,
       fillPrice,
       markPrice,

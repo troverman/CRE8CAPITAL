@@ -94,12 +94,17 @@ export default function DecisionListPage({ snapshot }) {
               <article className="decision-feed-row">
                 <div className="decision-feed-head">
                   <strong>
-                    {index + 1}. {decision.symbol} ({decision.assetClass})
+                    <Link to={`/decision/${encodeURIComponent(decision.id)}`} className="inline-link">
+                      {index + 1}. {decision.symbol} ({decision.assetClass})
+                    </Link>
                   </strong>
                   <span className={`tensor-chip ${decision.action}`}>{decision.action}</span>
                 </div>
                 <p>{decision.reason}</p>
                 <div className="decision-feed-links">
+                  <Link to={`/decision/${encodeURIComponent(decision.id)}`} className="inline-link">
+                    decision
+                  </Link>
                   <Link to={`/strategy/${encodeURIComponent(decision.strategyName)}`} className="inline-link">
                     strategy:{decision.strategyName}
                   </Link>
@@ -113,7 +118,12 @@ export default function DecisionListPage({ snapshot }) {
                   <small>trigger {decision.trigger}</small>
                   <small>score {fmtNum(decision.score, 2)}</small>
                   <small>{fmtTime(decision.timestamp)}</small>
-                  <small>id {decision.id}</small>
+                  <small>
+                    id{' '}
+                    <Link to={`/decision/${encodeURIComponent(decision.id)}`} className="inline-link">
+                      {decision.id}
+                    </Link>
+                  </small>
                 </div>
               </article>
             );

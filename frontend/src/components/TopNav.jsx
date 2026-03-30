@@ -2,16 +2,14 @@ import { Link } from '../lib/router';
 
 const navItems = [
   { to: '/', label: 'Overview' },
+  { to: '/assets', label: 'Assets' },
   { to: '/markets', label: 'Markets' },
+  { to: '/graph', label: 'Graph' },
+  { to: '/strategies', label: 'Strategies' },
   { to: '/signals', label: 'Signals' },
   { to: '/decisions', label: 'Decisions' },
-  { to: '/probability', label: 'PDF Lab' },
-  { to: '/strategies', label: 'Strategies' },
-  { to: '/account', label: 'Account' },
   { to: '/wallet', label: 'Wallet' },
-  { to: '/assets', label: 'Assets' },
-  { to: '/graph', label: 'Graph' },
-  { to: '/strategy', label: 'Strategy Lab' }
+  { to: '/account', label: 'Account' }
 ];
 
 export default function TopNav({ pathname, connected, transport, localFallback }) {
@@ -21,14 +19,12 @@ export default function TopNav({ pathname, connected, transport, localFallback }
     if (to === '/') return path === '/';
     if (to === '/markets') return path === '/markets' || path.startsWith('/market/');
     if (to === '/signals') return path === '/signals' || path.startsWith('/signal/');
-    if (to === '/decisions') return path === '/decisions';
-    if (to === '/probability') return path === '/probability';
-    if (to === '/strategies') return path === '/strategies' || path.startsWith('/strategy/');
+    if (to === '/decisions') return path === '/decisions' || path.startsWith('/decision/');
+    if (to === '/strategies') return path === '/strategies' || path.startsWith('/strategy/') || path === '/strategy';
     if (to === '/account') return path === '/account' || path === '/settings';
     if (to === '/wallet') return path === '/wallet' || path.startsWith('/wallet/');
     if (to === '/assets') return path === '/assets' || path.startsWith('/asset/');
     if (to === '/graph') return path === '/graph';
-    if (to === '/strategy') return path === '/strategy';
     return path === to;
   };
 

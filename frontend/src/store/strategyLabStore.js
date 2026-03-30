@@ -26,6 +26,34 @@ const toNum = (value, fallback = 0) => {
   return Number.isFinite(num) ? num : fallback;
 };
 
+const toFiniteOrNull = (value) => {
+  const num = Number(value);
+  return Number.isFinite(num) ? num : null;
+};
+
+const sanitizeDepthSide = (levels, side) => {
+  const list = Array.isArray(levels) ? levels : [];
+  const mapped = list
+    .map((level) => {
+      if (Array.isArray(level)) {
+        const price = toFiniteOrNull(level[0]);
+        const size = toFiniteOrNull(level[1]);
+        if (price === null || size === null || price <= 0 || size <= 0) return null;
+        return { price, size };
+      }
+      const price = toFiniteOrNull(level?.price);
+      const size = toFiniteOrNull(level?.size);
+      if (price === null || size === null || price <= 0 || size <= 0) return null;
+      return { price, size };
+    })
+    .filter((level) => Boolean(level))
+    .sort((a, b) => (side === 'bid' ? b.price - a.price : a.price - b.price));
+  if (mapped.length > 40) {
+    mapped.length = 40;
+  }
+  return mapped;
+};
+
 const createWalletAccount = ({ id, name, startCash = 100000, maxAbsUnits = 10, slippageBps = 1.2, enabled = true }) => ({
   id: String(id || `paper-${Date.now()}`),
   name: String(name || 'Paper Account'),
@@ -221,11 +249,19 @@ export const useStrategyLabStore = create((set) => ({
 
         const stepSequence = state.stepSequence + 1;
         const timestamp = Number(point.t) || Date.now();
+        const bid = toFiniteOrNull(point?.bid);
+        const ask = toFiniteOrNull(point?.ask);
+        const depthBids = sanitizeDepthSide(point?.depth?.bids, 'bid');
+        const depthAsks = sanitizeDepthSide(point?.depth?.asks, 'ask');
+        const normalizedDepth = depthBids.length > 0 || depthAsks.length > 0 ? { bids: depthBids, asks: depthAsks } : null;
         const normalizedPoint = {
           t: timestamp,
           price: Number(point.price),
           spread: Number(point.spread) || 0,
-          volume: Number(point.volume) || 0
+          volume: Number(point.volume) || 0,
+          bid,
+          ask,
+          depth: normalizedDepth
         };
 
         const runtimeSeries = trimTail([...state.runtimeSeries, normalizedPoint], MAX_RUNTIME_POINTS);

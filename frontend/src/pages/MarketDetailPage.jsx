@@ -9,6 +9,8 @@ import { fmtCompact, fmtInt, fmtNum, fmtPct, fmtTime, severityClass } from '../l
 import { buildClassicAnalysis } from '../lib/indicators';
 import { Link } from '../lib/router';
 
+const MULTIMARKET_URL = import.meta.env.VITE_MULTIMARKET_URL || 'https://multimarket.cre8.xyz';
+
 export default function MarketDetailPage({ marketId, snapshot, historyByMarket, onRefresh, syncing }) {
   const normalizedId = String(marketId || '').toLowerCase();
   const market = snapshot.markets.find((item) => {
@@ -200,6 +202,13 @@ export default function MarketDetailPage({ marketId, snapshot, historyByMarket, 
 
     return [...runtimeRows, ...socketRows];
   }, [market.providers, providerStates]);
+
+  const multimarketHref = useMemo(() => {
+    const base = String(MULTIMARKET_URL || '').trim();
+    if (!base) return null;
+    const separator = base.includes('?') ? '&' : '?';
+    return `${base}${separator}symbol=${encodeURIComponent(market.symbol || '')}&assetClass=${encodeURIComponent(market.assetClass || '')}`;
+  }, [market.assetClass, market.symbol]);
 
   return (
     <section className="page-grid">
@@ -461,7 +470,14 @@ export default function MarketDetailPage({ marketId, snapshot, historyByMarket, 
         <GlowCard className="panel-card">
           <div className="section-head">
             <h2>Order Book Depth</h2>
-            <span>{depthBook.providerName ? `${depthBook.providerName}` : 'No provider depth yet'}</span>
+            <div className="section-actions">
+              <span>{depthBook.providerName ? `${depthBook.providerName}` : 'No provider depth yet'}</span>
+              {multimarketHref ? (
+                <a className="btn secondary" href={multimarketHref} target="_blank" rel="noreferrer">
+                  Open MultiMarket 3D
+                </a>
+              ) : null}
+            </div>
           </div>
           <p className="socket-status-copy">
             bids {fmtCompact(depthBook.bidNotional)} | asks {fmtCompact(depthBook.askNotional)} | imbalance {fmtPct(depthBook.imbalance)} | at{' '}

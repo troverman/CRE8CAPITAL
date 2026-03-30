@@ -13,6 +13,7 @@ import GraphPage from './pages/GraphPage';
 import MarketDetailPage from './pages/MarketDetailPage';
 import MarketListPage from './pages/MarketListPage';
 import DecisionListPage from './pages/DecisionListPage';
+import DecisionDetailPage from './pages/DecisionDetailPage';
 import SignalDetailPage from './pages/SignalDetailPage';
 import SignalListPage from './pages/SignalListPage';
 import ProbabilityLabPage from './pages/ProbabilityLabPage';
@@ -53,6 +54,11 @@ const parseRoute = (pathname) => {
     return { name: 'signal', id: decodeURIComponent(signalMatch[1]) };
   }
 
+  const decisionDetailMatch = routePath.match(/^\/decision\/(.+)$/);
+  if (decisionDetailMatch) {
+    return { name: 'decision-detail', id: decodeURIComponent(decisionDetailMatch[1]) };
+  }
+
   const strategyDetailMatch = routePath.match(/^\/strategy\/(.+)$/);
   if (strategyDetailMatch) {
     return { name: 'strategy-detail', id: decodeURIComponent(strategyDetailMatch[1]) };
@@ -73,7 +79,7 @@ const NotFoundPage = () => {
         <h1>Route not found</h1>
         <p>
           Try `/markets`, `/assets`, `/signals`, `/decisions`, `/probability`, `/strategies`, `/graph`, `/strategy`, `/account`, `/wallet`, `/signal/:id`, or
-          `/strategy/:id`, `/wallet/:id`.
+          `/decision/:id`, `/strategy/:id`, `/wallet/:id`.
         </p>
       </GlowCard>
     </section>
@@ -152,6 +158,8 @@ export default function App() {
       {route.name === 'probability' ? <ProbabilityLabPage snapshot={snapshot} historyByMarket={historyByMarket} /> : null}
 
       {route.name === 'signal' ? <SignalDetailPage signalId={route.id} snapshot={snapshot} /> : null}
+
+      {route.name === 'decision-detail' ? <DecisionDetailPage decisionId={route.id} snapshot={snapshot} /> : null}
 
       {route.name === 'strategies' ? <StrategyListPage snapshot={snapshot} /> : null}
 
