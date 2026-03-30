@@ -68,6 +68,7 @@ export default function useStrategyLab({ snapshot, historyByMarket }) {
   const addWalletAccount = useStrategyLabStore((state) => state.addWalletAccount);
   const updateWalletAccount = useStrategyLabStore((state) => state.updateWalletAccount);
   const removeWalletAccount = useStrategyLabStore((state) => state.removeWalletAccount);
+  const clearWalletAccounts = useStrategyLabStore((state) => state.clearWalletAccounts);
   const setActiveWalletAccount = useStrategyLabStore((state) => state.setActiveWalletAccount);
   const stepRuntime = useStrategyLabStore((state) => state.stepRuntime);
   const resetRuntime = useStrategyLabStore((state) => state.resetRuntime);
@@ -335,6 +336,7 @@ export default function useStrategyLab({ snapshot, historyByMarket }) {
     addWalletAccount,
     updateWalletAccount,
     removeWalletAccount,
+    clearWalletAccounts,
     setActiveWalletAccount,
     triggerManual,
     resetSession,

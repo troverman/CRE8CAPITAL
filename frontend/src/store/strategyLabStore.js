@@ -137,9 +137,14 @@ export const useStrategyLabStore = create((set) => ({
         slippageBps: state.slippageBps,
         enabled: true
       });
+      const walletAccounts = [...state.walletAccounts, account];
+      const activeWalletAccountId = walletAccounts.some((item) => item.id === state.activeWalletAccountId) ? state.activeWalletAccountId : account.id;
+      const activeWallet = walletAccounts.find((item) => item.id === activeWalletAccountId) || account;
       return {
         ...state,
-        walletAccounts: [...state.walletAccounts, account]
+        walletAccounts,
+        activeWalletAccountId,
+        wallet: activeWallet.wallet
       };
     }),
   updateWalletAccount: (accountId, patch = {}) =>
@@ -169,7 +174,15 @@ export const useStrategyLabStore = create((set) => ({
       const id = String(accountId || '');
       if (!id) return state;
       const remaining = state.walletAccounts.filter((account) => account.id !== id);
-      if (remaining.length === 0) return state;
+      if (remaining.length === state.walletAccounts.length) return state;
+      if (remaining.length === 0) {
+        return {
+          ...state,
+          walletAccounts: [],
+          activeWalletAccountId: '',
+          wallet: createWalletState()
+        };
+      }
       const activeWalletAccountId = remaining.some((account) => account.id === state.activeWalletAccountId)
         ? state.activeWalletAccountId
         : remaining[0].id;
@@ -181,6 +194,13 @@ export const useStrategyLabStore = create((set) => ({
         wallet: activeWallet.wallet
       };
     }),
+  clearWalletAccounts: () =>
+    set((state) => ({
+      ...state,
+      walletAccounts: [],
+      activeWalletAccountId: '',
+      wallet: createWalletState()
+    })),
   setActiveWalletAccount: (accountId) =>
     set((state) => {
       const id = String(accountId || '');
@@ -244,7 +264,12 @@ export const useStrategyLabStore = create((set) => ({
             const trade = {
               ...execution.trade,
               accountId: account.id,
-              accountName: account.name
+              accountName: account.name,
+              strategyId: state.strategyId,
+              sourceId: sourceLabel || state.sourceId,
+              marketKey: selectedMarket?.key || '',
+              symbol: selectedMarket?.symbol || '',
+              assetClass: selectedMarket?.assetClass || ''
             };
             accountTrades.push(trade);
             emitPayloads.push({

@@ -464,6 +464,51 @@ a {
   grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 
+.strategy-lab-tab-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.42rem;
+}
+
+.strategy-lab-tab {
+  border: 1px solid rgba(126, 146, 214, 0.34);
+  border-radius: 999px;
+  background: rgba(10, 14, 28, 0.78);
+  color: var(--ink-soft);
+  padding: 0.44rem 0.82rem;
+  font-size: 0.76rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  transition: border-color 0.18s ease, color 0.18s ease, box-shadow 0.18s ease;
+}
+
+.strategy-lab-tab.active {
+  color: #e7f4ff;
+  border-color: rgba(100, 212, 255, 0.62);
+  box-shadow: inset 0 0 0 1px rgba(100, 212, 255, 0.2);
+}
+
+.strategy-drill-grid {
+  display: grid;
+  gap: 0.55rem;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.strategy-drill-card {
+  border: 1px solid rgba(121, 140, 201, 0.3);
+  border-radius: 12px;
+  background: rgba(8, 12, 24, 0.78);
+  padding: 0.52rem;
+  display: grid;
+  gap: 0.5rem;
+}
+
+.strategy-drill-controls {
+  display: grid;
+  gap: 0.45rem;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
 .strategy-account-create {
   display: grid;
   gap: 0.5rem;
@@ -874,6 +919,21 @@ a {
 
 .wallet-trade-item {
   gap: 0.3rem;
+}
+
+.wallet-holding-item {
+  gap: 0.3rem;
+}
+
+.wallet-holding-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.wallet-holding-head strong {
+  font-size: 0.84rem;
 }
 
 .wallet-trade-head {
@@ -1868,7 +1928,8 @@ th {
   }
 
   .strategy-lab-top-grid,
-  .strategy-lab-chart-grid {
+  .strategy-lab-chart-grid,
+  .strategy-drill-grid {
     grid-template-columns: 1fr;
   }
 
@@ -1877,6 +1938,10 @@ th {
   }
 
   .strategy-account-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .strategy-drill-controls {
     grid-template-columns: 1fr;
   }
 

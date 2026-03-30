@@ -35,6 +35,7 @@ const trimHead = (list, maxLength) => {
 
 const createDefaultWalletLab = () => ({
   wallet: createWalletState(DEFAULT_START_CASH),
+  assetHoldings: {},
   tradeLog: [],
   equityHistory: [],
   selectedMarketKey: '',
@@ -67,6 +68,9 @@ const sanitizeWalletState = (raw) => {
         .map((trade) => ({
           id: String(trade?.id || `trade:${Date.now()}`),
           timestamp: Math.max(0, Math.round(toNum(trade?.timestamp, Date.now()))),
+          marketKey: String(trade?.marketKey || ''),
+          symbol: String(trade?.symbol || '').toUpperCase(),
+          assetClass: String(trade?.assetClass || 'unknown').toLowerCase(),
           action: trade?.action === 'reduce' ? 'reduce' : 'accumulate',
           unitsDelta: toNum(trade?.unitsDelta, 0),
           unitsAfter: toNum(trade?.unitsAfter, 0),
@@ -81,6 +85,25 @@ const sanitizeWalletState = (raw) => {
         .slice(0, MAX_TRADES)
     : [];
 
+  const assetHoldings = {};
+  if (raw.assetHoldings && typeof raw.assetHoldings === 'object') {
+    for (const [marketKey, holding] of Object.entries(raw.assetHoldings)) {
+      if (!holding || typeof holding !== 'object') continue;
+      const units = toNum(holding.units, 0);
+      if (Math.abs(units) <= 1e-9) continue;
+      assetHoldings[String(marketKey)] = {
+        marketKey: String(marketKey),
+        symbol: String(holding.symbol || '').toUpperCase() || String(marketKey).toUpperCase(),
+        assetClass: String(holding.assetClass || 'unknown').toLowerCase(),
+        units,
+        avgEntry: holding.avgEntry === null ? null : toNum(holding.avgEntry, null),
+        realizedPnl: toNum(holding.realizedPnl, 0),
+        lastPrice: Math.max(0, toNum(holding.lastPrice, 0)),
+        updatedAt: Math.max(0, Math.round(toNum(holding.updatedAt, Date.now())))
+      };
+    }
+  }
+
   const equityHistory = Array.isArray(raw.equityHistory)
     ? raw.equityHistory
         .map((row) => ({
@@ -94,6 +117,7 @@ const sanitizeWalletState = (raw) => {
 
   return {
     wallet,
+    assetHoldings,
     tradeLog,
     equityHistory,
     selectedMarketKey: String(raw.selectedMarketKey || ''),
@@ -102,6 +126,70 @@ const sanitizeWalletState = (raw) => {
     slippageBps: clamp(raw.slippageBps, 0, 50),
     note: String(raw.note || base.note).slice(0, 140)
   };
+};
+
+const applyAssetTrade = ({ holdings, trade, market, fallbackPrice, timestamp }) => {
+  const next = { ...(holdings || {}) };
+  const marketKey = String(market?.key || trade?.marketKey || '');
+  if (!marketKey) return next;
+
+  const unitsDelta = toNum(trade?.unitsDelta, 0);
+  if (!Number.isFinite(unitsDelta) || Math.abs(unitsDelta) <= 1e-12) return next;
+  const fillPrice = Math.max(toNum(trade?.fillPrice, fallbackPrice), 0);
+  if (fillPrice <= 0) return next;
+
+  const current = next[marketKey] || {
+    marketKey,
+    symbol: String(market?.symbol || trade?.symbol || marketKey).toUpperCase(),
+    assetClass: String(market?.assetClass || trade?.assetClass || 'unknown').toLowerCase(),
+    units: 0,
+    avgEntry: null,
+    realizedPnl: 0,
+    lastPrice: fillPrice,
+    updatedAt: Math.max(0, Math.round(toNum(timestamp, Date.now())))
+  };
+
+  const unitsBefore = toNum(current.units, 0);
+  const unitsAfter = unitsBefore + unitsDelta;
+  let avgEntry = current.avgEntry === null ? null : toNum(current.avgEntry, null);
+  let realizedPnl = toNum(current.realizedPnl, 0);
+
+  if (unitsBefore === 0) {
+    avgEntry = fillPrice;
+  } else if (Math.sign(unitsBefore) === Math.sign(unitsDelta)) {
+    const prevAbs = Math.abs(unitsBefore);
+    const nextAbs = Math.abs(unitsAfter);
+    avgEntry = (prevAbs * (avgEntry || fillPrice) + Math.abs(unitsDelta) * fillPrice) / Math.max(nextAbs, 1e-9);
+  } else {
+    const closedQty = Math.min(Math.abs(unitsDelta), Math.abs(unitsBefore));
+    if (avgEntry !== null && closedQty > 0) {
+      if (unitsBefore > 0) realizedPnl += (fillPrice - avgEntry) * closedQty;
+      else realizedPnl += (avgEntry - fillPrice) * closedQty;
+    }
+
+    if (Math.abs(unitsAfter) <= 1e-9) {
+      avgEntry = null;
+    } else if (Math.sign(unitsAfter) !== Math.sign(unitsBefore)) {
+      avgEntry = fillPrice;
+    }
+  }
+
+  if (Math.abs(unitsAfter) <= 1e-9) {
+    delete next[marketKey];
+    return next;
+  }
+
+  next[marketKey] = {
+    marketKey,
+    symbol: String(market?.symbol || current.symbol || marketKey).toUpperCase(),
+    assetClass: String(market?.assetClass || current.assetClass || 'unknown').toLowerCase(),
+    units: unitsAfter,
+    avgEntry,
+    realizedPnl,
+    lastPrice: Math.max(0, toNum(current.lastPrice, fillPrice)),
+    updatedAt: Math.max(0, Math.round(toNum(timestamp, Date.now())))
+  };
+  return next;
 };
 
 const readPassportSummary = () => {
@@ -188,6 +276,15 @@ export default function WalletPage({ snapshot }) {
     return rankedMarkets.find((market) => market.key === walletLab.selectedMarketKey) || rankedMarkets[0] || null;
   }, [rankedMarkets, walletLab.selectedMarketKey]);
 
+  const marketByKey = useMemo(() => {
+    const map = new Map();
+    for (const market of rankedMarkets) {
+      if (!market?.key) continue;
+      map.set(market.key, market);
+    }
+    return map;
+  }, [rankedMarkets]);
+
   const marketPrice = toNum(selectedMarket?.referencePrice, 0);
   const marketSpread = Math.max(0, toNum(selectedMarket?.spreadBps, 0));
   const marketVolume = Math.max(0, toNum(selectedMarket?.totalVolume, 0));
@@ -212,13 +309,28 @@ export default function WalletPage({ snapshot }) {
             MAX_EQUITY_POINTS
           )
         : previous.equityHistory;
+      const nextHoldings = {};
+      for (const [key, holding] of Object.entries(previous.assetHoldings || {})) {
+        const market = marketByKey.get(key);
+        const lastPrice = Math.max(0, toNum(market?.referencePrice, holding.lastPrice));
+        const units = toNum(holding.units, 0);
+        if (Math.abs(units) <= 1e-9) continue;
+        nextHoldings[key] = {
+          ...holding,
+          symbol: String(market?.symbol || holding.symbol || key).toUpperCase(),
+          assetClass: String(market?.assetClass || holding.assetClass || 'unknown').toLowerCase(),
+          lastPrice,
+          updatedAt: now
+        };
+      }
       return {
         ...previous,
         wallet: markedWallet,
+        assetHoldings: nextHoldings,
         equityHistory: nextHistory
       };
     });
-  }, [marketPrice, selectedMarket, snapshot?.now]);
+  }, [marketByKey, marketPrice, selectedMarket, snapshot?.now]);
 
   const handleControlChange = (field, value) => {
     setWalletLab((previous) => ({
@@ -250,6 +362,7 @@ export default function WalletPage({ snapshot }) {
       setWalletLab((previous) => {
         let wallet = previous.wallet;
         const trades = [];
+        let assetHoldings = { ...(previous.assetHoldings || {}) };
 
         for (let index = 0; index < requestedUnits; index += 1) {
           const execution = executeWalletAction({
@@ -265,7 +378,20 @@ export default function WalletPage({ snapshot }) {
           });
           wallet = execution.wallet;
           if (execution.trade) {
-            trades.push(execution.trade);
+            const trade = {
+              ...execution.trade,
+              marketKey: String(selectedMarket.key),
+              symbol: String(selectedMarket.symbol || selectedMarket.key).toUpperCase(),
+              assetClass: String(selectedMarket.assetClass || 'unknown').toLowerCase()
+            };
+            trades.push(trade);
+            assetHoldings = applyAssetTrade({
+              holdings: assetHoldings,
+              trade,
+              market: selectedMarket,
+              fallbackPrice: marketPrice,
+              timestamp: now + index
+            });
           }
         }
 
@@ -285,6 +411,7 @@ export default function WalletPage({ snapshot }) {
         return {
           ...previous,
           wallet,
+          assetHoldings,
           tradeLog: trimHead([...trades.reverse(), ...previous.tradeLog], MAX_TRADES),
           equityHistory: nextHistory
         };
@@ -325,8 +452,38 @@ export default function WalletPage({ snapshot }) {
     setMessage('Passport summary refreshed from account settings.');
   };
 
+  const openHoldings = useMemo(() => {
+    const rows = [];
+    for (const [key, holding] of Object.entries(walletLab.assetHoldings || {})) {
+      const units = toNum(holding?.units, 0);
+      if (Math.abs(units) <= 1e-9) continue;
+      const market = marketByKey.get(key);
+      const markPrice = Math.max(0, toNum(market?.referencePrice, holding?.lastPrice));
+      const avgEntry = holding?.avgEntry === null ? null : toNum(holding?.avgEntry, null);
+      const notional = Math.abs(units) * markPrice;
+      const unrealized =
+        avgEntry === null
+          ? 0
+          : units > 0
+            ? (markPrice - avgEntry) * Math.abs(units)
+            : (avgEntry - markPrice) * Math.abs(units);
+      rows.push({
+        marketKey: key,
+        symbol: String(market?.symbol || holding?.symbol || key).toUpperCase(),
+        assetClass: String(market?.assetClass || holding?.assetClass || 'unknown').toLowerCase(),
+        units,
+        avgEntry,
+        markPrice,
+        notional,
+        unrealized,
+        updatedAt: toNum(holding?.updatedAt, snapshot?.now || Date.now())
+      });
+    }
+    return rows.sort((a, b) => b.notional - a.notional);
+  }, [marketByKey, snapshot?.now, walletLab.assetHoldings]);
+
   const equitySeries = walletLab.equityHistory.map((row) => row.equity);
-  const openNotional = Math.abs(walletLab.wallet.units) * Math.max(marketPrice, 0);
+  const openNotional = openHoldings.reduce((sum, holding) => sum + holding.notional, 0);
   const winRate = walletLab.wallet.tradeCount > 0 ? (walletLab.wallet.winCount / Math.max(walletLab.wallet.tradeCount, 1)) * 100 : 0;
 
   return (
@@ -488,6 +645,34 @@ export default function WalletPage({ snapshot }) {
 
       <GlowCard className="panel-card">
         <div className="section-head">
+          <h2>Held Assets</h2>
+          <span>{openHoldings.length} open positions</span>
+        </div>
+        <div className="list-stack">
+          {openHoldings.map((holding) => (
+            <article key={`holding:${holding.marketKey}`} className="list-item wallet-holding-item">
+              <div className="wallet-holding-head">
+                <strong>
+                  {holding.symbol} ({holding.assetClass})
+                </strong>
+                <span className={holding.units >= 0 ? 'status-pill up' : 'status-pill down'}>{holding.units >= 0 ? 'long' : 'short'}</span>
+              </div>
+              <div className="item-meta">
+                <small>units {fmtNum(holding.units, 4)}</small>
+                <small>avg {holding.avgEntry === null ? '-' : fmtNum(holding.avgEntry, 4)}</small>
+                <small>mark {fmtNum(holding.markPrice, 4)}</small>
+                <small>notional {fmtNum(holding.notional, 2)}</small>
+                <small className={holding.unrealized >= 0 ? 'up' : 'down'}>uPnL {fmtNum(holding.unrealized, 2)}</small>
+                <small>{fmtTime(holding.updatedAt)}</small>
+              </div>
+            </article>
+          ))}
+          {openHoldings.length === 0 ? <p className="action-message">No open assets. Submit Buy/Sell actions to create holdings.</p> : null}
+        </div>
+      </GlowCard>
+
+      <GlowCard className="panel-card">
+        <div className="section-head">
           <h2>Recent Trades</h2>
           <span>{walletLab.tradeLog.length} rows</span>
         </div>
@@ -495,7 +680,9 @@ export default function WalletPage({ snapshot }) {
           {walletLab.tradeLog.map((trade) => (
             <article key={trade.id} className="list-item wallet-trade-item">
               <div className="wallet-trade-head">
-                <strong className={trade.action === 'accumulate' ? 'up' : 'down'}>{trade.action === 'accumulate' ? 'buy' : 'sell'}</strong>
+                <strong className={trade.action === 'accumulate' ? 'up' : 'down'}>
+                  {trade.action === 'accumulate' ? 'buy' : 'sell'} {trade.symbol ? `| ${trade.symbol}` : ''}
+                </strong>
                 <small>{fmtTime(trade.timestamp)}</small>
               </div>
               <p>{trade.reason || 'manual trade'}</p>

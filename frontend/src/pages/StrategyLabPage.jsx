@@ -38,6 +38,29 @@ const findNearestPointIndexByTime = (rows, targetTime) => {
   return Math.abs(rows[right].t - targetTime) < Math.abs(rows[left].t - targetTime) ? right : left;
 };
 
+const STRATEGY_LAB_TABS = [
+  { id: 'overview', label: 'Overview' },
+  { id: 'accounts', label: 'Accounts' },
+  { id: 'strategy', label: 'Strategy' }
+];
+
+const normalizeSeriesToPct = (series = []) => {
+  const normalized = Array.isArray(series)
+    ? series.map((value) => {
+        const num = Number(value);
+        return Number.isFinite(num) ? num : null;
+      })
+    : [];
+  const first = normalized.find((value) => value !== null);
+  if (!Number.isFinite(first) || Math.abs(first) < 1e-12) return normalized.map(() => null);
+  return normalized.map((value) => (value === null ? null : ((value - first) / Math.abs(first)) * 100));
+};
+
+const seriesPointCount = (series = []) => {
+  if (!Array.isArray(series)) return 0;
+  return series.reduce((count, value) => (Number.isFinite(value) ? count + 1 : count), 0);
+};
+
 export default function StrategyLabPage({ snapshot, historyByMarket }) {
   const txEvents = useExecutionFeedStore((state) => state.txEvents);
   const positionEvents = useExecutionFeedStore((state) => state.positionEvents);
@@ -77,6 +100,7 @@ export default function StrategyLabPage({ snapshot, historyByMarket }) {
     addWalletAccount,
     updateWalletAccount,
     removeWalletAccount,
+    clearWalletAccounts,
     setActiveWalletAccount,
     triggerManual,
     resetSession,
@@ -151,6 +175,8 @@ export default function StrategyLabPage({ snapshot, historyByMarket }) {
   const [solverAuto, setSolverAuto] = useState(false);
   const [solverPortfolio, setSolverPortfolio] = useState(() => createPdfPortfolioState({ startCash: 100000 }));
   const [solverOrderLog, setSolverOrderLog] = useState([]);
+  const [labView, setLabView] = useState('overview');
+  const [drilldownAccountId, setDrilldownAccountId] = useState('');
 
   const handleAddAccount = () => {
     const safeName = String(newAccountName || '').trim();
@@ -160,11 +186,30 @@ export default function StrategyLabPage({ snapshot, historyByMarket }) {
       startCash: safeCash
     });
     setNewAccountName('');
+    setNewAccountCash(100000);
   };
 
   const activeAccount = useMemo(() => {
     return walletAccounts.find((account) => account.id === activeWalletAccountId) || walletAccounts[0] || null;
   }, [activeWalletAccountId, walletAccounts]);
+
+  useEffect(() => {
+    if (walletAccounts.length === 0) {
+      if (drilldownAccountId) setDrilldownAccountId('');
+      return;
+    }
+    if (drilldownAccountId && walletAccounts.some((account) => account.id === drilldownAccountId)) return;
+    if (activeWalletAccountId && walletAccounts.some((account) => account.id === activeWalletAccountId)) {
+      setDrilldownAccountId(activeWalletAccountId);
+      return;
+    }
+    setDrilldownAccountId(walletAccounts[0].id);
+  }, [activeWalletAccountId, drilldownAccountId, walletAccounts]);
+
+  const selectedDrillAccount = useMemo(() => {
+    if (!drilldownAccountId) return null;
+    return walletAccounts.find((account) => account.id === drilldownAccountId) || null;
+  }, [drilldownAccountId, walletAccounts]);
 
   const enabledAccountCount = useMemo(() => {
     return walletAccounts.filter((account) => account.enabled).length;
@@ -173,6 +218,54 @@ export default function StrategyLabPage({ snapshot, historyByMarket }) {
   const strategyLabel = useMemo(() => {
     return strategyOptions.find((option) => option.id === strategyId)?.label || strategyId;
   }, [strategyId, strategyOptions]);
+
+  const selectedAccountTradeRows = useMemo(() => {
+    if (!selectedDrillAccount) return [];
+    return tradeLog.filter((trade) => trade.accountId === selectedDrillAccount.id);
+  }, [selectedDrillAccount, tradeLog]);
+
+  const selectedAccountTxRows = useMemo(() => {
+    if (!selectedDrillAccount) return [];
+    return txEvents.filter((row) => row.accountId === selectedDrillAccount.id);
+  }, [selectedDrillAccount, txEvents]);
+
+  const selectedAccountPositionRows = useMemo(() => {
+    if (!selectedDrillAccount) return [];
+    return positionEvents.filter((row) => row.accountId === selectedDrillAccount.id);
+  }, [positionEvents, selectedDrillAccount]);
+
+  const selectedAccountEquitySeries = useMemo(() => {
+    if (!selectedDrillAccount) return [];
+    const points = selectedAccountPositionRows
+      .slice()
+      .sort((a, b) => (Number(a.timestamp) || 0) - (Number(b.timestamp) || 0))
+      .map((row) => Number(row?.wallet?.equity))
+      .filter((value) => Number.isFinite(value))
+      .slice(-320);
+    if (points.length >= 2) return points;
+    const start = Number(selectedDrillAccount.startCash) || 100000;
+    const current = Number(selectedDrillAccount.wallet?.equity);
+    const safeCurrent = Number.isFinite(current) ? current : start;
+    return [start, safeCurrent];
+  }, [selectedAccountPositionRows, selectedDrillAccount]);
+
+  const selectedStrategyTradeRows = useMemo(() => {
+    return tradeLog.filter((trade) => String(trade.strategyId || strategyId) === strategyId);
+  }, [strategyId, tradeLog]);
+
+  const selectedStrategyTxRows = useMemo(() => {
+    return txEvents.filter((event) => String(event.strategyId || '') === strategyId);
+  }, [strategyId, txEvents]);
+
+  const selectedStrategyPositionRows = useMemo(() => {
+    return positionEvents.filter((event) => String(event.strategyId || '') === strategyId);
+  }, [positionEvents, strategyId]);
+
+  const selectedStrategyWinRate = useMemo(() => {
+    if (!selectedStrategyTradeRows.length) return 0;
+    const wins = selectedStrategyTradeRows.filter((trade) => Number(trade.realizedDelta) > 0).length;
+    return (wins / selectedStrategyTradeRows.length) * 100;
+  }, [selectedStrategyTradeRows]);
 
   const runtimeTradeMarkers = useMemo(() => {
     const timeSeries = runtimeSeries
@@ -233,6 +326,50 @@ export default function StrategyLabPage({ snapshot, historyByMarket }) {
         };
       });
   }, [runtimeSeries, tradeLog]);
+
+  const normalizedRuntimePriceSeries = useMemo(() => normalizeSeriesToPct(runtimePriceSeries), [runtimePriceSeries]);
+  const normalizedRuntimeEquitySeries = useMemo(() => normalizeSeriesToPct(runtimeEquity), [runtimeEquity]);
+  const normalizedBacktestEquitySeries = useMemo(() => normalizeSeriesToPct(backtestEquitySeries), [backtestEquitySeries]);
+  const normalizedSelectedAccountEquitySeries = useMemo(() => normalizeSeriesToPct(selectedAccountEquitySeries), [selectedAccountEquitySeries]);
+
+  const overviewComboBaseSeries = useMemo(() => {
+    if (seriesPointCount(normalizedRuntimePriceSeries) >= 2) return normalizedRuntimePriceSeries;
+    if (seriesPointCount(normalizedRuntimeEquitySeries) >= 2) return normalizedRuntimeEquitySeries;
+    return normalizedSelectedAccountEquitySeries;
+  }, [normalizedRuntimeEquitySeries, normalizedRuntimePriceSeries, normalizedSelectedAccountEquitySeries]);
+
+  const overviewComboOverlays = useMemo(() => {
+    const overlays = [];
+    if (seriesPointCount(normalizedRuntimeEquitySeries) >= 2) {
+      overlays.push({
+        key: 'overview-runtime-equity',
+        label: 'Runtime Equity %',
+        points: normalizedRuntimeEquitySeries,
+        stroke: '#7ad9ff',
+        strokeWidth: 1.8
+      });
+    }
+    if (seriesPointCount(normalizedBacktestEquitySeries) >= 2) {
+      overlays.push({
+        key: 'overview-backtest-equity',
+        label: 'Backtest Equity %',
+        points: normalizedBacktestEquitySeries,
+        stroke: '#a598ff',
+        strokeWidth: 1.5,
+        dasharray: '6 5'
+      });
+    }
+    if (seriesPointCount(normalizedSelectedAccountEquitySeries) >= 2) {
+      overlays.push({
+        key: 'overview-selected-account',
+        label: `${selectedDrillAccount?.name || 'Account'} Equity %`,
+        points: normalizedSelectedAccountEquitySeries,
+        stroke: '#62ffcc',
+        strokeWidth: 1.75
+      });
+    }
+    return overlays;
+  }, [normalizedBacktestEquitySeries, normalizedRuntimeEquitySeries, normalizedSelectedAccountEquitySeries, selectedDrillAccount?.name]);
 
   const solverBuckets = useMemo(() => buildPdfBuckets({ minPct: -4.5, maxPct: 4.5, stepPct: 0.25 }), []);
 
@@ -512,6 +649,390 @@ export default function StrategyLabPage({ snapshot, historyByMarket }) {
 
       <GlowCard className="panel-card">
         <div className="section-head">
+          <h2>Lab Views</h2>
+          <span>
+            {strategyLabel} | {selectedDrillAccount?.name || 'no account selected'}
+          </span>
+        </div>
+        <div className="strategy-lab-tab-row" role="tablist" aria-label="Strategy lab views">
+          {STRATEGY_LAB_TABS.map((tab) => (
+            <button
+              key={tab.id}
+              type="button"
+              role="tab"
+              aria-selected={labView === tab.id}
+              className={labView === tab.id ? 'strategy-lab-tab active' : 'strategy-lab-tab'}
+              onClick={() => setLabView(tab.id)}
+            >
+              {tab.label}
+            </button>
+          ))}
+        </div>
+
+        {labView === 'overview' ? (
+          <div className="strategy-drill-grid">
+            <article className="strategy-drill-card">
+              <LineChart
+                title={`Overview Combo (${selectedMarket?.symbol || 'SIM'})`}
+                points={overviewComboBaseSeries}
+                stroke="#86cbff"
+                fillFrom="rgba(125, 198, 255, 0.3)"
+                fillTo="rgba(125, 198, 255, 0.02)"
+                overlays={overviewComboOverlays}
+                unit="%"
+              />
+            </article>
+            <article className="strategy-drill-card">
+              <div className="section-head">
+                <h2>Overview Drilldown</h2>
+                <span>{fmtInt(walletAccounts.length)} accounts</span>
+              </div>
+              <div className="strategy-drill-controls">
+                <label className="control-field">
+                  <span>Drill Account</span>
+                  <select value={drilldownAccountId} onChange={(event) => setDrilldownAccountId(event.target.value)} disabled={walletAccounts.length === 0}>
+                    {walletAccounts.length === 0 ? (
+                      <option value="">No accounts</option>
+                    ) : (
+                      walletAccounts.map((account) => (
+                        <option key={`drill:${account.id}`} value={account.id}>
+                          {account.name}
+                        </option>
+                      ))
+                    )}
+                  </select>
+                </label>
+              </div>
+              <div className="strategy-lab-mini-grid">
+                <article className="strategy-lab-mini-stat">
+                  <span>Combo Series</span>
+                  <strong>{fmtInt(seriesPointCount(overviewComboBaseSeries))} pts</strong>
+                </article>
+                <article className="strategy-lab-mini-stat">
+                  <span>Overlay Series</span>
+                  <strong>{fmtInt(overviewComboOverlays.length)}</strong>
+                </article>
+                <article className="strategy-lab-mini-stat">
+                  <span>Selected Account Equity</span>
+                  <strong className={toneClass(selectedDrillAccount?.wallet?.equity - (selectedDrillAccount?.startCash || 100000))}>
+                    {fmtNum(selectedDrillAccount?.wallet?.equity, 2)}
+                  </strong>
+                </article>
+                <article className="strategy-lab-mini-stat">
+                  <span>Selected Account Position</span>
+                  <strong>{fmtNum(selectedDrillAccount?.wallet?.units, 0)} units</strong>
+                </article>
+                <article className="strategy-lab-mini-stat">
+                  <span>Strategy Trades</span>
+                  <strong>{fmtInt(selectedStrategyTradeRows.length)}</strong>
+                </article>
+                <article className="strategy-lab-mini-stat">
+                  <span>Strategy Win Rate</span>
+                  <strong className={toneClass(selectedStrategyWinRate - 50)}>{fmtPct(selectedStrategyWinRate)}</strong>
+                </article>
+                <article className="strategy-lab-mini-stat">
+                  <span>Account TX Events</span>
+                  <strong>{fmtInt(selectedAccountTxRows.length)}</strong>
+                </article>
+                <article className="strategy-lab-mini-stat">
+                  <span>Account Position Events</span>
+                  <strong>{fmtInt(selectedAccountPositionRows.length)}</strong>
+                </article>
+              </div>
+            </article>
+          </div>
+        ) : null}
+
+        {labView === 'accounts' ? (
+          <>
+            <div className="strategy-drill-grid">
+              <article className="strategy-drill-card">
+                <div className="section-head">
+                  <h2>Account Drilldown</h2>
+                  <span>{selectedDrillAccount?.name || 'none'}</span>
+                </div>
+                <div className="strategy-drill-controls">
+                  <label className="control-field">
+                    <span>Selected Account</span>
+                    <select value={drilldownAccountId} onChange={(event) => setDrilldownAccountId(event.target.value)} disabled={walletAccounts.length === 0}>
+                      {walletAccounts.length === 0 ? (
+                        <option value="">No accounts</option>
+                      ) : (
+                        walletAccounts.map((account) => (
+                          <option key={`account-drill:${account.id}`} value={account.id}>
+                            {account.name}
+                          </option>
+                        ))
+                      )}
+                    </select>
+                  </label>
+                </div>
+                <div className="hero-actions">
+                  <button
+                    type="button"
+                    className="btn secondary"
+                    disabled={!selectedDrillAccount}
+                    onClick={() => {
+                      if (!selectedDrillAccount) return;
+                      setActiveWalletAccount(selectedDrillAccount.id);
+                    }}
+                  >
+                    Set Active
+                  </button>
+                  <button
+                    type="button"
+                    className="btn secondary"
+                    disabled={!selectedDrillAccount}
+                    onClick={() => {
+                      if (!selectedDrillAccount) return;
+                      removeWalletAccount(selectedDrillAccount.id);
+                    }}
+                  >
+                    Remove Selected
+                  </button>
+                  <button type="button" className="btn secondary" disabled={walletAccounts.length === 0} onClick={clearWalletAccounts}>
+                    Delete All Accounts
+                  </button>
+                </div>
+                {selectedDrillAccount ? (
+                  <>
+                    <div className="strategy-lab-mini-grid">
+                      <article className="strategy-lab-mini-stat">
+                        <span>Equity</span>
+                        <strong className={toneClass(selectedDrillAccount.wallet.equity - selectedDrillAccount.startCash)}>
+                          {fmtNum(selectedDrillAccount.wallet.equity, 2)}
+                        </strong>
+                      </article>
+                      <article className="strategy-lab-mini-stat">
+                        <span>Cash</span>
+                        <strong>{fmtNum(selectedDrillAccount.wallet.cash, 2)}</strong>
+                      </article>
+                      <article className="strategy-lab-mini-stat">
+                        <span>Units</span>
+                        <strong>{fmtNum(selectedDrillAccount.wallet.units, 0)}</strong>
+                      </article>
+                      <article className="strategy-lab-mini-stat">
+                        <span>Realized</span>
+                        <strong className={toneClass(selectedDrillAccount.wallet.realizedPnl)}>{fmtNum(selectedDrillAccount.wallet.realizedPnl, 2)}</strong>
+                      </article>
+                    </div>
+                    <LineChart
+                      title={`${selectedDrillAccount.name} Equity (events)`}
+                      points={selectedAccountEquitySeries}
+                      stroke="#62ffcc"
+                      fillFrom="rgba(73, 224, 182, 0.28)"
+                      fillTo="rgba(73, 224, 182, 0.03)"
+                    />
+                  </>
+                ) : (
+                  <p className="action-message">No paper account selected. Add one or switch to Overview.</p>
+                )}
+              </article>
+
+              <article className="strategy-drill-card">
+                <div className="section-head">
+                  <h2>Account Trades</h2>
+                  <span>{fmtInt(selectedAccountTradeRows.length)} rows</span>
+                </div>
+                <FlashList
+                  items={selectedAccountTradeRows}
+                  height={300}
+                  itemHeight={70}
+                  className="tick-flash-list"
+                  emptyCopy="No trades for this account yet."
+                  keyExtractor={(trade) => trade.id}
+                  renderItem={(trade) => (
+                    <article className="tensor-event-row">
+                      <strong className={actionClass(trade.action)}>
+                        {trade.action} | fill {fmtNum(trade.fillPrice, 4)}
+                      </strong>
+                      <p>{trade.reason || 'strategy execution'}</p>
+                      <small>
+                        units {fmtNum(trade.unitsAfter, 0)} | realized {fmtNum(trade.realizedDelta, 2)} | {fmtTime(trade.timestamp)}
+                      </small>
+                    </article>
+                  )}
+                />
+              </article>
+            </div>
+
+            <div className="two-col">
+              <GlowCard className="panel-card">
+                <div className="section-head">
+                  <h2>Account TX Feed</h2>
+                  <span>{fmtInt(selectedAccountTxRows.length)} rows</span>
+                </div>
+                <FlashList
+                  items={selectedAccountTxRows}
+                  height={250}
+                  itemHeight={74}
+                  className="tick-flash-list"
+                  emptyCopy="No tx events for this account yet."
+                  keyExtractor={(event) => event.id}
+                  renderItem={(event) => (
+                    <article className="tensor-event-row">
+                      <strong className={actionClass(event.action)}>
+                        {event.action} | {event.symbol || '-'}
+                      </strong>
+                      <p>{event.reason || 'strategy execution'}</p>
+                      <small>
+                        fill {fmtNum(event.fillPrice, 4)} | delta {fmtNum(event.unitsDelta, 0)} | pnl {fmtNum(event.realizedDelta, 2)} | {fmtTime(event.timestamp)}
+                      </small>
+                    </article>
+                  )}
+                />
+              </GlowCard>
+
+              <GlowCard className="panel-card">
+                <div className="section-head">
+                  <h2>Account Positions</h2>
+                  <span>{fmtInt(selectedAccountPositionRows.length)} rows</span>
+                </div>
+                <FlashList
+                  items={selectedAccountPositionRows}
+                  height={250}
+                  itemHeight={74}
+                  className="tick-flash-list"
+                  emptyCopy="No position snapshots for this account yet."
+                  keyExtractor={(event) => event.id}
+                  renderItem={(event) => (
+                    <article className="tensor-event-row">
+                      <strong>{event.symbol || '-'} | units {fmtNum(event.wallet?.units, 0)}</strong>
+                      <p>{event.reason || 'position update'}</p>
+                      <small>
+                        eq {fmtNum(event.wallet?.equity, 2)} | cash {fmtNum(event.wallet?.cash, 2)} | {fmtTime(event.timestamp)}
+                      </small>
+                    </article>
+                  )}
+                />
+              </GlowCard>
+            </div>
+          </>
+        ) : null}
+
+        {labView === 'strategy' ? (
+          <>
+            <div className="strategy-drill-grid">
+              <article className="strategy-drill-card">
+                <div className="section-head">
+                  <h2>Selected Strategy</h2>
+                  <span>{strategyLabel}</span>
+                </div>
+                <div className="strategy-lab-mini-grid">
+                  <article className="strategy-lab-mini-stat">
+                    <span>Runtime Trigger Events</span>
+                    <strong>{fmtInt(eventLog.length)}</strong>
+                  </article>
+                  <article className="strategy-lab-mini-stat">
+                    <span>Strategy Trades</span>
+                    <strong>{fmtInt(selectedStrategyTradeRows.length)}</strong>
+                  </article>
+                  <article className="strategy-lab-mini-stat">
+                    <span>Strategy TX</span>
+                    <strong>{fmtInt(selectedStrategyTxRows.length)}</strong>
+                  </article>
+                  <article className="strategy-lab-mini-stat">
+                    <span>Strategy Position Events</span>
+                    <strong>{fmtInt(selectedStrategyPositionRows.length)}</strong>
+                  </article>
+                </div>
+                <LineChart
+                  title={`Strategy Trace - ${strategyLabel}`}
+                  points={runtimePriceSeries}
+                  stroke="#63f7c1"
+                  fillFrom="rgba(58, 227, 171, 0.3)"
+                  fillTo="rgba(58, 227, 171, 0.03)"
+                  overlays={runtimeTaOverlays}
+                  markers={runtimeTradeMarkers}
+                />
+              </article>
+
+              <article className="strategy-drill-card">
+                <div className="section-head">
+                  <h2>Strategy Trigger Tape</h2>
+                  <span>{fmtInt(eventLog.length)} rows</span>
+                </div>
+                <FlashList
+                  items={eventLog}
+                  height={320}
+                  itemHeight={74}
+                  className="tick-flash-list"
+                  emptyCopy="Waiting for strategy trigger events..."
+                  keyExtractor={(item) => item.id}
+                  renderItem={(item) => (
+                    <article className="tensor-event-row">
+                      <strong className={actionClass(item.action)}>
+                        {item.action} | {item.stance}
+                      </strong>
+                      <p>{item.reason}</p>
+                      <small>
+                        {item.triggerKind} | score {fmtNum(item.score, 2)} | px {fmtNum(item.price, 4)} | {fmtTime(item.timestamp)}
+                      </small>
+                    </article>
+                  )}
+                />
+              </article>
+            </div>
+
+            <div className="two-col">
+              <GlowCard className="panel-card">
+                <div className="section-head">
+                  <h2>Strategy Trades</h2>
+                  <span>{fmtInt(selectedStrategyTradeRows.length)} rows</span>
+                </div>
+                <FlashList
+                  items={selectedStrategyTradeRows}
+                  height={260}
+                  itemHeight={68}
+                  className="tick-flash-list"
+                  emptyCopy="No strategy trades yet."
+                  keyExtractor={(trade) => trade.id}
+                  renderItem={(trade) => (
+                    <article className="tensor-event-row">
+                      <strong className={actionClass(trade.action)}>
+                        {(trade.accountName || 'paper')} | {trade.action}
+                      </strong>
+                      <p>{trade.reason}</p>
+                      <small>
+                        fill {fmtNum(trade.fillPrice, 4)} | units {fmtNum(trade.unitsAfter, 0)} | realized {fmtNum(trade.realizedDelta, 2)} | {fmtTime(trade.timestamp)}
+                      </small>
+                    </article>
+                  )}
+                />
+              </GlowCard>
+
+              <GlowCard className="panel-card">
+                <div className="section-head">
+                  <h2>Strategy TX Feed</h2>
+                  <span>{fmtInt(selectedStrategyTxRows.length)} rows</span>
+                </div>
+                <FlashList
+                  items={selectedStrategyTxRows}
+                  height={260}
+                  itemHeight={74}
+                  className="tick-flash-list"
+                  emptyCopy="No tx events for this strategy yet."
+                  keyExtractor={(event) => event.id}
+                  renderItem={(event) => (
+                    <article className="tensor-event-row">
+                      <strong className={actionClass(event.action)}>
+                        {event.accountName || 'paper'} | {event.action} | {event.symbol || '-'}
+                      </strong>
+                      <p>{event.reason}</p>
+                      <small>
+                        fill {fmtNum(event.fillPrice, 4)} | delta {fmtNum(event.unitsDelta, 0)} | pnl {fmtNum(event.realizedDelta, 2)} | {fmtTime(event.timestamp)}
+                      </small>
+                    </article>
+                  )}
+                />
+              </GlowCard>
+            </div>
+          </>
+        ) : null}
+      </GlowCard>
+
+      <GlowCard className="panel-card">
+        <div className="section-head">
           <h2>PDF Portfolio Solver</h2>
           <span>multimarket top-N rebalance simulation</span>
         </div>
@@ -686,6 +1207,9 @@ export default function StrategyLabPage({ snapshot, historyByMarket }) {
             <button type="button" className="btn secondary" onClick={handleAddAccount}>
               Add Account
             </button>
+            <button type="button" className="btn secondary" disabled={walletAccounts.length === 0} onClick={clearWalletAccounts}>
+              Delete All Accounts
+            </button>
           </div>
         </div>
         <div className="strategy-account-grid">
@@ -732,14 +1256,13 @@ export default function StrategyLabPage({ snapshot, historyByMarket }) {
                   <input type="checkbox" checked={account.enabled} onChange={(event) => updateWalletAccount(account.id, { enabled: event.target.checked })} />
                   <span>Allow execution</span>
                 </label>
-                {account.id !== 'paper-main' ? (
-                  <button type="button" className="btn secondary" onClick={() => removeWalletAccount(account.id)}>
-                    Remove
-                  </button>
-                ) : null}
+                <button type="button" className="btn secondary" onClick={() => removeWalletAccount(account.id)}>
+                  Remove
+                </button>
               </div>
             </article>
           ))}
+          {walletAccounts.length === 0 ? <p className="action-message">No paper accounts. Add a new account to resume paper execution.</p> : null}
         </div>
       </GlowCard>
 
