@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import FlashList from '../components/FlashList';
 import GlowCard from '../components/GlowCard';
 import LineChart from '../components/LineChart';
+import OrderBook3D from '../components/OrderBook3D';
 import Sparkline from '../components/Sparkline';
 import useSocketProviders from '../hooks/useSocketProviders';
 import useTensorStrategy from '../hooks/useTensorStrategy';
@@ -10,6 +11,40 @@ import { buildClassicAnalysis } from '../lib/indicators';
 import { Link } from '../lib/router';
 
 const MULTIMARKET_URL = import.meta.env.VITE_MULTIMARKET_URL || 'https://multimarket.cre8.xyz';
+const DEPTH_SNAPSHOT_LIMIT = 48;
+const DEPTH_LEVEL_LIMIT = 12;
+const MARKET_SUBTAB_DEFS = [
+  {
+    key: 'overview',
+    label: 'Overview',
+    socketOnly: false,
+    description: 'Reference price, spread, and classic indicator context.'
+  },
+  {
+    key: 'tensor',
+    label: 'Tensor',
+    socketOnly: true,
+    description: 'Micro-weighted tensor model, strategy score, and live tensor events.'
+  },
+  {
+    key: 'depth',
+    label: 'Depth',
+    socketOnly: true,
+    description: 'Provider socket status, order book depth, and live tick tape.'
+  },
+  {
+    key: 'intel',
+    label: 'Intel',
+    socketOnly: false,
+    description: 'Runtime/provider quote table with linked signal feed.'
+  },
+  {
+    key: 'decisions',
+    label: 'Decisions',
+    socketOnly: false,
+    description: 'Recent strategy decisions and trigger context for this market.'
+  }
+];
 
 export default function MarketDetailPage({ marketId, snapshot, historyByMarket, onRefresh, syncing }) {
   const normalizedId = String(marketId || '').toLowerCase();
@@ -19,12 +54,18 @@ export default function MarketDetailPage({ marketId, snapshot, historyByMarket, 
 
   const supportsSocketProviders = Boolean(market) && String(market.assetClass || '').toLowerCase() === 'crypto';
   const [socketEnabled, setSocketEnabled] = useState(false);
+  const [showOrderBook3D, setShowOrderBook3D] = useState(false);
+  const [depthSnapshots, setDepthSnapshots] = useState([]);
+  const [activeSubtab, setActiveSubtab] = useState('overview');
 
   useEffect(() => {
     setSocketEnabled(supportsSocketProviders);
   }, [supportsSocketProviders, market?.key]);
 
   const socketLiveEnabled = supportsSocketProviders && socketEnabled;
+  const marketSubtabs = useMemo(() => {
+    return MARKET_SUBTAB_DEFS.filter((tab) => !tab.socketOnly || supportsSocketProviders);
+  }, [supportsSocketProviders]);
   const {
     providerStates,
     seriesByProvider,
@@ -54,6 +95,65 @@ export default function MarketDetailPage({ marketId, snapshot, historyByMarket, 
     providerStates,
     depthByProvider
   });
+
+  useEffect(() => {
+    setActiveSubtab('overview');
+    setShowOrderBook3D(false);
+    setDepthSnapshots([]);
+  }, [market?.key]);
+
+  useEffect(() => {
+    if (!socketLiveEnabled) {
+      setShowOrderBook3D(false);
+      setDepthSnapshots([]);
+    }
+  }, [socketLiveEnabled]);
+
+  useEffect(() => {
+    if (!marketSubtabs.some((tab) => tab.key === activeSubtab)) {
+      setActiveSubtab(marketSubtabs[0]?.key || 'overview');
+    }
+  }, [activeSubtab, marketSubtabs]);
+
+  useEffect(() => {
+    if (!socketLiveEnabled || !primaryDepth) return;
+    const normalizeSide = (levels, side) => {
+      const rows = (Array.isArray(levels) ? levels : [])
+        .map((level) => ({
+          price: Number(level?.price),
+          size: Number(level?.size)
+        }))
+        .filter((level) => Number.isFinite(level.price) && level.price > 0 && Number.isFinite(level.size) && level.size > 0)
+        .sort((a, b) => (side === 'bid' ? b.price - a.price : a.price - b.price))
+        .slice(0, DEPTH_LEVEL_LIMIT);
+      return rows;
+    };
+
+    const bids = normalizeSide(primaryDepth.bids, 'bid');
+    const asks = normalizeSide(primaryDepth.asks, 'ask');
+    if (bids.length === 0 && asks.length === 0) return;
+
+    const timestamp = Number(primaryDepth.timestamp) || Date.now();
+    const snapshotRow = {
+      providerId: String(primaryDepth.providerId || ''),
+      providerName: String(primaryDepth.providerName || ''),
+      timestamp,
+      bids,
+      asks
+    };
+
+    setDepthSnapshots((current) => {
+      const last = current[current.length - 1];
+      if (last && last.timestamp === snapshotRow.timestamp && last.providerId === snapshotRow.providerId) {
+        return current;
+      }
+      const next = [...current, snapshotRow];
+      if (next.length > DEPTH_SNAPSHOT_LIMIT) {
+        next.splice(0, next.length - DEPTH_SNAPSHOT_LIMIT);
+      }
+      return next;
+    });
+  }, [primaryDepth, socketLiveEnabled]);
 
   if (!market) {
     return (
@@ -209,6 +309,7 @@ export default function MarketDetailPage({ marketId, snapshot, historyByMarket, 
     const separator = base.includes('?') ? '&' : '?';
     return `${base}${separator}symbol=${encodeURIComponent(market.symbol || '')}&assetClass=${encodeURIComponent(market.assetClass || '')}`;
   }, [market.assetClass, market.symbol]);
+  const activeSubtabMeta = marketSubtabs.find((tab) => tab.key === activeSubtab) || marketSubtabs[0] || MARKET_SUBTAB_DEFS[0];
 
   return (
     <section className="page-grid">
@@ -248,91 +349,115 @@ export default function MarketDetailPage({ marketId, snapshot, historyByMarket, 
         </div>
       </GlowCard>
 
-      <div className="detail-stat-grid">
-        <GlowCard className="stat-card">
-          <span>Reference</span>
-          <strong>{fmtNum(market.referencePrice, 4)}</strong>
-        </GlowCard>
-        <GlowCard className="stat-card">
-          <span>Change</span>
-          <strong className={Number(market.changePct) >= 0 ? 'up' : 'down'}>{fmtPct(market.changePct)}</strong>
-        </GlowCard>
-        <GlowCard className="stat-card">
-          <span>Spread</span>
-          <strong>{fmtNum(market.spreadBps, 2)} bps</strong>
-        </GlowCard>
-        <GlowCard className="stat-card">
-          <span>Volume</span>
-          <strong>{fmtCompact(market.totalVolume)}</strong>
-        </GlowCard>
-      </div>
-
-      <GlowCard className="chart-card">
-        <LineChart
-          title={`Reference Price (Live) - ${sourceLabel}`}
-          points={priceSeries}
-          stroke="#77dcff"
-          fillFrom="rgba(58, 147, 255, 0.36)"
-          fillTo="rgba(58, 147, 255, 0.02)"
-          overlays={taOverlays}
-        />
+      <GlowCard className="panel-card market-subtab-card">
+        <div className="market-subtab-row">
+          {marketSubtabs.map((tab) => (
+            <button
+              key={tab.key}
+              type="button"
+              className={`market-subtab-btn ${activeSubtab === tab.key ? 'active' : ''}`}
+              onClick={() => setActiveSubtab(tab.key)}
+            >
+              {tab.label}
+            </button>
+          ))}
+        </div>
+        <p className="socket-status-copy">{activeSubtabMeta.description}</p>
       </GlowCard>
 
-      <GlowCard className="panel-card">
-        <div className="section-head">
-          <h2>Classic Analysis</h2>
-          <span>{classicAnalysis.sampleSize} samples</span>
-        </div>
-        <p className="socket-status-copy">
-          {classicAnalysis.ready
-            ? `Bollinger(${classicAnalysis.periods.bbPeriod},${classicAnalysis.periods.bbMultiplier}) + moving averages on ${sourceLabel}.`
-            : `Collecting data for classic indicators (${classicAnalysis.periods.bbPeriod} points required).`}
-        </p>
-        <div className="ta-grid">
-          <article className="ta-item">
-            <span>Price vs SMA{classicAnalysis.periods.fastPeriod}</span>
-            <strong className={taTrendTone}>{fmtPct(classicAnalysis.metrics.priceVsFastPct)}</strong>
-          </article>
-          <article className="ta-item">
-            <span>SMA{classicAnalysis.periods.fastPeriod} vs SMA{classicAnalysis.periods.slowPeriod}</span>
-            <strong className={taSmaSpreadTone}>{fmtPct(classicAnalysis.metrics.fastVsSlowPct)}</strong>
-          </article>
-          <article className="ta-item">
-            <span>EMA Slope (5)</span>
-            <strong className={taEmaSlopeTone}>{fmtPct(classicAnalysis.metrics.emaSlopePct)}</strong>
-          </article>
-          <article className="ta-item">
-            <span>Band Width</span>
-            <strong>{formatRawPercent(classicAnalysis.metrics.bbWidthPct)}</strong>
-          </article>
-          <article className="ta-item">
-            <span>Band Position</span>
-            <strong>{formatRawPercent(classicAnalysis.metrics.bbPositionPct)}</strong>
-          </article>
-          <article className="ta-item">
-            <span>Price / EMA{classicAnalysis.periods.emaPeriod}</span>
-            <strong>{fmtNum(classicAnalysis.latest.price, 4)} / {fmtNum(classicAnalysis.latest.ema, 4)}</strong>
-          </article>
-        </div>
-        <div className="ta-chip-row">
-          <span className={`status-pill ${taTrendTone}`}>trend {classicAnalysis.states.trend}</span>
-          <span className={`status-pill ${taBandTone}`}>band {classicAnalysis.states.bandState}</span>
-          <span className={`status-pill ${taCrossTone}`}>cross {classicAnalysis.states.crossover}</span>
-        </div>
-      </GlowCard>
+      {activeSubtab === 'overview' ? (
+        <>
+          <div className="detail-stat-grid">
+            <GlowCard className="stat-card">
+              <span>Reference</span>
+              <strong>{fmtNum(market.referencePrice, 4)}</strong>
+            </GlowCard>
+            <GlowCard className="stat-card">
+              <span>Change</span>
+              <strong className={Number(market.changePct) >= 0 ? 'up' : 'down'}>{fmtPct(market.changePct)}</strong>
+            </GlowCard>
+            <GlowCard className="stat-card">
+              <span>Spread</span>
+              <strong>{fmtNum(market.spreadBps, 2)} bps</strong>
+            </GlowCard>
+            <GlowCard className="stat-card">
+              <span>Volume</span>
+              <strong>{fmtCompact(market.totalVolume)}</strong>
+            </GlowCard>
+          </div>
 
-      <GlowCard className="chart-card">
-        <LineChart
-          title={`Spread (bps) - ${sourceLabel}`}
-          points={spreadSeries}
-          stroke="#ff9e74"
-          fillFrom="rgba(255, 122, 64, 0.35)"
-          fillTo="rgba(255, 122, 64, 0.02)"
-          unit=" bps"
-        />
-      </GlowCard>
+          <GlowCard className="chart-card">
+            <LineChart
+              title={`Reference Price (Live) - ${sourceLabel}`}
+              points={priceSeries}
+              stroke="#77dcff"
+              fillFrom="rgba(58, 147, 255, 0.36)"
+              fillTo="rgba(58, 147, 255, 0.02)"
+              overlays={taOverlays}
+            />
+          </GlowCard>
+        </>
+      ) : null}
 
-      {supportsSocketProviders ? (
+      {activeSubtab === 'overview' ? (
+        <>
+          <GlowCard className="panel-card">
+            <div className="section-head">
+              <h2>Classic Analysis</h2>
+              <span>{classicAnalysis.sampleSize} samples</span>
+            </div>
+            <p className="socket-status-copy">
+              {classicAnalysis.ready
+                ? `Bollinger(${classicAnalysis.periods.bbPeriod},${classicAnalysis.periods.bbMultiplier}) + moving averages on ${sourceLabel}.`
+                : `Collecting data for classic indicators (${classicAnalysis.periods.bbPeriod} points required).`}
+            </p>
+            <div className="ta-grid">
+              <article className="ta-item">
+                <span>Price vs SMA{classicAnalysis.periods.fastPeriod}</span>
+                <strong className={taTrendTone}>{fmtPct(classicAnalysis.metrics.priceVsFastPct)}</strong>
+              </article>
+              <article className="ta-item">
+                <span>SMA{classicAnalysis.periods.fastPeriod} vs SMA{classicAnalysis.periods.slowPeriod}</span>
+                <strong className={taSmaSpreadTone}>{fmtPct(classicAnalysis.metrics.fastVsSlowPct)}</strong>
+              </article>
+              <article className="ta-item">
+                <span>EMA Slope (5)</span>
+                <strong className={taEmaSlopeTone}>{fmtPct(classicAnalysis.metrics.emaSlopePct)}</strong>
+              </article>
+              <article className="ta-item">
+                <span>Band Width</span>
+                <strong>{formatRawPercent(classicAnalysis.metrics.bbWidthPct)}</strong>
+              </article>
+              <article className="ta-item">
+                <span>Band Position</span>
+                <strong>{formatRawPercent(classicAnalysis.metrics.bbPositionPct)}</strong>
+              </article>
+              <article className="ta-item">
+                <span>Price / EMA{classicAnalysis.periods.emaPeriod}</span>
+                <strong>{fmtNum(classicAnalysis.latest.price, 4)} / {fmtNum(classicAnalysis.latest.ema, 4)}</strong>
+              </article>
+            </div>
+            <div className="ta-chip-row">
+              <span className={`status-pill ${taTrendTone}`}>trend {classicAnalysis.states.trend}</span>
+              <span className={`status-pill ${taBandTone}`}>band {classicAnalysis.states.bandState}</span>
+              <span className={`status-pill ${taCrossTone}`}>cross {classicAnalysis.states.crossover}</span>
+            </div>
+          </GlowCard>
+
+          <GlowCard className="chart-card">
+            <LineChart
+              title={`Spread (bps) - ${sourceLabel}`}
+              points={spreadSeries}
+              stroke="#ff9e74"
+              fillFrom="rgba(255, 122, 64, 0.35)"
+              fillTo="rgba(255, 122, 64, 0.02)"
+              unit=" bps"
+            />
+          </GlowCard>
+        </>
+      ) : null}
+
+      {supportsSocketProviders && activeSubtab === 'tensor' ? (
         <GlowCard className="chart-card">
           <LineChart
             title={`Tensor Price (micro-weighted) - ${sourceLabel}`}
@@ -344,7 +469,7 @@ export default function MarketDetailPage({ marketId, snapshot, historyByMarket, 
         </GlowCard>
       ) : null}
 
-      {supportsSocketProviders ? (
+      {supportsSocketProviders && activeSubtab === 'tensor' ? (
         <div className="tensor-grid">
           <GlowCard className="panel-card tensor-panel">
             <div className="section-head">
@@ -430,7 +555,7 @@ export default function MarketDetailPage({ marketId, snapshot, historyByMarket, 
         </div>
       ) : null}
 
-      {supportsSocketProviders ? (
+      {supportsSocketProviders && activeSubtab === 'depth' ? (
         <GlowCard className="panel-card">
           <div className="section-head">
             <h2>Socket Provider Status</h2>
@@ -466,15 +591,23 @@ export default function MarketDetailPage({ marketId, snapshot, historyByMarket, 
         </GlowCard>
       ) : null}
 
-      {supportsSocketProviders ? (
+      {supportsSocketProviders && activeSubtab === 'depth' ? (
         <GlowCard className="panel-card">
           <div className="section-head">
             <h2>Order Book Depth</h2>
             <div className="section-actions">
               <span>{depthBook.providerName ? `${depthBook.providerName}` : 'No provider depth yet'}</span>
+              <button
+                type="button"
+                className="btn secondary"
+                onClick={() => setShowOrderBook3D((current) => !current)}
+                disabled={!socketLiveEnabled}
+              >
+                {showOrderBook3D ? 'Hide MultiMarket 3D' : 'Open MultiMarket 3D'}
+              </button>
               {multimarketHref ? (
                 <a className="btn secondary" href={multimarketHref} target="_blank" rel="noreferrer">
-                  Open MultiMarket 3D
+                  Open External
                 </a>
               ) : null}
             </div>
@@ -512,10 +645,19 @@ export default function MarketDetailPage({ marketId, snapshot, historyByMarket, 
               {depthBook.asks.length === 0 ? <p className="depth-empty">No ask depth yet.</p> : null}
             </section>
           </div>
+          {showOrderBook3D ? (
+            <section className="depth-3d-wrap">
+              <div className="depth-3d-head">
+                <strong>3D Order Book (Live)</strong>
+                <small>{fmtInt(depthSnapshots.length)} snapshots buffered</small>
+              </div>
+              <OrderBook3D snapshots={depthSnapshots} />
+            </section>
+          ) : null}
         </GlowCard>
       ) : null}
 
-      {supportsSocketProviders ? (
+      {supportsSocketProviders && activeSubtab === 'depth' ? (
         <GlowCard className="panel-card">
           <div className="section-head">
             <h2>Live Tick Tape</h2>
@@ -549,92 +691,96 @@ export default function MarketDetailPage({ marketId, snapshot, historyByMarket, 
         </GlowCard>
       ) : null}
 
-      <div className="two-col">
-        <GlowCard className="panel-card">
-          <div className="section-head">
-            <h2>Provider Quotes</h2>
-            <span>{quoteRows.length} rows</span>
-          </div>
-          <div className="table-wrap">
-            <table>
-              <thead>
-                <tr>
-                  <th>Source</th>
-                  <th>Provider</th>
-                  <th>Price</th>
-                  <th>Bid</th>
-                  <th>Ask</th>
-                  <th>Volume</th>
-                  <th>At</th>
-                </tr>
-              </thead>
-              <tbody>
-                {quoteRows.map((provider) => (
-                  <tr key={provider.id}>
-                    <td>{provider.source}</td>
-                    <td>{provider.name}</td>
-                    <td>{fmtNum(provider.price, 4)}</td>
-                    <td>{fmtNum(provider.bid, 4)}</td>
-                    <td>{fmtNum(provider.ask, 4)}</td>
-                    <td>{fmtCompact(provider.volume)}</td>
-                    <td>{fmtTime(provider.timestamp)}</td>
+      {activeSubtab === 'intel' ? (
+        <div className="two-col">
+          <GlowCard className="panel-card">
+            <div className="section-head">
+              <h2>Provider Quotes</h2>
+              <span>{quoteRows.length} rows</span>
+            </div>
+            <div className="table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Source</th>
+                    <th>Provider</th>
+                    <th>Price</th>
+                    <th>Bid</th>
+                    <th>Ask</th>
+                    <th>Volume</th>
+                    <th>At</th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </GlowCard>
+                </thead>
+                <tbody>
+                  {quoteRows.map((provider) => (
+                    <tr key={provider.id}>
+                      <td>{provider.source}</td>
+                      <td>{provider.name}</td>
+                      <td>{fmtNum(provider.price, 4)}</td>
+                      <td>{fmtNum(provider.bid, 4)}</td>
+                      <td>{fmtNum(provider.ask, 4)}</td>
+                      <td>{fmtCompact(provider.volume)}</td>
+                      <td>{fmtTime(provider.timestamp)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </GlowCard>
 
+          <GlowCard className="panel-card">
+            <div className="section-head">
+              <h2>Signals</h2>
+              <span>{signals.length} recent</span>
+            </div>
+            <div className="list-stack">
+              {signals.map((signal) => (
+                <article key={signal.id} className="list-item">
+                  <strong>
+                    <Link to={`/signal/${encodeURIComponent(signal.id)}`} className="inline-link">
+                      {signal.type}
+                    </Link>{' '}
+                    | {signal.direction}
+                  </strong>
+                  <p>{signal.message}</p>
+                  <div className="item-meta">
+                    <span className={`severity ${severityClass(signal.severity)}`}>{signal.severity}</span>
+                    <small>score {fmtInt(signal.score)}</small>
+                    <small>{fmtTime(signal.timestamp)}</small>
+                  </div>
+                </article>
+              ))}
+            </div>
+          </GlowCard>
+        </div>
+      ) : null}
+
+      {activeSubtab === 'decisions' ? (
         <GlowCard className="panel-card">
           <div className="section-head">
-            <h2>Signals</h2>
-            <span>{signals.length} recent</span>
+            <h2>Decisions</h2>
+            <span>{decisions.length} recent</span>
           </div>
           <div className="list-stack">
-            {signals.map((signal) => (
-              <article key={signal.id} className="list-item">
+            {decisions.map((decision) => (
+              <article key={decision.id} className="list-item">
                 <strong>
-                  <Link to={`/signal/${encodeURIComponent(signal.id)}`} className="inline-link">
-                    {signal.type}
+                  <Link to={`/strategy/${encodeURIComponent(decision.strategyName || 'unknown')}`} className="inline-link">
+                    {decision.strategyName || 'unknown'}
                   </Link>{' '}
-                  | {signal.direction}
+                  - {decision.action}
                 </strong>
-                <p>{signal.message}</p>
+                <p>{decision.reason}</p>
                 <div className="item-meta">
-                  <span className={`severity ${severityClass(signal.severity)}`}>{signal.severity}</span>
-                  <small>score {fmtInt(signal.score)}</small>
-                  <small>{fmtTime(signal.timestamp)}</small>
+                  <small>{decision.trigger}</small>
+                  <small>score {fmtInt(decision.score)}</small>
+                  <small>{fmtTime(decision.timestamp)}</small>
                 </div>
               </article>
             ))}
           </div>
         </GlowCard>
-      </div>
-
-      <GlowCard className="panel-card">
-        <div className="section-head">
-          <h2>Decisions</h2>
-          <span>{decisions.length} recent</span>
-        </div>
-        <div className="list-stack">
-          {decisions.map((decision) => (
-            <article key={decision.id} className="list-item">
-              <strong>
-                <Link to={`/strategy/${encodeURIComponent(decision.strategyName || 'unknown')}`} className="inline-link">
-                  {decision.strategyName || 'unknown'}
-                </Link>{' '}
-                - {decision.action}
-              </strong>
-              <p>{decision.reason}</p>
-              <div className="item-meta">
-                <small>{decision.trigger}</small>
-                <small>score {fmtInt(decision.score)}</small>
-                <small>{fmtTime(decision.timestamp)}</small>
-              </div>
-            </article>
-          ))}
-        </div>
-      </GlowCard>
+      ) : null}
     </section>
   );
 }

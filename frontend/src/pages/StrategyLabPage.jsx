@@ -6,6 +6,7 @@ import WalletAccountSelectField from '../components/WalletAccountSelectField';
 import useStrategyLab from '../hooks/useStrategyLab';
 import { fmtInt, fmtNum, fmtPct, fmtTime } from '../lib/format';
 import { buildClassicAnalysis } from '../lib/indicators';
+import { getStrategyImplementationDetail } from '../lib/strategyEngine';
 import {
   buildMarketImageSnapshot,
   buildMarketTensorSnapshot,
@@ -247,6 +248,10 @@ export default function StrategyLabPage({ snapshot, historyByMarket }) {
     selectedStrategyPositionRows,
     selectedStrategyWinRate
   } = selectionModel;
+
+  const runtimeStrategyDetail = useMemo(() => {
+    return getStrategyImplementationDetail(strategyId);
+  }, [strategyId]);
 
   useEffect(() => {
     if (resolvedDrilldownAccountId !== drilldownAccountId) {
@@ -996,6 +1001,26 @@ export default function StrategyLabPage({ snapshot, historyByMarket }) {
                   <span>{strategyLabel}</span>
                 </div>
                 <p className="socket-status-copy">{strategyDescription}</p>
+                <p className="socket-status-copy">
+                  {runtimeStrategyDetail.runtimePath} | trigger {runtimeStrategyDetail.triggerKind}
+                </p>
+                <details className="strategy-inline-detail">
+                  <summary>View Running Function Detail</summary>
+                  <p className="socket-status-copy">{runtimeStrategyDetail.scoreModel}</p>
+                  <ul className="strategy-function-list compact">
+                    {runtimeStrategyDetail.actionRules.map((rule, index) => (
+                      <li key={`runtime-rule:${runtimeStrategyDetail.id}:${index}`}>{rule}</li>
+                    ))}
+                  </ul>
+                  <pre className="strategy-function-code compact">
+                    <code>{runtimeStrategyDetail.pseudoCode}</code>
+                  </pre>
+                  <div className="section-actions">
+                    <Link to={`/strategy/${encodeURIComponent(strategyId)}`} className="inline-link">
+                      Open full strategy detail
+                    </Link>
+                  </div>
+                </details>
                 <div className="strategy-lab-mini-grid">
                   <article className="strategy-lab-mini-stat">
                     <span>Runtime Trigger Events</span>

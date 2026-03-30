@@ -33,6 +33,98 @@ const liveLimits = {
   feedLimit: 180
 };
 
+const SIGNAL_HISTORY_MAX = 960;
+const DECISION_HISTORY_MAX = 960;
+const FEED_HISTORY_MAX = 420;
+const FIVE_MINUTES_MS = 5 * 60 * 1000;
+
+const toNum = (value, fallback = 0) => {
+  const num = Number(value);
+  return Number.isFinite(num) ? num : fallback;
+};
+
+const asArray = (value) => (Array.isArray(value) ? value : []);
+
+const rowTimestamp = (row) => {
+  return Math.max(0, toNum(row?.timestamp, toNum(row?.updatedAt, 0)));
+};
+
+const rowKey = (row, index, prefix) => {
+  const id = String(row?.id || '').trim();
+  if (id) return `${prefix}:${id}`;
+  const symbol = String(row?.symbol || row?.marketKey || row?.type || row?.strategyName || 'row');
+  return `${prefix}:${symbol}:${rowTimestamp(row)}:${index}`;
+};
+
+const mergeHistoryRows = (previousRows, incomingRows, maxLength, prefix) => {
+  const merged = [];
+  const seen = new Set();
+  const rows = [...asArray(incomingRows), ...asArray(previousRows)];
+  for (let index = 0; index < rows.length; index += 1) {
+    const row = rows[index];
+    if (!row || typeof row !== 'object') continue;
+    const key = rowKey(row, index, prefix);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    merged.push(row);
+  }
+  merged.sort((a, b) => rowTimestamp(b) - rowTimestamp(a));
+  if (merged.length > maxLength) {
+    merged.length = maxLength;
+  }
+  return merged;
+};
+
+const mergeSnapshotWithHistory = (previousSnapshot, incomingSnapshot) => {
+  const previous = previousSnapshot && typeof previousSnapshot === 'object' ? previousSnapshot : initialSnapshot;
+  const incoming = incomingSnapshot && typeof incomingSnapshot === 'object' ? incomingSnapshot : {};
+
+  const signals = mergeHistoryRows(previous.signals, incoming.signals, SIGNAL_HISTORY_MAX, 'signal');
+  const decisions = mergeHistoryRows(previous.decisions, incoming.decisions, DECISION_HISTORY_MAX, 'decision');
+  const feed = mergeHistoryRows(previous.feed, incoming.feed, FEED_HISTORY_MAX, 'feed');
+
+  const now = Date.now();
+  const signalsFiveMinutes = signals.filter((row) => rowTimestamp(row) >= now - FIVE_MINUTES_MS).length;
+
+  const signalTotal = Math.max(
+    toNum(incoming?.signalSummary?.total, 0),
+    toNum(incoming?.telemetry?.signalsGenerated, 0),
+    toNum(previous?.signalSummary?.total, 0),
+    toNum(previous?.telemetry?.signalsGenerated, 0),
+    signals.length
+  );
+
+  const decisionTotal = Math.max(
+    toNum(incoming?.strategySummary?.totalDecisions, 0),
+    toNum(incoming?.telemetry?.decisionsGenerated, 0),
+    toNum(previous?.strategySummary?.totalDecisions, 0),
+    toNum(previous?.telemetry?.decisionsGenerated, 0),
+    decisions.length
+  );
+
+  return {
+    ...previous,
+    ...incoming,
+    signals,
+    decisions,
+    feed,
+    signalSummary: {
+      ...(incoming?.signalSummary || {}),
+      total: signalTotal,
+      lastFiveMinutes: Math.max(toNum(incoming?.signalSummary?.lastFiveMinutes, 0), signalsFiveMinutes)
+    },
+    strategySummary: {
+      ...(incoming?.strategySummary || {}),
+      totalDecisions: decisionTotal
+    },
+    telemetry: {
+      ...(incoming?.telemetry || {}),
+      signalsGenerated: Math.max(toNum(incoming?.telemetry?.signalsGenerated, 0), signalTotal),
+      decisionsGenerated: Math.max(toNum(incoming?.telemetry?.decisionsGenerated, 0), decisionTotal)
+    }
+  };
+};
+
 export default function useCapitalLive() {
   const [snapshot, setSnapshot] = useState(initialSnapshot);
   const [connected, setConnected] = useState(false);
@@ -82,7 +174,7 @@ export default function useCapitalLive() {
       const payload = await response.json();
 
       if (!mountedRef.current || requestId !== requestRef.current.id) return;
-      setSnapshot(payload);
+      setSnapshot((previous) => mergeSnapshotWithHistory(previous, payload));
       setConnected(true);
       setLocalFallback(false);
       setError('');
@@ -93,7 +185,7 @@ export default function useCapitalLive() {
       setConnected(false);
       setLocalFallback(true);
       setTransport('local');
-      setSnapshot((previous) => buildLocalFallbackSnapshot(previous));
+      setSnapshot((previous) => mergeSnapshotWithHistory(previous, buildLocalFallbackSnapshot(previous)));
       setError(`Runtime unavailable (${loadError.message || 'snapshot fetch failed'}). Using local fallback feed.`);
       setLastSyncedAt(Date.now());
     } finally {
@@ -123,7 +215,7 @@ export default function useCapitalLive() {
       const onSnapshot = (event) => {
         const payload = parseEventData(event.data);
         if (!payload || !mountedRef.current) return;
-        setSnapshot(payload);
+        setSnapshot((previous) => mergeSnapshotWithHistory(previous, payload));
         setConnected(true);
         setLocalFallback(false);
         setError('');

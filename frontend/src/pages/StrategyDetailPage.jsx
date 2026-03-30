@@ -1,6 +1,7 @@
 import { useEffect, useMemo } from 'react';
 import GlowCard from '../components/GlowCard';
 import { fmtInt, fmtNum, fmtTime } from '../lib/format';
+import { getStrategyImplementationDetail } from '../lib/strategyEngine';
 import { getDisplaySignals } from '../lib/signalView';
 import { findStrategyRow, getStrategyDecisions } from '../lib/strategyView';
 import { Link } from '../lib/router';
@@ -15,6 +16,7 @@ const resolveEnabled = (strategy, enabledByKey) => {
 
 export default function StrategyDetailPage({ strategyId, snapshot }) {
   const row = useMemo(() => findStrategyRow(snapshot, strategyId), [snapshot, strategyId]);
+  const implementation = useMemo(() => getStrategyImplementationDetail(row?.id || strategyId), [row?.id, strategyId]);
   const enabledByKey = useStrategyToggleStore((state) => state.enabledByKey);
   const ensureStrategies = useStrategyToggleStore((state) => state.ensureStrategies);
   const setStrategyEnabled = useStrategyToggleStore((state) => state.setStrategyEnabled);
@@ -82,6 +84,67 @@ export default function StrategyDetailPage({ strategyId, snapshot }) {
           id {row.id} | {strategyEnabled ? 'enabled' : 'disabled'}
         </p>
         <p className="socket-status-copy">{row.description || 'No description available yet.'}</p>
+      </GlowCard>
+
+      <GlowCard className="panel-card strategy-function-card">
+        <div className="section-head">
+          <h2>Function Runtime Detail</h2>
+          <span>{implementation.runtimePath}</span>
+        </div>
+        <p className="socket-status-copy">
+          {implementation.summary} | trigger {implementation.triggerKind} | source {implementation.sourceFile}
+        </p>
+        <div className="strategy-function-grid">
+          <article>
+            <span>Score Model</span>
+            <strong>{implementation.scoreModel}</strong>
+          </article>
+          <article>
+            <span>Rule Count</span>
+            <strong>{fmtInt(implementation.actionRules.length)}</strong>
+          </article>
+          <article>
+            <span>Input Count</span>
+            <strong>{fmtInt(implementation.inputs.length)}</strong>
+          </article>
+          <article>
+            <span>Prereq Count</span>
+            <strong>{fmtInt(implementation.prerequisites.length)}</strong>
+          </article>
+        </div>
+        <div className="two-col">
+          <GlowCard className="panel-card">
+            <div className="section-head">
+              <h2>Inputs</h2>
+              <span>{fmtInt(implementation.inputs.length)}</span>
+            </div>
+            <ul className="strategy-function-list">
+              {implementation.inputs.map((item, index) => (
+                <li key={`strategy-input:${implementation.id}:${index}`}>{item}</li>
+              ))}
+            </ul>
+          </GlowCard>
+          <GlowCard className="panel-card">
+            <div className="section-head">
+              <h2>Action Rules</h2>
+              <span>{fmtInt(implementation.actionRules.length)}</span>
+            </div>
+            <ul className="strategy-function-list">
+              {implementation.actionRules.map((item, index) => (
+                <li key={`strategy-rule:${implementation.id}:${index}`}>{item}</li>
+              ))}
+            </ul>
+          </GlowCard>
+        </div>
+        <GlowCard className="panel-card">
+          <div className="section-head">
+            <h2>Pseudocode</h2>
+            <span>running branch</span>
+          </div>
+          <pre className="strategy-function-code">
+            <code>{implementation.pseudoCode}</code>
+          </pre>
+        </GlowCard>
       </GlowCard>
 
       <div className="detail-stat-grid">

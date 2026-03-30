@@ -284,6 +284,237 @@ export const SOURCE_OPTIONS = [
 const SIGNAL_STRATEGIES = new Set(['signal-single', 'signal-consensus', 'signal-cluster']);
 const DERIVATIVE_STRATEGIES = new Set(['funding-carry', 'basis-arb', 'iv-reversion', 'gamma-squeeze']);
 
+const PRICE_INPUTS_BASE = [
+  'price series (latest, prev, lookback)',
+  'SMA windows: 8 / 13 / 21 / 34',
+  'EMA windows: 9 / 21',
+  'range and breakout rails: high/low 20 and 55',
+  'spread penalty and volatility regime'
+];
+
+const SIGNAL_INPUTS_BASE = [
+  'market-aligned signal rows (or synthetic fallback)',
+  'direction inference from signal direction/message',
+  'severity weight and normalized score',
+  'age decay weight exp(-ageSec / 240)',
+  'spread guard and consensus weighting'
+];
+
+const STRATEGY_DETAIL_LIBRARY = {
+  'tensor-lite': {
+    summary: 'Default blended runtime scorer for directional drift + momentum with spread friction.',
+    scoreModel: 'score = trendBps*0.62 + momentumPct*8.6 + confidenceBoost - spreadPenalty*1.45',
+    actionRules: ['accumulate if score >= 5.2 and spread < 40 bps', 'reduce if score <= -5.2 and spread < 40 bps', 'otherwise hold'],
+    pseudoCode:
+      "if score >= 5.2 && spread < 40 -> accumulate\nelse if score <= -5.2 && spread < 40 -> reduce\nelse -> hold"
+  },
+  momentum: {
+    summary: 'Pure continuation model favoring fast drift/momentum alignment.',
+    scoreModel: 'score = trendBps*0.56 + momentumPct*9.3 - spreadPenalty*1.35',
+    actionRules: ['accumulate if score >= 5.8 and spread < 42 bps', 'reduce if score <= -5.8 and spread < 42 bps', 'otherwise hold'],
+    pseudoCode:
+      "score <- trend*0.56 + momentum*9.3 - spreadPenalty*1.35\nif score >= 5.8 -> accumulate\nif score <= -5.8 -> reduce"
+  },
+  'mean-reversion': {
+    summary: 'Uses 20-bar z-score to fade statistically stretched moves.',
+    scoreModel: 'score = -z*8 - spreadPenalty where z = (price - mean20)/std20',
+    actionRules: ['accumulate if z <= -1.1 and spread < 48 bps', 'reduce if z >= 1.1 and spread < 48 bps', 'otherwise hold'],
+    pseudoCode:
+      "z <- (latest - mean20)/sigma20\nif z <= -1.1 -> accumulate\nif z >= 1.1 -> reduce"
+  },
+  breakout: {
+    summary: '20-window breakout with directional confirmation and spread gating.',
+    scoreModel: 'score = accelBps + trendBps*0.3 - spreadPenalty*1.2',
+    actionRules: ['accumulate when latest > high20*1.0008 and spread < 44 bps', 'reduce when latest < low20*0.9992 and spread < 44 bps', 'otherwise hold'],
+    pseudoCode:
+      "breakUp <- latest > high20*1.0008\nbreakDown <- latest < low20*0.9992\nif breakUp -> accumulate\nif breakDown -> reduce"
+  },
+  'trend-follow': {
+    summary: 'Multi-horizon trend stack using short and long trend rails.',
+    scoreModel: 'score = trendBps*0.72 + longTrendBps*0.46 + momentumPct*6.1 - spreadPenalty*1.2',
+    actionRules: ['accumulate if score >= 6.4 and spread < 45 bps', 'reduce if score <= -6.4 and spread < 45 bps', 'otherwise hold'],
+    pseudoCode:
+      "score <- shortTrend*0.72 + longTrend*0.46 + momentum*6.1 - spreadPenalty*1.2\napply +/-6.4 thresholds"
+  },
+  'ema-cross': {
+    summary: 'EMA crossover + gap slope with acceleration confirmation.',
+    scoreModel: 'score = emaGapBps*0.88 + accelBps*0.34 + momentumPct*2.2 - spreadPenalty',
+    actionRules: [
+      'accumulate on crossUp OR (emaFast > emaSlow and score > 4.4), spread < 44 bps',
+      'reduce on crossDown OR (emaFast < emaSlow and score < -4.4), spread < 44 bps',
+      'otherwise hold'
+    ],
+    pseudoCode:
+      "crossUp <- emaFastPrev<=emaSlowPrev && emaFast>emaSlow\ncrossDown <- emaFastPrev>=emaSlowPrev && emaFast<emaSlow\nif crossUp || score>4.4 -> accumulate\nif crossDown || score<-4.4 -> reduce"
+  },
+  'rsi-reversion': {
+    summary: 'Contrarian RSI model around 14-period oscillation extremes.',
+    scoreModel: 'score = (50-rsi14)*0.72 - trendBps*0.16 - spreadPenalty*1.1',
+    actionRules: ['accumulate if RSI <= 32 and spread < 48 bps', 'reduce if RSI >= 68 and spread < 48 bps', 'otherwise hold'],
+    pseudoCode:
+      "if rsi14 <= 32 -> accumulate\nelse if rsi14 >= 68 -> reduce\nelse hold"
+  },
+  'volatility-breakout': {
+    summary: 'Breakout sensitivity adapts to volatility expansion.',
+    scoreModel: 'score = accelBps*0.75 + trendBps*0.45 + volatilityPct*14 - spreadPenalty*1.1',
+    actionRules: [
+      'accumulate if latest > high20*(1 + volatilityPct/900) and spread < 46 bps',
+      'reduce if latest < low20*(1 - volatilityPct/900) and spread < 46 bps',
+      'otherwise hold'
+    ],
+    pseudoCode:
+      "upBreak <- latest > high20*(1+volPct/900)\ndownBreak <- latest < low20*(1-volPct/900)\nif upBreak -> accumulate\nif downBreak -> reduce"
+  },
+  'range-fade': {
+    summary: 'Fades channel extremes based on 20-bar position.',
+    scoreModel: 'score = (50-channelPosition)*0.23 - trendBps*0.18 - spreadPenalty',
+    actionRules: ['accumulate if channelPosition <= 18 and spread < 42 bps', 'reduce if channelPosition >= 82 and spread < 42 bps', 'otherwise hold'],
+    pseudoCode:
+      "channelPosition <- (latest-low20)/(high20-low20)\nif channelPosition <= 18 -> accumulate\nif channelPosition >= 82 -> reduce"
+  },
+  'micro-scalp': {
+    summary: 'Fast micro-impulse model with strict spread constraints.',
+    scoreModel: 'score = accelBps*0.95 + momentumPct*2.6 - spreadPenalty*2.35',
+    actionRules: ['accumulate if score >= 3.1 and spread < 18 bps', 'reduce if score <= -3.1 and spread < 18 bps', 'otherwise hold'],
+    pseudoCode:
+      "if spread >= 18 -> hold\nelse apply score thresholds +/-3.1"
+  },
+  'donchian-breakout': {
+    summary: '55-window Donchian breakout rails.',
+    scoreModel: 'score = accelBps*0.44 + momentumPct*4.4 + donchianRangeBps*0.0022 - spreadPenalty*1.3',
+    actionRules: ['accumulate if latest > high55*1.0005 and spread < 46 bps', 'reduce if latest < low55*0.9995 and spread < 46 bps', 'otherwise hold'],
+    pseudoCode:
+      "if latest > high55*1.0005 -> accumulate\nelse if latest < low55*0.9995 -> reduce"
+  },
+  'compression-breakout': {
+    summary: 'Only trades breakouts after volatility compression.',
+    scoreModel: 'score = (1-compressionRatio)*18 + accelBps*0.42 + trendBps*0.25 - spreadPenalty',
+    actionRules: [
+      'compressed := compressionRatio < 0.84',
+      'accumulate if compressed and latest > high20*1.0004 and spread < 44 bps',
+      'reduce if compressed and latest < low20*0.9996 and spread < 44 bps',
+      'otherwise hold'
+    ],
+    pseudoCode:
+      "compressed <- compressionRatio < 0.84\nif compressed && burstUp -> accumulate\nif compressed && burstDown -> reduce"
+  },
+  'momentum-pullback': {
+    summary: 'Trend-following pullback entries using long trend bias.',
+    scoreModel: 'score = longTrendBps*0.62 - pullbackBps*0.38 + momentumPct*3.1 - spreadPenalty',
+    actionRules: [
+      'accumulate if longTrendBps > 6 and pullbackBps < -8 and spread < 46 bps',
+      'reduce if longTrendBps < -6 and pullbackBps > 8 and spread < 46 bps',
+      'otherwise hold'
+    ],
+    pseudoCode:
+      "if longTrend > 6 and pullback < -8 -> accumulate\nif longTrend < -6 and pullback > 8 -> reduce"
+  },
+  'drift-guard': {
+    summary: 'Conservative risk-aware drift model with volatility/spread penalties.',
+    scoreModel: 'driftScore = trendBps*0.34 + longTrendBps*0.29 + momentumPct*2.8; score = driftScore - riskPenalty',
+    actionRules: ['accumulate if score >= 4.2 and spread < 36 bps', 'reduce if score <= -4.2 and spread < 36 bps', 'otherwise hold'],
+    pseudoCode:
+      "riskPenalty <- spreadPenalty*1.65 + max(0, volatilityPct-1.4)*3.4\nscore <- driftScore - riskPenalty"
+  },
+  'funding-carry': {
+    summary: 'Derivative carry logic from funding, OI change, and trend.',
+    scoreModel: 'score = -fundingRateBps*2.6 + trendBps*0.22 + openInterestChangePct*0.95 - spreadPenalty*1.1',
+    actionRules: [
+      'market must be derivative (futures/options)',
+      'accumulate if funding <= -0.9 bps AND score > 1.8 AND spread < 52 bps',
+      'reduce if funding >= 0.9 bps AND score < -1.8 AND spread < 52 bps',
+      'otherwise hold'
+    ],
+    pseudoCode:
+      "if !isDerivative -> hold\nif funding <= -0.9 && score > 1.8 -> accumulate\nif funding >= 0.9 && score < -1.8 -> reduce"
+  },
+  'basis-arb': {
+    summary: 'Basis dislocation mean-reversion with momentum assist.',
+    scoreModel: 'score = -basisBps*0.34 + momentumPct*3.4 + openInterestChangePct*0.32 - spreadPenalty*0.9',
+    actionRules: ['market must be derivative', 'accumulate if basis <= -10 bps and spread < 54 bps', 'reduce if basis >= 10 bps and spread < 54 bps', 'otherwise hold'],
+    pseudoCode:
+      "if !isDerivative -> hold\nif basis <= -10 -> accumulate\nif basis >= 10 -> reduce"
+  },
+  'iv-reversion': {
+    summary: 'Options-only volatility premium reversion model.',
+    scoreModel: 'volPremium = impliedVolPct - realizedProxy; score = -volPremium*0.11 + momentumPct*1.55 + optionSkewPct*0.26 - spreadPenalty*0.85',
+    actionRules: [
+      'requires options contract market',
+      'accumulate if volPremium <= -5, momentum > -0.45, spread < 68 bps',
+      'reduce if volPremium >= 8, momentum < 0.45, spread < 68 bps',
+      'otherwise hold'
+    ],
+    pseudoCode:
+      "if !isOption -> hold\nvolPremium <- impliedVol - realizedProxy\nif volPremium <= -5 -> accumulate\nif volPremium >= 8 -> reduce"
+  },
+  'gamma-squeeze': {
+    summary: 'Options-flow pressure model from OI acceleration, skew, and put/call ratio.',
+    scoreModel: 'squeezePressure = openInterestChangePct*2.2 + (1.02-putCallRatio)*5 + momentumPct*1.35 + optionSkewPct*0.18; score = squeezePressure - spreadPenalty',
+    actionRules: [
+      'requires options contract market',
+      'accumulate if OI change > 1.1, putCallRatio < 0.95, momentum > 0, spread < 72 bps',
+      'reduce if OI change > 1.1, putCallRatio > 1.08, momentum < 0, spread < 72 bps',
+      'otherwise hold'
+    ],
+    pseudoCode:
+      "if !isOption -> hold\nif oiChange>1.1 && pcr<0.95 && momentum>0 -> accumulate\nif oiChange>1.1 && pcr>1.08 && momentum<0 -> reduce"
+  },
+  'signal-single': {
+    summary: 'Trades the strongest directional signal only.',
+    scoreModel: 'score = top.dir*abs(top.signedWeight)*9 + consensus*3.6 - spreadPenalty',
+    actionRules: ['hold if spread > 48 bps', 'hold if no top signal or topStrength < 0.28', 'else follow top direction'],
+    pseudoCode:
+      "rows <- weightedDirectionalSignals\nif spreadGuard -> hold\nif !top || abs(top.signedWeight)<0.28 -> hold\nelse action <- top.dir>0 ? accumulate : reduce"
+  },
+  'signal-consensus': {
+    summary: 'Consensus-weighted signal strategy (default signal path).',
+    scoreModel: 'score = consensus*11.4 + (directionalRows>=3 ? 1.1 : 0) - spreadPenalty*1.1',
+    actionRules: ['hold if spread > 48 bps', 'accumulate if consensus > 0.24', 'reduce if consensus < -0.24', 'otherwise hold'],
+    pseudoCode:
+      "consensus <- netSignedWeight / totalAbsWeight\nif consensus > 0.24 -> accumulate\nif consensus < -0.24 -> reduce"
+  },
+  'signal-cluster': {
+    summary: 'Requires clustered high/medium-confidence agreement before acting.',
+    scoreModel: 'clusterDelta = bullishWeight - bearishWeight; score = clusterDelta*8.2 + (highConfidenceBull-highConfidenceBear)*1.5 - spreadPenalty',
+    actionRules: [
+      'hold if spread > 48 bps',
+      'accumulate if highConfidenceBull >= 2 and clusterDelta > 0.35',
+      'reduce if highConfidenceBear >= 2 and clusterDelta < -0.35',
+      'otherwise hold'
+    ],
+    pseudoCode:
+      "bull <- count(high|med bullish)\nbear <- count(high|med bearish)\nclusterDelta <- bullishWeight - bearishWeight\napply +/-0.35 gates"
+  }
+};
+
+export const getStrategyImplementationDetail = (strategyId = '') => {
+  const key = String(strategyId || '').trim().toLowerCase();
+  const selectedKey = STRATEGY_DETAIL_LIBRARY[key] ? key : 'tensor-lite';
+  const option = STRATEGY_OPTIONS.find((item) => item.id === selectedKey) || STRATEGY_OPTIONS.find((item) => item.id === 'tensor-lite') || null;
+  const detail = STRATEGY_DETAIL_LIBRARY[selectedKey] || STRATEGY_DETAIL_LIBRARY['tensor-lite'];
+  const signalDriven = SIGNAL_STRATEGIES.has(selectedKey);
+  const derivativeGuarded = DERIVATIVE_STRATEGIES.has(selectedKey);
+
+  return {
+    id: selectedKey,
+    label: option?.label || selectedKey,
+    description: option?.description || '',
+    triggerKind: signalDriven ? 'signal' : 'price',
+    runtimePath: signalDriven ? 'evaluateStrategy -> evaluateSignalStrategy' : 'evaluateStrategy -> evaluatePriceStrategy',
+    sourceFile: 'frontend/src/lib/strategyEngine.js',
+    summary: detail.summary,
+    scoreModel: detail.scoreModel,
+    actionRules: detail.actionRules || [],
+    prerequisites: [
+      signalDriven ? 'requires signal rows (live or synthetic fallback)' : 'requires price stream with >=2 points',
+      derivativeGuarded ? 'market must be derivatives-capable (and options-only for IV/Gamma)' : 'works on standard market stream',
+      'spread guard blocks execution in high-friction conditions'
+    ],
+    inputs: signalDriven ? SIGNAL_INPUTS_BASE : PRICE_INPUTS_BASE,
+    pseudoCode: detail.pseudoCode
+  };
+};
+
 const severityWeight = (severity) => {
   const value = String(severity || '').toLowerCase();
   if (value === 'high') return 1.5;

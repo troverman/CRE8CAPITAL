@@ -40,7 +40,8 @@ export const buildFallbackSignals = (markets = [], limit = 80) => {
 export const getDisplaySignals = (snapshot, limit = 80) => {
   const liveSignals = Array.isArray(snapshot?.signals) ? snapshot.signals : [];
   if (liveSignals.length > 0) {
-    return liveSignals
+    return [...liveSignals]
+      .sort((a, b) => toNum(b?.timestamp, 0) - toNum(a?.timestamp, 0))
       .slice(0, Math.max(1, limit))
       .map((signal, index) => ({
         id: signal?.id || `signal:${index}`,
