@@ -35,6 +35,41 @@ const sma = (values, length) => {
   return sum / n;
 };
 
+const ema = (values, length) => {
+  if (!Array.isArray(values) || values.length === 0) return null;
+  const n = Math.max(1, Math.min(length, values.length));
+  const k = 2 / (n + 1);
+  let emaValue = null;
+  for (const value of values) {
+    if (!Number.isFinite(value)) continue;
+    if (emaValue === null) {
+      emaValue = value;
+    } else {
+      emaValue = value * k + emaValue * (1 - k);
+    }
+  }
+  return emaValue;
+};
+
+const rsi = (values, length = 14) => {
+  if (!Array.isArray(values) || values.length < 2) return null;
+  const n = Math.max(2, Math.min(length, values.length - 1));
+  const start = values.length - (n + 1);
+  let gains = 0;
+  let losses = 0;
+  for (let i = Math.max(start, 0) + 1; i < values.length; i += 1) {
+    const change = values[i] - values[i - 1];
+    if (change > 0) gains += change;
+    if (change < 0) losses += Math.abs(change);
+  }
+  const avgGain = gains / n;
+  const avgLoss = losses / n;
+  if (avgLoss <= 1e-12 && avgGain <= 1e-12) return 50;
+  if (avgLoss <= 1e-12) return 100;
+  const rs = avgGain / avgLoss;
+  return 100 - 100 / (1 + rs);
+};
+
 const stddev = (values) => {
   if (!Array.isArray(values) || values.length <= 1) return 0;
   const mean = values.reduce((sum, value) => sum + value, 0) / values.length;
@@ -59,6 +94,16 @@ export const STRATEGY_OPTIONS = [
   { id: 'momentum', label: 'Momentum' },
   { id: 'mean-reversion', label: 'Mean Reversion' },
   { id: 'breakout', label: 'Breakout' },
+  { id: 'trend-follow', label: 'Trend Follow' },
+  { id: 'ema-cross', label: 'EMA Cross' },
+  { id: 'rsi-reversion', label: 'RSI Reversion' },
+  { id: 'volatility-breakout', label: 'Volatility Breakout' },
+  { id: 'range-fade', label: 'Range Fade' },
+  { id: 'micro-scalp', label: 'Micro Scalp' },
+  { id: 'donchian-breakout', label: 'Donchian Breakout' },
+  { id: 'compression-breakout', label: 'Compression Breakout' },
+  { id: 'momentum-pullback', label: 'Momentum Pullback' },
+  { id: 'drift-guard', label: 'Drift Guard' },
   { id: 'signal-single', label: 'Signal Single' },
   { id: 'signal-consensus', label: 'Signal Consensus' },
   { id: 'signal-cluster', label: 'Signal Cluster' }
@@ -262,28 +307,62 @@ const rollingLow = (values, length) => {
   return Math.min(...slice);
 };
 
+const toStance = (score) => {
+  if (score > 2) return 'bullish';
+  if (score < -2) return 'bearish';
+  return 'neutral';
+};
+
+const priceResult = ({ action = 'hold', score = 0, reason = '', triggerKind = 'price' }) => {
+  return {
+    action,
+    score,
+    stance: toStance(score),
+    reason,
+    signalCount: 0,
+    triggerKind
+  };
+};
+
 const evaluatePriceStrategy = ({ strategyId, series = [] }) => {
   if (!Array.isArray(series) || series.length < 2) {
-    return {
+    return priceResult({
       action: 'hold',
       score: 0,
-      stance: 'neutral',
-      reason: 'Waiting for enough data',
-      signalCount: 0,
-      triggerKind: 'price'
-    };
+      reason: 'Waiting for enough data'
+    });
   }
 
   const prices = series.map((point) => Math.max(toNum(point.price, 0), 1e-9));
   const latest = prices[prices.length - 1];
   const latestSpread = Math.max(0, toNum(series[series.length - 1]?.spread, 0));
   const prev = prices[prices.length - 2];
-  const short = sma(prices, 8);
-  const long = sma(prices, 21);
+  const short = sma(prices, 8) || latest;
+  const medium = sma(prices, 13) || latest;
+  const long = sma(prices, 21) || latest;
+  const slow = sma(prices, 34) || latest;
   const lookback = prices[Math.max(0, prices.length - 12)];
   const momentumPct = ((latest - lookback) / Math.max(lookback, 1e-9)) * 100;
-  const trendBps = short !== null && long !== null ? ((short - long) / Math.max(latest, 1e-9)) * 10000 : 0;
+  const trendBps = ((short - long) / Math.max(latest, 1e-9)) * 10000;
+  const longTrendBps = ((medium - slow) / Math.max(latest, 1e-9)) * 10000;
   const spreadPenalty = clamp((latestSpread - 10) / 8, 0, 6);
+  const volatility20 = Math.max(stddev(prices.slice(-20)), latest * 0.00001);
+  const volatility34 = Math.max(stddev(prices.slice(-34)), latest * 0.00001);
+  const volatilityPct = (volatility20 / Math.max(latest, 1e-9)) * 100;
+  const compressionRatio = volatility20 / Math.max(volatility34, 1e-9);
+  const high20 = rollingHigh(prices.slice(0, prices.length - 1), 20) || latest;
+  const low20 = rollingLow(prices.slice(0, prices.length - 1), 20) || latest;
+  const high55 = rollingHigh(prices.slice(0, prices.length - 1), 55) || high20;
+  const low55 = rollingLow(prices.slice(0, prices.length - 1), 55) || low20;
+  const range20 = Math.max(high20 - low20, latest * 0.00001);
+  const rangePct20 = (range20 / Math.max(latest, 1e-9)) * 100;
+  const channelPosition = ((latest - low20) / Math.max(range20, 1e-9)) * 100;
+  const emaFast = ema(prices, 9) || latest;
+  const emaSlow = ema(prices, 21) || latest;
+  const emaFastPrev = ema(prices.slice(0, prices.length - 1), 9) || emaFast;
+  const emaSlowPrev = ema(prices.slice(0, prices.length - 1), 21) || emaSlow;
+  const rsi14 = rsi(prices, 14);
+  const accelBps = ((latest - prev) / Math.max(latest, 1e-9)) * 10000;
 
   if (strategyId === 'mean-reversion') {
     const window = prices.slice(-20);
@@ -292,57 +371,172 @@ const evaluatePriceStrategy = ({ strategyId, series = [] }) => {
     const z = (latest - mean) / sigma;
     const score = -z * 8 - spreadPenalty;
     const action = z <= -1.1 && latestSpread < 48 ? 'accumulate' : z >= 1.1 && latestSpread < 48 ? 'reduce' : 'hold';
-    return {
+    return priceResult({
       action,
       score,
-      stance: score > 1.2 ? 'bullish' : score < -1.2 ? 'bearish' : 'neutral',
-      reason: `z-score ${z.toFixed(2)} around 20-bar mean, spread ${latestSpread.toFixed(2)} bps`,
-      signalCount: 0,
-      triggerKind: 'price'
-    };
+      reason: `z-score ${z.toFixed(2)} around 20-bar mean, spread ${latestSpread.toFixed(2)} bps`
+    });
   }
 
   if (strategyId === 'breakout') {
-    const high = rollingHigh(prices.slice(0, prices.length - 1), 20) || latest;
-    const low = rollingLow(prices.slice(0, prices.length - 1), 20) || latest;
+    const high = high20;
+    const low = low20;
     const breakUp = latest > high * 1.0008;
     const breakDown = latest < low * 0.9992;
     const score = ((latest - prev) / Math.max(latest, 1e-9)) * 10000 + trendBps * 0.3 - spreadPenalty * 1.2;
     const action = breakUp && latestSpread < 44 ? 'accumulate' : breakDown && latestSpread < 44 ? 'reduce' : 'hold';
-    return {
+    return priceResult({
       action,
       score,
-      stance: action === 'accumulate' ? 'bullish' : action === 'reduce' ? 'bearish' : 'neutral',
-      reason: `breakout window hi ${high.toFixed(4)} / lo ${low.toFixed(4)}, spread ${latestSpread.toFixed(2)} bps`,
-      signalCount: 0,
-      triggerKind: 'price'
-    };
+      reason: `breakout window hi ${high.toFixed(4)} / lo ${low.toFixed(4)}, spread ${latestSpread.toFixed(2)} bps`
+    });
   }
 
   if (strategyId === 'momentum') {
     const score = trendBps * 0.56 + momentumPct * 9.3 - spreadPenalty * 1.35;
     const action = score >= 5.8 && latestSpread < 42 ? 'accumulate' : score <= -5.8 && latestSpread < 42 ? 'reduce' : 'hold';
-    return {
+    return priceResult({
       action,
       score,
-      stance: score > 2 ? 'bullish' : score < -2 ? 'bearish' : 'neutral',
-      reason: `momentum ${momentumPct.toFixed(2)}%, trend ${trendBps.toFixed(2)} bps, spread ${latestSpread.toFixed(2)} bps`,
-      signalCount: 0,
-      triggerKind: 'price'
-    };
+      reason: `momentum ${momentumPct.toFixed(2)}%, trend ${trendBps.toFixed(2)} bps, spread ${latestSpread.toFixed(2)} bps`
+    });
+  }
+
+  if (strategyId === 'trend-follow') {
+    const score = trendBps * 0.72 + longTrendBps * 0.46 + momentumPct * 6.1 - spreadPenalty * 1.2;
+    const action = score >= 6.4 && latestSpread < 45 ? 'accumulate' : score <= -6.4 && latestSpread < 45 ? 'reduce' : 'hold';
+    return priceResult({
+      action,
+      score,
+      reason: `trend follow short ${trendBps.toFixed(2)} bps, long ${longTrendBps.toFixed(2)} bps, spread ${latestSpread.toFixed(2)} bps`
+    });
+  }
+
+  if (strategyId === 'ema-cross') {
+    const crossUp = emaFastPrev <= emaSlowPrev && emaFast > emaSlow;
+    const crossDown = emaFastPrev >= emaSlowPrev && emaFast < emaSlow;
+    const emaGapBps = ((emaFast - emaSlow) / Math.max(latest, 1e-9)) * 10000;
+    const score = emaGapBps * 0.88 + accelBps * 0.34 + momentumPct * 2.2 - spreadPenalty;
+    const action =
+      (crossUp || (emaFast > emaSlow && score > 4.4)) && latestSpread < 44
+        ? 'accumulate'
+        : (crossDown || (emaFast < emaSlow && score < -4.4)) && latestSpread < 44
+          ? 'reduce'
+          : 'hold';
+    return priceResult({
+      action,
+      score,
+      reason: `ema cross fast ${emaFast.toFixed(4)} slow ${emaSlow.toFixed(4)}, gap ${emaGapBps.toFixed(2)} bps`
+    });
+  }
+
+  if (strategyId === 'rsi-reversion') {
+    const safeRsi = Number.isFinite(rsi14) ? rsi14 : 50;
+    const score = (50 - safeRsi) * 0.72 - trendBps * 0.16 - spreadPenalty * 1.1;
+    const action = safeRsi <= 32 && latestSpread < 48 ? 'accumulate' : safeRsi >= 68 && latestSpread < 48 ? 'reduce' : 'hold';
+    return priceResult({
+      action,
+      score,
+      reason: `rsi ${safeRsi.toFixed(2)}, trend ${trendBps.toFixed(2)} bps, spread ${latestSpread.toFixed(2)} bps`
+    });
+  }
+
+  if (strategyId === 'volatility-breakout') {
+    const upBreak = latest > high20 * (1 + volatilityPct / 900);
+    const downBreak = latest < low20 * (1 - volatilityPct / 900);
+    const score = accelBps * 0.75 + trendBps * 0.45 + volatilityPct * 14 - spreadPenalty * 1.1;
+    const action = upBreak && latestSpread < 46 ? 'accumulate' : downBreak && latestSpread < 46 ? 'reduce' : 'hold';
+    return priceResult({
+      action,
+      score,
+      reason: `vol breakout vol ${volatilityPct.toFixed(3)}%, range ${rangePct20.toFixed(3)}%, spread ${latestSpread.toFixed(2)} bps`
+    });
+  }
+
+  if (strategyId === 'range-fade') {
+    const score = (50 - channelPosition) * 0.23 - trendBps * 0.18 - spreadPenalty;
+    const action = channelPosition <= 18 && latestSpread < 42 ? 'accumulate' : channelPosition >= 82 && latestSpread < 42 ? 'reduce' : 'hold';
+    return priceResult({
+      action,
+      score,
+      reason: `range fade pos ${channelPosition.toFixed(2)}%, range ${rangePct20.toFixed(3)}%, spread ${latestSpread.toFixed(2)} bps`
+    });
+  }
+
+  if (strategyId === 'micro-scalp') {
+    const score = accelBps * 0.95 + momentumPct * 2.6 - spreadPenalty * 2.35;
+    const action = score >= 3.1 && latestSpread < 18 ? 'accumulate' : score <= -3.1 && latestSpread < 18 ? 'reduce' : 'hold';
+    return priceResult({
+      action,
+      score,
+      reason: `micro scalp accel ${accelBps.toFixed(2)} bps, spread ${latestSpread.toFixed(2)} bps`
+    });
+  }
+
+  if (strategyId === 'donchian-breakout') {
+    const breakUp = latest > high55 * 1.0005;
+    const breakDown = latest < low55 * 0.9995;
+    const donchianRangeBps = ((high55 - low55) / Math.max(latest, 1e-9)) * 10000;
+    const score = accelBps * 0.44 + momentumPct * 4.4 + donchianRangeBps * 0.0022 - spreadPenalty * 1.3;
+    const action = breakUp && latestSpread < 46 ? 'accumulate' : breakDown && latestSpread < 46 ? 'reduce' : 'hold';
+    return priceResult({
+      action,
+      score,
+      reason: `donchian hi ${high55.toFixed(4)} lo ${low55.toFixed(4)}, range ${donchianRangeBps.toFixed(2)} bps`
+    });
+  }
+
+  if (strategyId === 'compression-breakout') {
+    const compressed = compressionRatio < 0.84;
+    const burstUp = compressed && latest > high20 * 1.0004;
+    const burstDown = compressed && latest < low20 * 0.9996;
+    const score = (1 - compressionRatio) * 18 + accelBps * 0.42 + trendBps * 0.25 - spreadPenalty;
+    const action = burstUp && latestSpread < 44 ? 'accumulate' : burstDown && latestSpread < 44 ? 'reduce' : 'hold';
+    return priceResult({
+      action,
+      score,
+      reason: `compression ${compressionRatio.toFixed(3)}, burst range ${rangePct20.toFixed(3)}%, spread ${latestSpread.toFixed(2)} bps`
+    });
+  }
+
+  if (strategyId === 'momentum-pullback') {
+    const pullbackBps = ((latest - short) / Math.max(latest, 1e-9)) * 10000;
+    const longBiasUp = longTrendBps > 6;
+    const longBiasDown = longTrendBps < -6;
+    const score = longTrendBps * 0.62 - pullbackBps * 0.38 + momentumPct * 3.1 - spreadPenalty;
+    const action =
+      longBiasUp && pullbackBps < -8 && latestSpread < 46
+        ? 'accumulate'
+        : longBiasDown && pullbackBps > 8 && latestSpread < 46
+          ? 'reduce'
+          : 'hold';
+    return priceResult({
+      action,
+      score,
+      reason: `pullback ${pullbackBps.toFixed(2)} bps within long trend ${longTrendBps.toFixed(2)} bps`
+    });
+  }
+
+  if (strategyId === 'drift-guard') {
+    const driftScore = trendBps * 0.34 + longTrendBps * 0.29 + momentumPct * 2.8;
+    const riskPenalty = spreadPenalty * 1.65 + Math.max(0, volatilityPct - 1.4) * 3.4;
+    const score = driftScore - riskPenalty;
+    const action = score >= 4.2 && latestSpread < 36 ? 'accumulate' : score <= -4.2 && latestSpread < 36 ? 'reduce' : 'hold';
+    return priceResult({
+      action,
+      score,
+      reason: `drift guard score ${driftScore.toFixed(2)} risk ${riskPenalty.toFixed(2)} spread ${latestSpread.toFixed(2)} bps`
+    });
   }
 
   const confidenceBoost = clamp(Math.abs(trendBps) / 22, 0, 3.4);
   const score = trendBps * 0.62 + momentumPct * 8.6 + confidenceBoost - spreadPenalty * 1.45;
   const action = score >= 5.2 && latestSpread < 40 ? 'accumulate' : score <= -5.2 && latestSpread < 40 ? 'reduce' : 'hold';
-  return {
+  return priceResult({
     action,
     score,
-    stance: score > 2 ? 'bullish' : score < -2 ? 'bearish' : 'neutral',
-    reason: `tensor-lite drift ${trendBps.toFixed(2)} bps, momentum ${momentumPct.toFixed(2)}%, spread ${latestSpread.toFixed(2)} bps`,
-    signalCount: 0,
-    triggerKind: 'price'
-  };
+    reason: `tensor-lite drift ${trendBps.toFixed(2)} bps, momentum ${momentumPct.toFixed(2)}%, spread ${latestSpread.toFixed(2)} bps`
+  });
 };
 
 const evaluateSignalStrategy = ({ strategyId, series = [], signalRows = [], selectedMarket = null }) => {
