@@ -4,7 +4,7 @@ import GlowCard from '../components/GlowCard';
 import LineChart from '../components/LineChart';
 import { fmtInt, fmtNum, fmtPct, fmtTime } from '../lib/format';
 import { Link } from '../lib/router';
-import { buildScenarioSeries, runBacktest, SCENARIO_OPTIONS, STRATEGY_OPTIONS } from '../lib/strategyEngine';
+import { buildScenarioSeries, createWalletState, executeWalletAction, markWallet, runBacktest, SCENARIO_OPTIONS, STRATEGY_OPTIONS } from '../lib/strategyEngine';
 
 const EMPTY_RESULT = {
   stats: {
@@ -143,6 +143,163 @@ const computeHybridScore = ({ mode = 'hybrid', hitRatePct = 0, returnPct = 0, av
   return hybridRaw * sampleWeight;
 };
 
+const calcMaxDrawdownPct = (equitySeries = []) => {
+  if (!Array.isArray(equitySeries) || equitySeries.length === 0) return 0;
+  let peak = toNum(equitySeries[0], 0);
+  let maxDrawdown = 0;
+  for (const value of equitySeries) {
+    const equity = toNum(value, 0);
+    peak = Math.max(peak, equity);
+    if (peak <= 0) continue;
+    const drawdownPct = ((peak - equity) / peak) * 100;
+    maxDrawdown = Math.max(maxDrawdown, drawdownPct);
+  }
+  return maxDrawdown;
+};
+
+const solveDiscreteWindowOracle = ({
+  series = [],
+  startCash = 100000,
+  maxAbsUnits = 8,
+  slippageBps = 1.2,
+  windowSize = 12,
+  windowStep = 12,
+  minMovePct = 0,
+  smoothBlendPct = 0
+}) => {
+  const safeSeries = Array.isArray(series) ? series : [];
+  if (safeSeries.length < 3) {
+    return {
+      stats: {
+        startCash,
+        endEquity: startCash,
+        pnl: 0,
+        returnPct: 0,
+        maxDrawdownPct: 0,
+        tradeCount: 0
+      },
+      equitySeries: [],
+      tradeLog: [],
+      windows: []
+    };
+  }
+
+  const safeStartCash = Math.max(100, toNum(startCash, 100000));
+  const safeMaxUnits = Math.max(1, Math.round(toNum(maxAbsUnits, 8)));
+  const safeSlippage = Math.max(0, toNum(slippageBps, 1.2));
+  const safeWindowSize = Math.max(2, Math.round(toNum(windowSize, 12)));
+  const safeWindowStep = Math.max(1, Math.round(toNum(windowStep, safeWindowSize)));
+  const safeMinMovePct = Math.max(0, toNum(minMovePct, 0));
+  const smoothBlend = clamp(toNum(smoothBlendPct, 0) / 100, 0, 1);
+
+  const windows = [];
+  for (let startIndex = 0; startIndex < safeSeries.length - 1; startIndex += safeWindowStep) {
+    const endIndex = Math.min(safeSeries.length - 1, startIndex + safeWindowSize - 1);
+    const startPoint = safeSeries[startIndex];
+    const endPoint = safeSeries[endIndex];
+    const startPrice = Math.max(toNum(startPoint?.price, 0), 1e-9);
+    const endPrice = Math.max(toNum(endPoint?.price, 0), 1e-9);
+    const movePct = ((endPrice - startPrice) / startPrice) * 100;
+    const discreteTarget = movePct > safeMinMovePct ? safeMaxUnits : 0;
+    const action = discreteTarget > 0 ? 'accumulate' : 'hold';
+    windows.push({
+      id: `window:${startIndex}:${endIndex}`,
+      windowIndex: windows.length,
+      startIndex,
+      endIndex,
+      startTs: toNum(startPoint?.t, Date.now()),
+      endTs: toNum(endPoint?.t, Date.now()),
+      startPrice,
+      endPrice,
+      movePct,
+      action,
+      discreteTarget
+    });
+  }
+
+  const windowByStartIndex = new Map(windows.map((row) => [row.startIndex, row]));
+  let wallet = createWalletState(safeStartCash);
+  const tradeLog = [];
+  const equitySeries = [];
+
+  const rebalanceToTarget = ({ point, targetUnits, windowIndex = -1, reason = 'oracle-window' }) => {
+    let guard = 0;
+    const target = clamp(toNum(targetUnits, 0), 0, safeMaxUnits);
+    while (guard < 200) {
+      const units = toNum(wallet?.units, 0);
+      const delta = target - units;
+      if (Math.abs(delta) <= 0.001) break;
+      const action = delta > 0 ? 'accumulate' : 'reduce';
+      const execution = executeWalletAction({
+        wallet,
+        action,
+        point,
+        timestamp: toNum(point?.t, Date.now()) + guard,
+        reason,
+        score: Math.abs(delta),
+        maxAbsUnits: safeMaxUnits,
+        cooldownMs: 0,
+        slippageBps: safeSlippage
+      });
+      wallet = execution?.wallet || wallet;
+      if (!execution?.trade) break;
+      tradeLog.push({
+        ...execution.trade,
+        windowIndex
+      });
+      guard += 1;
+    }
+  };
+
+  for (let index = 0; index < safeSeries.length; index += 1) {
+    const point = safeSeries[index];
+    const window = windowByStartIndex.get(index);
+    if (window) {
+      const currentUnits = toNum(wallet?.units, 0);
+      const blendedTarget = clamp(currentUnits + (window.discreteTarget - currentUnits) * (1 - smoothBlend), 0, safeMaxUnits);
+      window.targetUnits = blendedTarget;
+      rebalanceToTarget({
+        point,
+        targetUnits: blendedTarget,
+        windowIndex: window.windowIndex,
+        reason: `oracle window ${window.windowIndex} move ${window.movePct.toFixed(3)}%`
+      });
+      window.executedUnits = toNum(wallet?.units, 0);
+    }
+
+    if (index === safeSeries.length - 1) {
+      rebalanceToTarget({
+        point,
+        targetUnits: 0,
+        windowIndex: -1,
+        reason: 'oracle end-of-series flatten'
+      });
+    }
+
+    wallet = markWallet(wallet, toNum(point?.price, 0));
+    equitySeries.push(toNum(wallet?.equity, safeStartCash));
+  }
+
+  const endEquity = equitySeries[equitySeries.length - 1] || safeStartCash;
+  const pnl = endEquity - safeStartCash;
+  const returnPct = (pnl / Math.max(safeStartCash, 1e-9)) * 100;
+  const drawdownPct = calcMaxDrawdownPct(equitySeries);
+
+  return {
+    stats: {
+      startCash: safeStartCash,
+      endEquity,
+      pnl,
+      returnPct,
+      maxDrawdownPct: drawdownPct,
+      tradeCount: tradeLog.length
+    },
+    equitySeries,
+    tradeLog: tradeLog.slice(-320).reverse(),
+    windows
+  };
+};
+
 export default function BacktestPage({ snapshot, historyByMarket }) {
   const sortedMarkets = useMemo(() => sortMarkets(snapshot?.markets || []), [snapshot?.markets]);
   const [sourceMode, setSourceMode] = useState('live-history');
@@ -164,6 +321,10 @@ export default function BacktestPage({ snapshot, historyByMarket }) {
   const [solverSortMode, setSolverSortMode] = useState('latest');
   const [solverFeedStrategyId, setSolverFeedStrategyId] = useState('all');
   const [solverStrategyIds, setSolverStrategyIds] = useState(() => STRATEGY_OPTIONS.map((option) => option.id));
+  const [oracleWindowSize, setOracleWindowSize] = useState(12);
+  const [oracleWindowStep, setOracleWindowStep] = useState(12);
+  const [oracleMinMovePct, setOracleMinMovePct] = useState(0.15);
+  const [oracleSmoothBlendPct, setOracleSmoothBlendPct] = useState(0);
 
   useEffect(() => {
     if (!sortedMarkets.length) {
@@ -248,6 +409,33 @@ export default function BacktestPage({ snapshot, historyByMarket }) {
   const runBacktestNow = () => {
     setRunTick((value) => value + 1);
   };
+
+  const oracleResult = useMemo(() => {
+    return solveDiscreteWindowOracle({
+      series: activeSeries,
+      startCash,
+      maxAbsUnits,
+      slippageBps,
+      windowSize: oracleWindowSize,
+      windowStep: oracleWindowStep,
+      minMovePct: oracleMinMovePct,
+      smoothBlendPct: oracleSmoothBlendPct
+    });
+  }, [activeSeries, maxAbsUnits, oracleMinMovePct, oracleSmoothBlendPct, oracleWindowSize, oracleWindowStep, slippageBps, startCash]);
+
+  const oracleStats = oracleResult?.stats || {
+    startCash: Math.max(100, toNum(startCash, 100000)),
+    endEquity: Math.max(100, toNum(startCash, 100000)),
+    pnl: 0,
+    returnPct: 0,
+    maxDrawdownPct: 0,
+    tradeCount: 0
+  };
+
+  const oracleWindowRows = useMemo(() => {
+    const rows = Array.isArray(oracleResult?.windows) ? oracleResult.windows : [];
+    return [...rows].sort((a, b) => Math.abs(toNum(b.movePct, 0)) - Math.abs(toNum(a.movePct, 0))).slice(0, 120);
+  }, [oracleResult?.windows]);
 
   const solverEvaluation = useMemo(() => {
     if (!Array.isArray(activeSeries) || activeSeries.length < 6) {
@@ -502,6 +690,14 @@ export default function BacktestPage({ snapshot, historyByMarket }) {
           <span>Max Drawdown</span>
           <strong className={stats.maxDrawdownPct > 0 ? 'down' : ''}>{fmtPct(stats.maxDrawdownPct)}</strong>
         </GlowCard>
+        <GlowCard className="stat-card">
+          <span>Oracle Return</span>
+          <strong className={oracleStats.returnPct >= 0 ? 'up' : 'down'}>{fmtPct(oracleStats.returnPct)}</strong>
+        </GlowCard>
+        <GlowCard className="stat-card">
+          <span>Oracle Edge</span>
+          <strong className={oracleStats.returnPct - stats.returnPct >= 0 ? 'up' : 'down'}>{fmtPct(oracleStats.returnPct - stats.returnPct)}</strong>
+        </GlowCard>
       </div>
 
       <div className="strategy-lab-chart-grid">
@@ -522,6 +718,141 @@ export default function BacktestPage({ snapshot, historyByMarket }) {
             stroke="#72ecff"
             fillFrom="rgba(82, 199, 255, 0.32)"
             fillTo="rgba(82, 199, 255, 0.02)"
+          />
+        </GlowCard>
+      </div>
+
+      <GlowCard className="panel-card">
+        <div className="section-head">
+          <h2>Discrete Window Oracle</h2>
+          <span>
+            {fmtInt(oracleResult?.windows?.length || 0)} windows | {fmtInt(oracleStats.tradeCount)} trades
+          </span>
+        </div>
+        <p className="socket-status-copy">
+          Formal discrete-window hindsight solver. For each window it computes the best long-only target, then rebalances and optionally smooths the target transition.
+        </p>
+
+        <div className="strategy-control-grid">
+          <label className="control-field">
+            <span>Window Size (bars)</span>
+            <input
+              type="number"
+              min={2}
+              max={120}
+              step={1}
+              value={oracleWindowSize}
+              onChange={(event) => setOracleWindowSize(Math.max(2, Math.min(120, Math.round(toNum(event.target.value, 12)))))}
+            />
+          </label>
+
+          <label className="control-field">
+            <span>Window Step (bars)</span>
+            <input
+              type="number"
+              min={1}
+              max={120}
+              step={1}
+              value={oracleWindowStep}
+              onChange={(event) => setOracleWindowStep(Math.max(1, Math.min(120, Math.round(toNum(event.target.value, 12)))))}
+            />
+          </label>
+
+          <label className="control-field">
+            <span>Min Move % (enter)</span>
+            <input
+              type="number"
+              min={0}
+              max={10}
+              step={0.01}
+              value={oracleMinMovePct}
+              onChange={(event) => setOracleMinMovePct(Math.max(0, Math.min(10, toNum(event.target.value, 0.15))))}
+            />
+          </label>
+
+          <label className="control-field">
+            <span>Smooth Blend %</span>
+            <input
+              type="number"
+              min={0}
+              max={95}
+              step={1}
+              value={oracleSmoothBlendPct}
+              onChange={(event) => setOracleSmoothBlendPct(Math.max(0, Math.min(95, Math.round(toNum(event.target.value, 0)))))}
+            />
+          </label>
+        </div>
+
+        <LineChart
+          title={`Oracle vs Strategy Equity (window ${fmtInt(oracleWindowSize)} / step ${fmtInt(oracleWindowStep)})`}
+          points={oracleResult?.equitySeries || []}
+          stroke="#8dff8a"
+          fillFrom="rgba(100, 232, 136, 0.3)"
+          fillTo="rgba(100, 232, 136, 0.02)"
+          overlays={[
+            {
+              key: 'oracle-vs-backtest',
+              label: 'backtest equity',
+              points: result.equitySeries || [],
+              stroke: '#9d92ff',
+              strokeWidth: 1.6
+            }
+          ]}
+        />
+      </GlowCard>
+
+      <div className="two-col">
+        <GlowCard className="panel-card">
+          <div className="section-head">
+            <h2>Oracle Window Plan</h2>
+            <span>{fmtInt(oracleWindowRows.length)} rows</span>
+          </div>
+          <FlashList
+            items={oracleWindowRows}
+            height={320}
+            itemHeight={74}
+            className="tick-flash-list"
+            emptyCopy="No window plan rows yet."
+            keyExtractor={(row) => row.id}
+            renderItem={(row) => (
+              <article className="tensor-event-row">
+                <strong className={row.discreteTarget > 0 ? 'up' : ''}>
+                  window {fmtInt(row.windowIndex)} | {row.discreteTarget > 0 ? 'accumulate' : 'hold'} | move {fmtPct(row.movePct)}
+                </strong>
+                <p>
+                  target {fmtNum(row.targetUnits, 2)} / discrete {fmtNum(row.discreteTarget, 2)} units | executed {fmtNum(row.executedUnits, 2)} units
+                </p>
+                <small>
+                  px {fmtNum(row.startPrice, 4)} {'->'} {fmtNum(row.endPrice, 4)} | bars {fmtInt(row.startIndex)}-{fmtInt(row.endIndex)} | {fmtTime(row.startTs)}
+                </small>
+              </article>
+            )}
+          />
+        </GlowCard>
+
+        <GlowCard className="panel-card">
+          <div className="section-head">
+            <h2>Oracle Trade Tape</h2>
+            <span>{fmtInt(oracleResult?.tradeLog?.length || 0)} rows</span>
+          </div>
+          <FlashList
+            items={oracleResult?.tradeLog || []}
+            height={320}
+            itemHeight={72}
+            className="tick-flash-list"
+            emptyCopy="No oracle trades generated."
+            keyExtractor={(trade) => trade.id}
+            renderItem={(trade) => (
+              <article className="tensor-event-row">
+                <strong className={trade.action === 'accumulate' ? 'up' : trade.action === 'reduce' ? 'down' : ''}>
+                  {trade.action} | fill {fmtNum(trade.fillPrice, 4)} | window {fmtInt(trade.windowIndex)}
+                </strong>
+                <p>{trade.reason || 'oracle execution'}</p>
+                <small>
+                  delta {fmtNum(trade.unitsDelta, 2)} | units {fmtNum(trade.unitsAfter, 2)} | pnl {fmtNum(trade.realizedDelta, 2)} | {fmtTime(trade.timestamp)}
+                </small>
+              </article>
+            )}
           />
         </GlowCard>
       </div>
