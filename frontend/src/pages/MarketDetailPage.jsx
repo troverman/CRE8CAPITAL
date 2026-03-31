@@ -242,9 +242,46 @@ export default function MarketDetailPage({ marketId, snapshot, historyByMarket, 
     return ranked[0];
   }, [depthByProvider, latestTickByProviderId, marketPair, providerStates, seriesByProvider]);
 
+  const socketDepthSelection = useMemo(() => {
+    const candidates = providerStates
+      .map((provider) => {
+        const rawDepth = depthByProvider[provider.id];
+        const normalizedDepth = normalizeDepthPayload(rawDepth, provider.name || provider.id);
+        if (!normalizedDepth) return null;
+        const latestTick = latestTickByProviderId.get(provider.id) || null;
+        const symbol = latestTick?.symbol || normalizedDepth?.symbol || null;
+        const pair = splitSymbolPair(symbol);
+        const basis = getPairBasis(marketPair, pair);
+        const depthAt = pickFirstFinite(normalizedDepth?.timestamp, provider?.lastTickAt, 0);
+        return {
+          provider,
+          depth: normalizedDepth,
+          symbol,
+          basis,
+          depthAt: Number.isFinite(depthAt) ? depthAt : 0
+        };
+      })
+      .filter((candidate) => Boolean(candidate));
+
+    if (candidates.length === 0) return null;
+
+    const alignedCandidates = candidates.filter((candidate) => candidate.basis.score >= 2);
+    const ranked = alignedCandidates.length > 0 ? alignedCandidates : candidates;
+    ranked.sort((a, b) => {
+      if (a.basis.score !== b.basis.score) return b.basis.score - a.basis.score;
+      if (a.provider.connected !== b.provider.connected) return a.provider.connected ? -1 : 1;
+      if (a.provider.local !== b.provider.local) return a.provider.local ? 1 : -1;
+      if (a.depthAt !== b.depthAt) return b.depthAt - a.depthAt;
+      return 0;
+    });
+
+    return ranked[0];
+  }, [depthByProvider, latestTickByProviderId, marketPair, providerStates]);
+
   const resolvedPrimaryProvider = socketPrimarySelection?.provider || primaryProvider;
   const resolvedPrimarySeries = socketPrimarySelection?.series || primarySeries;
-  const resolvedPrimaryDepth = resolvedPrimaryProvider ? depthByProvider[resolvedPrimaryProvider.id] || primaryDepth : primaryDepth;
+  const resolvedDepthProvider = socketDepthSelection?.provider || resolvedPrimaryProvider;
+  const resolvedPrimaryDepth = socketDepthSelection?.depth || (resolvedDepthProvider ? depthByProvider[resolvedDepthProvider.id] || primaryDepth : primaryDepth);
 
   const {
     snapshot: tensorSnapshot,
@@ -260,11 +297,11 @@ export default function MarketDetailPage({ marketId, snapshot, historyByMarket, 
   });
 
   const resolvedDepth = useMemo(() => {
-    const primaryResolved = normalizeDepthPayload(resolvedPrimaryDepth, resolvedPrimaryProvider?.name || resolvedPrimaryProvider?.id || null);
+    const primaryResolved = normalizeDepthPayload(resolvedPrimaryDepth, resolvedDepthProvider?.name || resolvedDepthProvider?.id || null);
     if (primaryResolved) {
       return {
         depth: primaryResolved,
-        providerName: primaryResolved.providerName || resolvedPrimaryProvider?.name || null,
+        providerName: primaryResolved.providerName || resolvedDepthProvider?.name || null,
         sourceLabel: ''
       };
     }
@@ -324,6 +361,8 @@ export default function MarketDetailPage({ marketId, snapshot, historyByMarket, 
     market?.spreadBps,
     market?.symbol,
     market?.totalVolume,
+    resolvedDepthProvider?.id,
+    resolvedDepthProvider?.name,
     resolvedPrimaryDepth,
     resolvedPrimaryProvider?.ask,
     resolvedPrimaryProvider?.bid,
@@ -385,7 +424,7 @@ export default function MarketDetailPage({ marketId, snapshot, historyByMarket, 
       }
       return next;
     });
-  }, [resolvedPrimaryProvider?.id, resolvedDepth.depth, resolvedDepth.providerName, socketLiveEnabled]);
+  }, [resolvedDepth.depth, resolvedDepth.providerName, resolvedDepthProvider?.id, socketLiveEnabled]);
 
   if (!market) {
     return (

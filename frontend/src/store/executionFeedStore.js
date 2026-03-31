@@ -99,6 +99,36 @@ export const useExecutionFeedStore = create((set) => ({
       position: positionEvent
     });
   },
+  emitWalletPositionSnapshot: (payload) => {
+    const wallet = payload?.wallet;
+    if (!wallet) return;
+
+    const context = buildContext(payload);
+    const pointPrice = toNum(payload?.point?.price, wallet.markPrice || 0);
+    const timestamp = Math.max(0, Math.round(toNum(payload?.timestamp, payload?.point?.t || Date.now())));
+    const walletSnapshot = buildWalletSnapshot(wallet, pointPrice);
+    const actionRaw = String(payload?.action || payload?.signal?.action || 'hold').toLowerCase();
+    const action = actionRaw === 'reduce' ? 'reduce' : actionRaw === 'accumulate' ? 'accumulate' : 'hold';
+
+    const positionEvent = {
+      id: `pos:${timestamp}:${context.accountId || 'account'}:${context.strategyId}:mark`,
+      timestamp,
+      ...context,
+      action,
+      triggerKind: String(payload?.signal?.triggerKind || 'runtime'),
+      signalCount: Math.max(0, Math.round(toNum(payload?.signal?.signalCount, 0))),
+      score: toNum(payload?.signal?.score, 0),
+      reason: String(payload?.reason || payload?.signal?.reason || 'mark update'),
+      wallet: walletSnapshot
+    };
+
+    set((state) => ({
+      ...state,
+      positionEvents: trimHead([positionEvent, ...state.positionEvents], MAX_POSITION_EVENTS)
+    }));
+
+    emitWindowEvent('cre8capital:wallet:position', positionEvent);
+  },
   clearExecutionFeed: () =>
     set(() => ({
       txEvents: [],

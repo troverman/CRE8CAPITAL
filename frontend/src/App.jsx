@@ -126,16 +126,10 @@ export default function App() {
     localFallback,
     lastSyncedAt,
     error,
-    restrategyBusy,
-    refresh,
-    triggerRestrategy
+    refresh
   } = useCapitalLive();
 
   const historyByMarket = useMarketHistory(snapshot.markets, snapshot.now);
-
-  const handleRestrategy = async () => {
-    await triggerRestrategy('manual rebalance check');
-  };
 
   return (
     <main className="capital-shell">
@@ -157,8 +151,6 @@ export default function App() {
           lastSyncedAt={lastSyncedAt}
           error={error}
           onRefresh={refresh}
-          onRestrategy={handleRestrategy}
-          restrategyBusy={restrategyBusy}
           historyByMarket={historyByMarket}
         />
       ) : null}

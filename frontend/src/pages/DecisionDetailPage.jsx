@@ -1,18 +1,12 @@
 import { useMemo } from 'react';
 import GlowCard from '../components/GlowCard';
 import { buildDecisionWalletLinkIndex } from '../lib/decisionWalletLink';
+import { buildDecisionRows } from '../lib/decisionView';
 import { fmtInt, fmtNum, fmtTime } from '../lib/format';
 import { Link } from '../lib/router';
 import { getDisplaySignals } from '../lib/signalView';
 import { useExecutionFeedStore } from '../store/executionFeedStore';
 import { useStrategyLabStore } from '../store/strategyLabStore';
-
-const toText = (value, fallback = '-') => {
-  const text = String(value || '').trim();
-  return text || fallback;
-};
-
-const toAction = (value) => String(value || 'hold').toLowerCase();
 
 const toNum = (value, fallback = 0) => {
   const num = Number(value);
@@ -23,24 +17,14 @@ const toIdentity = (symbol, assetClass) => `${String(symbol || '').toUpperCase()
 
 export default function DecisionDetailPage({ decisionId, snapshot }) {
   const walletAccounts = useStrategyLabStore((state) => state.walletAccounts);
+  const runtimeDecisionEvents = useStrategyLabStore((state) => state.eventLog);
   const txEvents = useExecutionFeedStore((state) => state.txEvents);
   const decisions = useMemo(() => {
-    return [...(snapshot?.decisions || [])]
-      .map((decision, index) => ({
-        id: toText(decision?.id, `decision:${index}`),
-        strategyName: toText(decision?.strategyName || decision?.strategy, 'unknown'),
-        action: toAction(decision?.action),
-        reason: toText(decision?.reason, 'No reason provided'),
-        trigger: toText(decision?.trigger),
-        score: toNum(decision?.score, 0),
-        symbol: toText(decision?.symbol),
-        assetClass: toText(decision?.assetClass, 'unknown'),
-        timestamp: toNum(decision?.timestamp, 0),
-        accountId: toText(decision?.accountId || decision?.walletAccountId || decision?.walletId || decision?.account?.id || ''),
-        accountName: toText(decision?.accountName || decision?.walletName || decision?.account?.name || '')
-      }))
-      .sort((a, b) => b.timestamp - a.timestamp);
-  }, [snapshot?.decisions]);
+    return buildDecisionRows({
+      snapshotDecisions: snapshot?.decisions || [],
+      runtimeEvents: runtimeDecisionEvents || []
+    });
+  }, [runtimeDecisionEvents, snapshot?.decisions]);
 
   const walletLinkByDecisionId = useMemo(() => {
     return buildDecisionWalletLinkIndex({
@@ -131,6 +115,10 @@ export default function DecisionDetailPage({ decisionId, snapshot }) {
         <GlowCard className="stat-card">
           <span>Timestamp</span>
           <strong>{fmtTime(decision.timestamp)}</strong>
+        </GlowCard>
+        <GlowCard className="stat-card">
+          <span>Source</span>
+          <strong>{decision.source || '-'}</strong>
         </GlowCard>
         <GlowCard className="stat-card">
           <span>Wallet</span>

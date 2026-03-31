@@ -22,6 +22,8 @@ export default function StrategyListPage({ snapshot }) {
   const setStrategyEnabled = useStrategyToggleStore((state) => state.setStrategyEnabled);
   const strategyId = useStrategyLabStore((state) => state.strategyId);
   const enabledStrategyIds = useStrategyLabStore((state) => state.enabledStrategyIds);
+  const executionStrategyMode = useStrategyLabStore((state) => state.executionStrategyMode);
+  const executionWalletScope = useStrategyLabStore((state) => state.executionWalletScope);
   const walletAccounts = useStrategyLabStore((state) => state.walletAccounts);
   const activeWalletAccountId = useStrategyLabStore((state) => state.activeWalletAccountId);
   const setActiveWalletAccount = useStrategyLabStore((state) => state.setActiveWalletAccount);
@@ -131,6 +133,10 @@ export default function StrategyListPage({ snapshot }) {
         <p className="socket-status-copy">
           active wallet {activeWallet?.name || '-'} ({activeWallet?.enabled ? 'enabled' : 'paused'}) | strategy focus {selectedRuntimeStrategy?.name || strategyId || '-'} (
           {selectedRuntimeStrategy?.enabled === false ? 'disabled' : 'enabled'})
+        </p>
+        <p className="socket-status-copy">
+          engine mode {executionStrategyMode === 'selected-only' ? 'selected strategy only' : 'best enabled strategy'} | wallet scope{' '}
+          {executionWalletScope === 'active-only' ? 'active wallet only' : 'all enabled wallets'}
         </p>
         <div className="section-actions">
           <Link to="/wallet" className="inline-link">

@@ -32,6 +32,8 @@ const marketIdentity = (symbol, assetClass) => `${String(symbol || '').toUpperCa
 export default function WalletDetailPage({ walletId, snapshot }) {
   const walletAccounts = useStrategyLabStore((state) => state.walletAccounts);
   const activeWalletAccountId = useStrategyLabStore((state) => state.activeWalletAccountId);
+  const executionStrategyMode = useStrategyLabStore((state) => state.executionStrategyMode);
+  const executionWalletScope = useStrategyLabStore((state) => state.executionWalletScope);
   const setActiveWalletAccount = useStrategyLabStore((state) => state.setActiveWalletAccount);
 
   const txEvents = useExecutionFeedStore((state) => state.txEvents);
@@ -121,6 +123,10 @@ export default function WalletDetailPage({ walletId, snapshot }) {
           </div>
         </div>
         <p>Live account drilldown with execution feed, position updates, and linked signal/decision context.</p>
+        <p className="socket-status-copy">
+          engine mode {executionStrategyMode === 'selected-only' ? 'selected strategy only' : 'best enabled strategy'} | wallet scope{' '}
+          {executionWalletScope === 'active-only' ? 'active wallet only' : 'all enabled wallets'}
+        </p>
         <div className="wallet-action-row">
           <div style={{ minWidth: 260 }}>
             <WalletAccountSelectField

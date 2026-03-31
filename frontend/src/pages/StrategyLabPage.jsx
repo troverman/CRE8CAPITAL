@@ -119,6 +119,8 @@ export default function StrategyLabPage({ snapshot, historyByMarket }) {
     sourceId,
     strategyId,
     enabledStrategyIds,
+    executionStrategyMode,
+    executionWalletScope,
     scenarioId,
     intervalMs,
     maxAbsUnits,
@@ -148,6 +150,7 @@ export default function StrategyLabPage({ snapshot, historyByMarket }) {
     changeScenario,
     changeMarket,
     changeRisk,
+    changeExecutionConfig,
     setActiveWalletAccount,
     triggerManual,
     resetSession,
@@ -666,8 +669,39 @@ export default function StrategyLabPage({ snapshot, historyByMarket }) {
               );
             })}
           </div>
+          <div className="strategy-control-grid">
+            <label className="control-field">
+              <span>Execution Strategy</span>
+              <select
+                value={executionStrategyMode}
+                onChange={(event) =>
+                  changeExecutionConfig({
+                    strategyMode: event.target.value
+                  })
+                }
+              >
+                <option value="best-enabled">Best Enabled Strategy</option>
+                <option value="selected-only">Selected Strategy Only</option>
+              </select>
+            </label>
+            <label className="control-field">
+              <span>Wallet Target</span>
+              <select
+                value={executionWalletScope}
+                onChange={(event) =>
+                  changeExecutionConfig({
+                    walletScope: event.target.value
+                  })
+                }
+              >
+                <option value="active-only">Active Wallet Only</option>
+                <option value="all-enabled">All Enabled Wallets</option>
+              </select>
+            </label>
+          </div>
           <p className="socket-status-copy">
-            Runtime evaluates all enabled strategies each tick, then executes the strongest non-hold score across the enabled set.
+            Runtime evaluates enabled strategies each tick. Execution mode: {executionStrategyMode === 'selected-only' ? 'selected strategy only' : 'best enabled strategy'} | wallet
+            scope: {executionWalletScope === 'active-only' ? 'active wallet only' : 'all enabled wallets'}.
           </p>
 
           <div className="strategy-risk-grid">
@@ -729,6 +763,8 @@ export default function StrategyLabPage({ snapshot, historyByMarket }) {
             <span className={running ? 'status-pill online' : 'status-pill'}>{running ? 'realtime active' : 'realtime paused'}</span>
             <span className="status-pill">mode {sourceId}</span>
             <span className="status-pill">market {selectedMarket?.symbol || '-'}</span>
+            <span className="status-pill">strategy exec {executionStrategyMode}</span>
+            <span className="status-pill">wallet exec {executionWalletScope}</span>
             <span className={hasLiveHistory ? 'status-pill online' : 'status-pill'}>history {hasLiveHistory ? 'available' : 'limited'}</span>
           </div>
           <p className="socket-status-copy">{strategyDescription}</p>
@@ -1335,7 +1371,7 @@ export default function StrategyLabPage({ snapshot, historyByMarket }) {
                       picks {fmtInt(item.picks)} | orders {fmtInt(item.orders)}
                     </p>
                     <small>
-                      equity {fmtNum(item.equityStart, 2)} -> {fmtNum(item.equityEnd, 2)} | drift {fmtSigned(item.tensorDriftPct || 0, 3)}% | imbalance{' '}
+                      equity {fmtNum(item.equityStart, 2)} {'->'} {fmtNum(item.equityEnd, 2)} | drift {fmtSigned(item.tensorDriftPct || 0, 3)}% | imbalance{' '}
                       {fmtSigned((item.tensorImbalance || 0) * 100, 2)}% | conf {fmtNum(item.tensorConfidencePct || 0, 1)}% | {fmtTime(item.timestamp)}
                     </small>
                   </article>
@@ -1491,7 +1527,7 @@ export default function StrategyLabPage({ snapshot, historyByMarket }) {
         <>
       <GlowCard className="panel-card">
         <div className="section-head">
-          <h2>Signal Set -> Strategy</h2>
+          <h2>Signal Set {'->'} Strategy</h2>
           <span>{signalRows.length} inputs</span>
         </div>
         <div className="list-stack">

@@ -53,6 +53,8 @@ export default function useStrategyLab({ snapshot, historyByMarket }) {
   const sourceId = useStrategyLabStore((state) => state.sourceId);
   const strategyId = useStrategyLabStore((state) => state.strategyId);
   const enabledStrategyIds = useStrategyLabStore((state) => state.enabledStrategyIds);
+  const executionStrategyMode = useStrategyLabStore((state) => state.executionStrategyMode);
+  const executionWalletScope = useStrategyLabStore((state) => state.executionWalletScope);
   const scenarioId = useStrategyLabStore((state) => state.scenarioId);
   const marketKey = useStrategyLabStore((state) => state.marketKey);
   const intervalMs = useStrategyLabStore((state) => state.intervalMs);
@@ -73,6 +75,7 @@ export default function useStrategyLab({ snapshot, historyByMarket }) {
   const updateWalletAccount = useStrategyLabStore((state) => state.updateWalletAccount);
   const removeWalletAccount = useStrategyLabStore((state) => state.removeWalletAccount);
   const clearWalletAccounts = useStrategyLabStore((state) => state.clearWalletAccounts);
+  const setExecutionConfig = useStrategyLabStore((state) => state.setExecutionConfig);
   const setEnabledStrategies = useStrategyLabStore((state) => state.setEnabledStrategies);
   const toggleEnabledStrategy = useStrategyLabStore((state) => state.toggleEnabledStrategy);
   const enableAllStrategies = useStrategyLabStore((state) => state.enableAllStrategies);
@@ -374,6 +377,16 @@ export default function useStrategyLab({ snapshot, historyByMarket }) {
     [cooldownMs, maxAbsUnits, setConfig, slippageBps]
   );
 
+  const changeExecutionConfig = useCallback(
+    ({ strategyMode, walletScope } = {}) => {
+      setExecutionConfig({
+        strategyMode,
+        walletScope
+      });
+    },
+    [setExecutionConfig]
+  );
+
   const triggerManual = useCallback(() => {
     stepOnce({
       forceEvent: true,
@@ -398,6 +411,8 @@ export default function useStrategyLab({ snapshot, historyByMarket }) {
     sourceId,
     strategyId,
     enabledStrategyIds,
+    executionStrategyMode,
+    executionWalletScope,
     scenarioId,
     marketKey: selectedMarket?.key || '',
     intervalMs: clampInterval(intervalMs),
@@ -431,6 +446,7 @@ export default function useStrategyLab({ snapshot, historyByMarket }) {
     changeScenario,
     changeMarket,
     changeRisk,
+    changeExecutionConfig,
     addWalletAccount,
     updateWalletAccount,
     removeWalletAccount,

@@ -8,8 +8,6 @@ export default function HomePage({
   snapshot,
   syncing,
   onRefresh,
-  onRestrategy,
-  restrategyBusy,
   historyByMarket
 }) {
   const providerConnected = snapshot.providers.filter((provider) => provider.connected).length;
@@ -42,9 +40,6 @@ export default function HomePage({
         <div className="hero-actions">
           <button type="button" className="btn secondary" onClick={onRefresh} disabled={syncing}>
             {syncing ? 'Syncing...' : 'Refresh Snapshot'}
-          </button>
-          <button type="button" className="btn primary" onClick={onRestrategy} disabled={restrategyBusy}>
-            {restrategyBusy ? 'Queuing...' : 'Run Restrategy'}
           </button>
           <Link to="/strategy" className="btn secondary">
             Open Strategy Lab

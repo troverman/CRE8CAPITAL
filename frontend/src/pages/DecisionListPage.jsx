@@ -2,21 +2,16 @@ import { useMemo, useState } from 'react';
 import FlashList from '../components/FlashList';
 import GlowCard from '../components/GlowCard';
 import { buildDecisionWalletLinkIndex } from '../lib/decisionWalletLink';
+import { buildDecisionRows } from '../lib/decisionView';
 import { fmtInt, fmtNum, fmtTime } from '../lib/format';
 import { Link } from '../lib/router';
 import { useExecutionFeedStore } from '../store/executionFeedStore';
 import { useStrategyLabStore } from '../store/strategyLabStore';
 
-const toText = (value, fallback = '-') => {
-  const text = String(value || '').trim();
-  return text || fallback;
-};
-
-const toAction = (value) => String(value || 'hold').toLowerCase();
-
 export default function DecisionListPage({ snapshot }) {
   const [search, setSearch] = useState('');
   const walletAccounts = useStrategyLabStore((state) => state.walletAccounts);
+  const runtimeDecisionEvents = useStrategyLabStore((state) => state.eventLog);
   const txEvents = useExecutionFeedStore((state) => state.txEvents);
 
   const marketKeyByIdentity = useMemo(() => {
@@ -31,22 +26,11 @@ export default function DecisionListPage({ snapshot }) {
   }, [snapshot?.markets]);
 
   const decisions = useMemo(() => {
-    return [...(snapshot?.decisions || [])]
-      .map((decision, index) => ({
-        id: toText(decision?.id, `decision:${index}`),
-        strategyName: toText(decision?.strategyName || decision?.strategy, 'unknown'),
-        action: toAction(decision?.action),
-        reason: toText(decision?.reason, 'No reason provided'),
-        trigger: toText(decision?.trigger),
-        score: Number(decision?.score) || 0,
-        symbol: toText(decision?.symbol),
-        assetClass: toText(decision?.assetClass, 'unknown'),
-        timestamp: Number(decision?.timestamp) || 0,
-        accountId: toText(decision?.accountId || decision?.walletAccountId || decision?.walletId || decision?.account?.id || ''),
-        accountName: toText(decision?.accountName || decision?.walletName || decision?.account?.name || '')
-      }))
-      .sort((a, b) => b.timestamp - a.timestamp);
-  }, [snapshot?.decisions]);
+    return buildDecisionRows({
+      snapshotDecisions: snapshot?.decisions || [],
+      runtimeEvents: runtimeDecisionEvents || []
+    });
+  }, [runtimeDecisionEvents, snapshot?.decisions]);
 
   const walletLinkByDecisionId = useMemo(() => {
     return buildDecisionWalletLinkIndex({
@@ -137,6 +121,7 @@ export default function DecisionListPage({ snapshot }) {
                   ) : null}
                 </div>
                 <div className="item-meta">
+                  <small>{decision.source}</small>
                   <small>trigger {decision.trigger}</small>
                   <small>score {fmtNum(decision.score, 2)}</small>
                   <small>{fmtTime(decision.timestamp)}</small>

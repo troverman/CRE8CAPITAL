@@ -243,6 +243,8 @@ const applyAssetTrade = ({ holdings, trade, market, fallbackPrice, timestamp }) 
 
 export default function WalletPage({ snapshot }) {
   const strategyId = useStrategyLabStore((state) => state.strategyId);
+  const executionStrategyMode = useStrategyLabStore((state) => state.executionStrategyMode);
+  const executionWalletScope = useStrategyLabStore((state) => state.executionWalletScope);
   const paperAccounts = useStrategyLabStore((state) => state.walletAccounts);
   const activePaperAccountId = useStrategyLabStore((state) => state.activeWalletAccountId);
   const addPaperAccount = useStrategyLabStore((state) => state.addWalletAccount);
@@ -250,6 +252,7 @@ export default function WalletPage({ snapshot }) {
   const removePaperAccount = useStrategyLabStore((state) => state.removeWalletAccount);
   const clearPaperAccounts = useStrategyLabStore((state) => state.clearWalletAccounts);
   const setActivePaperAccount = useStrategyLabStore((state) => state.setActiveWalletAccount);
+  const setExecutionConfig = useStrategyLabStore((state) => state.setExecutionConfig);
   const txEvents = useExecutionFeedStore((state) => state.txEvents);
   const enabledByKey = useStrategyToggleStore((state) => state.enabledByKey);
   const ensureStrategies = useStrategyToggleStore((state) => state.ensureStrategies);
@@ -323,7 +326,7 @@ export default function WalletPage({ snapshot }) {
   const [paperName, setPaperName] = useState('');
   const [paperCash, setPaperCash] = useState(100000);
   const [runtimeSyncTab, setRuntimeSyncTab] = useState('summary');
-  const [runtimeTradeScope, setRuntimeTradeScope] = useState('selected');
+  const [runtimeTradeScope, setRuntimeTradeScope] = useState('all');
 
   const runtimeTradeRows = useMemo(() => {
     return runtimeTradeScope === 'all' ? activeRuntimeTxEvents : selectedStrategyRuntimeTxEvents;
@@ -952,7 +955,7 @@ export default function WalletPage({ snapshot }) {
           </div>
         </div>
         <p>
-          Local-only paper wallet for testing manual actions and strategy behavior. External execution wiring is coming soon through passport-linked providers.
+          Runtime paper accounts power live strategy execution. Position Creator below is a local sandbox for manual order testing.
         </p>
       </GlowCard>
 
@@ -1013,6 +1016,40 @@ export default function WalletPage({ snapshot }) {
         <p className="socket-status-copy">
           Active wallet {activePaperAccount?.name || '-'} ({activePaperAccount?.enabled ? 'enabled' : 'paused'}) | strategy focus{' '}
           {selectedStrategyStatus?.name || strategyId || '-'} ({selectedStrategyStatus?.enabled === false ? 'disabled' : 'enabled'})
+        </p>
+        <div className="strategy-control-grid">
+          <label className="control-field">
+            <span>Execution Strategy</span>
+            <select
+              value={executionStrategyMode}
+              onChange={(event) =>
+                setExecutionConfig({
+                  strategyMode: event.target.value
+                })
+              }
+            >
+              <option value="best-enabled">Best Enabled Strategy</option>
+              <option value="selected-only">Selected Strategy Only</option>
+            </select>
+          </label>
+          <label className="control-field">
+            <span>Wallet Target</span>
+            <select
+              value={executionWalletScope}
+              onChange={(event) =>
+                setExecutionConfig({
+                  walletScope: event.target.value
+                })
+              }
+            >
+              <option value="active-only">Active Wallet Only</option>
+              <option value="all-enabled">All Enabled Wallets</option>
+            </select>
+          </label>
+        </div>
+        <p className="socket-status-copy">
+          Engine mode: {executionStrategyMode === 'selected-only' ? 'selected strategy only' : 'best enabled strategy'} | wallet scope:{' '}
+          {executionWalletScope === 'active-only' ? 'active wallet only' : 'all enabled wallets'}.
         </p>
         <div className="strategy-lab-tab-row" role="tablist" aria-label="Runtime sync views">
           {RUNTIME_SYNC_TABS.map((tab) => (
@@ -1109,7 +1146,7 @@ export default function WalletPage({ snapshot }) {
               <span>{fmtInt(strategyStatusRows.length)} total</span>
             </div>
             <p className="socket-status-copy">
-              This list is status-only in wallet view. Configure strategy enable/disable in Strategy Lab, then use Trades tab here to verify live fills.
+              Strategy enablement is shared with Strategy Lab. Configure execution mode above, then use Trades tab here to verify live fills.
             </p>
             {strategyStatusRows.map((strategy) => {
               const selected = toStrategyKey(strategy.id) === toStrategyKey(strategyId);
@@ -1301,7 +1338,7 @@ export default function WalletPage({ snapshot }) {
 
       <GlowCard className="panel-card wallet-control-card">
         <div className="section-head">
-          <h2>Position Creator</h2>
+          <h2>Position Creator (Local Sandbox)</h2>
           <span>{selectedMarket ? selectedMarket.symbol : 'no market selected'}</span>
         </div>
         <div className="wallet-control-grid">
