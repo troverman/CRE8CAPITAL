@@ -27,7 +27,7 @@ export default function RuntimeExecutionControls({
       {showControls ? (
         <div className="strategy-control-grid">
           <label className="control-field">
-            <span>Execution Strategy</span>
+            <span>Execution Pick Rule</span>
             <select
               value={strategyMode}
               onChange={(event) => onStrategyModeChange(event.target.value)}
@@ -41,7 +41,7 @@ export default function RuntimeExecutionControls({
             </select>
           </label>
           <label className="control-field">
-            <span>Wallet Target</span>
+            <span>Wallet Execution Scope</span>
             <select value={walletScope} onChange={(event) => onWalletScopeChange(event.target.value)} disabled={!canEdit}>
               {WALLET_SCOPE_OPTIONS.map((option) => (
                 <option key={option.value} value={option.value}>

@@ -41,8 +41,12 @@ const resolveFillPriceFromBook = ({ side, quantity, markPrice, bid, ask, depth, 
   const topBid = toFiniteOrNull(bid) ?? bids[0]?.price ?? null;
   const topAsk = toFiniteOrNull(ask) ?? asks[0]?.price ?? null;
 
-  const spreadMid =
+  const spreadMidRaw =
     topBid !== null && topAsk !== null && topBid > 0 && topAsk > 0 ? (topBid + topAsk) / 2 : Math.max(toNum(markPrice, 0), 1e-9);
+  const markAnchor = Math.max(toNum(markPrice, 0), 1e-9);
+  const spreadMidRatio = spreadMidRaw / Math.max(markAnchor, 1e-9);
+  const spreadMid =
+    Number.isFinite(spreadMidRatio) && spreadMidRatio >= 0.5 && spreadMidRatio <= 2 ? spreadMidRaw : markAnchor;
   const spreadBps = topBid !== null && topAsk !== null && spreadMid > 0 ? ((topAsk - topBid) / spreadMid) * 10000 : 0;
 
   const levels = side === 'buy' ? asks : bids;
@@ -69,6 +73,14 @@ const resolveFillPriceFromBook = ({ side, quantity, markPrice, bid, ask, depth, 
   } else {
     const residualImpact = (Math.max(0, toNum(slippageBps, 0)) / 10000) * 0.18;
     fillPrice *= 1 + (side === 'buy' ? 1 : -1) * residualImpact;
+  }
+
+  // Guard against stale/cross-symbol book prices causing free fills and inflated equity.
+  const minReasonableFill = spreadMid * 0.2;
+  const maxReasonableFill = spreadMid * 5;
+  if (!Number.isFinite(fillPrice) || fillPrice <= 0 || fillPrice < minReasonableFill || fillPrice > maxReasonableFill) {
+    const impactBps = Math.max(0, toNum(slippageBps, 0)) + Math.max(0, spreadBps) / 2;
+    fillPrice = Math.max(spreadMid * (1 + (side === 'buy' ? 1 : -1) * (impactBps / 10000)), 1e-9);
   }
 
   return {

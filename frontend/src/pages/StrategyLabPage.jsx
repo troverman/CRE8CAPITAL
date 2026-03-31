@@ -144,6 +144,7 @@ export default function StrategyLabPage({ snapshot, historyByMarket }) {
     toggleRunning,
     updateInterval,
     changeSource,
+    changeStrategy,
     changeEnabledStrategies,
     toggleStrategyEnabled,
     enableAllStrategies,
@@ -259,6 +260,23 @@ export default function StrategyLabPage({ snapshot, historyByMarket }) {
     selectedStrategyPositionRows,
     selectedStrategyWinRate
   } = selectionModel;
+
+  const strategyLabelMap = useMemo(() => {
+    const map = {};
+    for (const option of strategyOptions) {
+      map[String(option?.id || '')] = option?.label || String(option?.id || '');
+    }
+    return map;
+  }, [strategyOptions]);
+
+  const enabledStrategyLabels = useMemo(() => {
+    return enabledStrategyIds.map((id) => strategyLabelMap[String(id)] || String(id));
+  }, [enabledStrategyIds, strategyLabelMap]);
+
+  const lastExecutionStrategyId = String(eventLog?.[0]?.strategyId || '');
+  const lastExecutionStrategyLabel = lastExecutionStrategyId ? strategyLabelMap[lastExecutionStrategyId] || lastExecutionStrategyId : '-';
+  const executionStrategyModeLabel = executionStrategyMode === 'selected-only' ? 'selected-only (focus strategy)' : 'best-enabled (auto-pick)';
+  const executionWalletScopeLabel = executionWalletScope === 'active-only' ? 'active-only wallet' : 'all enabled wallets';
 
   const runtimeStrategyDetail = useMemo(() => {
     return getStrategyImplementationDetail(strategyId);
@@ -638,6 +656,17 @@ export default function StrategyLabPage({ snapshot, historyByMarket }) {
                 ))}
               </select>
             </label>
+
+            <label className="control-field">
+              <span>Focus Strategy</span>
+              <select value={strategyId} onChange={(event) => changeStrategy(event.target.value)}>
+                {strategyOptions.map((option) => (
+                  <option key={option.id} value={option.id}>
+                    {option.label}
+                  </option>
+                ))}
+              </select>
+            </label>
           </div>
 
           <div className="section-head">
@@ -646,17 +675,17 @@ export default function StrategyLabPage({ snapshot, historyByMarket }) {
           </div>
           <div className="section-actions">
             <button type="button" className="btn secondary" onClick={enableAllStrategies}>
-              Enable All
+              Enable Entire Set
             </button>
             <button type="button" className="btn secondary" onClick={disableToPrimaryStrategy}>
-              Primary Only
+              Focus Only
             </button>
             <button
               type="button"
               className="btn secondary"
               onClick={() => changeEnabledStrategies(strategyOptions.slice(0, 3).map((option) => option.id))}
             >
-              Top 3 Preset
+              Enable Top 3 Preset
             </button>
           </div>
           <div className="strategy-enabled-grid">
@@ -685,6 +714,30 @@ export default function StrategyLabPage({ snapshot, historyByMarket }) {
             }
             summaryPrefix="Runtime evaluates enabled strategies each tick. Engine mode"
           />
+          <div className="strategy-lab-mini-grid">
+            <article className="strategy-lab-mini-stat">
+              <span>Focus Strategy</span>
+              <strong>{strategyLabel}</strong>
+            </article>
+            <article className="strategy-lab-mini-stat">
+              <span>Last Executed Strategy</span>
+              <strong>{lastExecutionStrategyLabel}</strong>
+            </article>
+            <article className="strategy-lab-mini-stat">
+              <span>Enabled Set Size</span>
+              <strong>{fmtInt(enabledStrategyIds.length)}</strong>
+            </article>
+            <article className="strategy-lab-mini-stat">
+              <span>Execution Pick Rule</span>
+              <strong>{executionStrategyMode === 'selected-only' ? 'focus only' : 'best enabled'}</strong>
+            </article>
+          </div>
+          <p className="socket-status-copy">
+            Enabled set controls which strategies are evaluated. Execution Strategy controls which evaluated strategy is allowed to place trades.
+          </p>
+          <p className="socket-status-copy">
+            Enabled strategies: {enabledStrategyLabels.length ? enabledStrategyLabels.join(', ') : '-'}
+          </p>
 
           <div className="strategy-risk-grid">
             <label className="control-field">
@@ -745,8 +798,8 @@ export default function StrategyLabPage({ snapshot, historyByMarket }) {
             <span className={running ? 'status-pill online' : 'status-pill'}>{running ? 'realtime active' : 'realtime paused'}</span>
             <span className="status-pill">mode {sourceId}</span>
             <span className="status-pill">market {selectedMarket?.symbol || '-'}</span>
-            <span className="status-pill">strategy exec {executionStrategyMode}</span>
-            <span className="status-pill">wallet exec {executionWalletScope}</span>
+            <span className="status-pill">strategy exec {executionStrategyModeLabel}</span>
+            <span className="status-pill">wallet exec {executionWalletScopeLabel}</span>
             <span className={hasLiveHistory ? 'status-pill online' : 'status-pill'}>history {hasLiveHistory ? 'available' : 'limited'}</span>
           </div>
           <p className="socket-status-copy">{strategyDescription}</p>
