@@ -8,6 +8,23 @@
   --panel-soft: rgba(12, 20, 38, 0.78);
   --line: rgba(133, 154, 214, 0.2);
   --line-strong: rgba(133, 154, 214, 0.42);
+  --line-soft: rgba(122, 141, 206, 0.28);
+  --line-mid: rgba(121, 140, 201, 0.32);
+  --line-weak: rgba(124, 143, 205, 0.26);
+  --surface-0: rgba(8, 12, 24, 0.76);
+  --surface-1: rgba(8, 12, 24, 0.82);
+  --surface-2: rgba(9, 13, 26, 0.86);
+  --surface-3: rgba(9, 14, 28, 0.76);
+  --surface-4: rgba(7, 11, 22, 0.92);
+  --shadow-soft: 0 10px 28px rgba(2, 6, 14, 0.36);
+  --shadow-inset: inset 0 0 0 1px rgba(100, 212, 255, 0.18);
+  --radius-xs: 9px;
+  --radius-sm: 10px;
+  --radius-md: 11px;
+  --radius-lg: 12px;
+  --radius-xl: 13px;
+  --radius-2xl: 14px;
+  --radius-pill: 999px;
   --ink: #dce6ff;
   --ink-soft: #91a5d3;
   --brand: #67d9ff;
@@ -40,6 +57,7 @@ body {
   color: var(--ink);
   font-family: 'Sora', sans-serif;
   line-height: 1.35;
+  text-rendering: geometricPrecision;
 }
 
 h1,
@@ -74,7 +92,7 @@ a {
   justify-content: space-between;
   gap: 0.6rem;
   border: 1px solid var(--line);
-  border-radius: 14px;
+  border-radius: var(--radius-2xl);
   background: rgba(7, 11, 22, 0.9);
   backdrop-filter: blur(12px);
   padding: 0.5rem 0.62rem;
@@ -109,7 +127,7 @@ a {
 
 .nav-link {
   border: 1px solid transparent;
-  border-radius: 9px;
+  border-radius: var(--radius-xs);
   color: var(--ink-soft);
   font-size: 0.73rem;
   padding: 0.26rem 0.48rem;
@@ -134,7 +152,7 @@ a {
 .dot {
   width: 9px;
   height: 9px;
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   background: #45527f;
 }
 
@@ -160,12 +178,12 @@ a {
 
 .glow-card {
   border: 1px solid var(--line);
-  border-radius: 13px;
+  border-radius: var(--radius-xl);
   background: linear-gradient(168deg, rgba(13, 19, 37, 0.97), rgba(9, 14, 28, 0.96));
   position: relative;
   overflow: hidden;
   padding: 0.72rem;
-  box-shadow: 0 10px 28px rgba(2, 6, 14, 0.36);
+  box-shadow: var(--shadow-soft);
 }
 
 .glow-card::before {
@@ -182,7 +200,7 @@ a {
   content: '';
   position: absolute;
   inset: 1px;
-  border-radius: 12px;
+  border-radius: calc(var(--radius-xl) - 1px);
   background: linear-gradient(170deg, var(--panel), #0a1022);
   pointer-events: none;
 }
@@ -224,7 +242,7 @@ a {
 
 .btn {
   border: 1px solid transparent;
-  border-radius: 9px;
+  border-radius: var(--radius-xs);
   padding: 0.4rem 0.62rem;
   display: inline-flex;
   align-items: center;
@@ -267,7 +285,7 @@ a {
 }
 
 .status-pill {
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   border: 1px solid rgba(139, 158, 223, 0.4);
   background: rgba(84, 102, 168, 0.2);
   color: #becdf3;
@@ -352,8 +370,8 @@ a {
 }
 
 .preview-row {
-  border: 1px solid rgba(121, 138, 205, 0.32);
-  border-radius: 12px;
+  border: 1px solid var(--line-mid);
+  border-radius: var(--radius-lg);
   background: rgba(9, 12, 26, 0.84);
   padding: 0.54rem;
   display: flex;
@@ -392,7 +410,7 @@ a {
   flex: 1;
   min-width: 240px;
   border: 1px solid rgba(142, 162, 228, 0.4);
-  border-radius: 11px;
+  border-radius: var(--radius-md);
   background: rgba(6, 9, 20, 0.94);
   color: var(--ink);
   padding: 0.58rem 0.64rem;
@@ -450,9 +468,9 @@ a {
 }
 
 .strategy-toggle-chip {
-  border: 1px solid rgba(122, 141, 206, 0.28);
-  border-radius: 11px;
-  background: rgba(8, 12, 24, 0.76);
+  border: 1px solid var(--line-soft);
+  border-radius: var(--radius-md);
+  background: var(--surface-0);
   padding: 0.34rem 0.42rem;
   display: inline-flex;
   align-items: center;
@@ -468,7 +486,7 @@ a {
 .strategy-toggle-chip.active {
   border-color: rgba(100, 212, 255, 0.58);
   color: #e9f5ff;
-  box-shadow: inset 0 0 0 1px rgba(100, 212, 255, 0.18);
+  box-shadow: var(--shadow-inset);
 }
 
 .strategy-lab-mini-grid {
@@ -478,9 +496,9 @@ a {
 }
 
 .strategy-lab-mini-stat {
-  border: 1px solid rgba(122, 141, 206, 0.32);
-  border-radius: 11px;
-  background: rgba(9, 13, 26, 0.86);
+  border: 1px solid var(--line-mid);
+  border-radius: var(--radius-md);
+  background: var(--surface-2);
   padding: 0.45rem;
   display: grid;
   gap: 0.18rem;
@@ -509,7 +527,7 @@ a {
 
 .strategy-lab-tab {
   border: 1px solid rgba(126, 146, 214, 0.34);
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   background: rgba(10, 14, 28, 0.78);
   color: var(--ink-soft);
   padding: 0.44rem 0.82rem;
@@ -814,9 +832,9 @@ a {
 }
 
 .strategy-runtime-fact {
-  border: 1px solid rgba(118, 141, 212, 0.28);
-  border-radius: 11px;
-  background: rgba(8, 12, 24, 0.76);
+  border: 1px solid var(--line-soft);
+  border-radius: var(--radius-md);
+  background: var(--surface-0);
   padding: 0.44rem 0.5rem;
   display: grid;
   gap: 0.16rem;
@@ -847,9 +865,9 @@ a {
 }
 
 .strategy-function-grid article {
-  border: 1px solid rgba(118, 141, 212, 0.28);
-  border-radius: 11px;
-  background: rgba(9, 14, 28, 0.76);
+  border: 1px solid var(--line-soft);
+  border-radius: var(--radius-md);
+  background: var(--surface-3);
   padding: 0.48rem 0.56rem;
   display: grid;
   gap: 0.2rem;
@@ -891,8 +909,8 @@ a {
 }
 
 .strategy-prereq-card {
-  border: 1px solid rgba(118, 141, 212, 0.26);
-  border-radius: 11px;
+  border: 1px solid var(--line-weak);
+  border-radius: var(--radius-md);
   background: rgba(8, 12, 24, 0.74);
   padding: 0.42rem 0.5rem;
   display: grid;
@@ -914,8 +932,8 @@ a {
 .strategy-function-code {
   margin: 0;
   padding: 0.62rem 0.72rem;
-  border: 1px solid rgba(118, 141, 212, 0.32);
-  border-radius: 11px;
+  border: 1px solid var(--line-mid);
+  border-radius: var(--radius-md);
   background: rgba(7, 11, 22, 0.92);
   color: #d6e8ff;
   font-size: 0.72rem;
@@ -930,8 +948,8 @@ a {
 
 .strategy-inline-detail {
   margin-bottom: 0.55rem;
-  border: 1px solid rgba(118, 141, 212, 0.26);
-  border-radius: 11px;
+  border: 1px solid var(--line-weak);
+  border-radius: var(--radius-md);
   background: rgba(9, 13, 26, 0.72);
   padding: 0.52rem 0.58rem;
 }
@@ -967,8 +985,8 @@ a {
 }
 
 .strategy-scope-chip {
-  border: 1px solid rgba(121, 140, 201, 0.28);
-  border-radius: 11px;
+  border: 1px solid var(--line-soft);
+  border-radius: var(--radius-md);
   background: rgba(8, 12, 24, 0.8);
   padding: 0.36rem 0.42rem;
   display: grid;
@@ -992,7 +1010,7 @@ a {
 
 .strategy-scope-chip.active {
   border-color: rgba(97, 215, 255, 0.56);
-  box-shadow: inset 0 0 0 1px rgba(97, 215, 255, 0.18);
+  box-shadow: var(--shadow-inset);
 }
 
 .strategy-create-notes {
@@ -1106,7 +1124,7 @@ a {
 
 .market-subtab-btn {
   border: 1px solid rgba(126, 146, 214, 0.34);
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   background: rgba(10, 14, 28, 0.78);
   color: var(--ink-soft);
   padding: 0.4rem 0.82rem;
@@ -1209,8 +1227,8 @@ a {
   display: flex;
   flex-wrap: wrap;
   gap: 0.5rem;
-  border: 1px solid rgba(124, 143, 205, 0.26);
-  border-radius: 11px;
+  border: 1px solid var(--line-weak);
+  border-radius: var(--radius-md);
   background: rgba(8, 12, 24, 0.7);
   padding: 0.45rem 0.52rem;
 }
@@ -1225,7 +1243,7 @@ a {
   position: relative;
   overflow: hidden;
   border: 1px solid rgba(120, 139, 199, 0.38);
-  border-radius: 12px;
+  border-radius: var(--radius-lg);
   background: rgba(8, 12, 24, 0.86);
   padding: 0.54rem;
   display: grid;
@@ -1322,9 +1340,9 @@ a {
 }
 
 .wallet-passport-metrics article {
-  border: 1px solid rgba(122, 141, 206, 0.32);
-  border-radius: 11px;
-  background: rgba(9, 13, 26, 0.86);
+  border: 1px solid var(--line-mid);
+  border-radius: var(--radius-md);
+  background: var(--surface-2);
   padding: 0.45rem;
   display: grid;
   gap: 0.18rem;
@@ -1508,7 +1526,7 @@ th {
 
 .list-item {
   border: 1px solid rgba(125, 143, 207, 0.35);
-  border-radius: 10px;
+  border-radius: var(--radius-sm);
   background: rgba(8, 11, 24, 0.86);
   padding: 0.42rem;
   display: grid;
@@ -1538,7 +1556,7 @@ th {
 }
 
 .severity {
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   padding: 0.12rem 0.45rem;
   font-size: 0.66rem;
   text-transform: uppercase;
@@ -1586,7 +1604,7 @@ th {
 
 .socket-provider-card {
   border: 1px solid rgba(123, 143, 208, 0.35);
-  border-radius: 12px;
+  border-radius: var(--radius-lg);
   background: rgba(9, 12, 24, 0.86);
   padding: 0.52rem;
   display: grid;
@@ -1617,13 +1635,13 @@ th {
 .flash-list {
   overflow: auto;
   border: 1px solid rgba(123, 143, 208, 0.28);
-  border-radius: 12px;
+  border-radius: var(--radius-lg);
   background: rgba(8, 12, 26, 0.82);
 }
 
 .flash-list-empty {
   border: 1px dashed rgba(124, 143, 206, 0.42);
-  border-radius: 12px;
+  border-radius: var(--radius-lg);
   background: rgba(8, 12, 24, 0.76);
   color: var(--ink-soft);
   display: grid;
@@ -1678,8 +1696,8 @@ th {
 }
 
 .depth-side {
-  border: 1px solid rgba(121, 140, 201, 0.32);
-  border-radius: 12px;
+  border: 1px solid var(--line-mid);
+  border-radius: var(--radius-lg);
   background: rgba(8, 12, 24, 0.84);
   padding: 0.5rem;
   display: grid;
@@ -1706,7 +1724,7 @@ th {
 .depth-row {
   position: relative;
   border: 1px solid rgba(120, 139, 197, 0.28);
-  border-radius: 10px;
+  border-radius: var(--radius-sm);
   overflow: hidden;
   min-height: 34px;
   background: rgba(8, 11, 22, 0.92);
@@ -1775,7 +1793,7 @@ th {
 
 .depth-3d-wrap {
   border: 1px solid rgba(121, 140, 201, 0.3);
-  border-radius: 12px;
+  border-radius: var(--radius-lg);
   background: rgba(8, 12, 24, 0.86);
   padding: 0.48rem;
   display: grid;
@@ -1802,7 +1820,7 @@ th {
 .depth-3d-canvas {
   height: 320px;
   border: 1px solid rgba(122, 143, 208, 0.3);
-  border-radius: 12px;
+  border-radius: var(--radius-lg);
   overflow: hidden;
   background:
     radial-gradient(circle at 18% 8%, rgba(94, 215, 255, 0.14), transparent 34%),
@@ -1813,7 +1831,7 @@ th {
 .depth-3d-empty {
   margin: 0;
   border: 1px dashed rgba(122, 143, 208, 0.45);
-  border-radius: 10px;
+  border-radius: var(--radius-sm);
   padding: 0.68rem;
   text-align: center;
   color: var(--ink-soft);
@@ -1834,8 +1852,8 @@ th {
 }
 
 .ta-item {
-  border: 1px solid rgba(121, 140, 201, 0.31);
-  border-radius: 11px;
+  border: 1px solid var(--line-mid);
+  border-radius: var(--radius-md);
   background: rgba(8, 12, 24, 0.82);
   padding: 0.45rem;
   display: grid;
@@ -1862,7 +1880,7 @@ th {
 }
 
 .tensor-chip {
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   border: 1px solid rgba(127, 147, 213, 0.44);
   background: rgba(86, 103, 164, 0.24);
   color: #b9cbf7;
@@ -1898,9 +1916,9 @@ th {
 }
 
 .tensor-metrics article {
-  border: 1px solid rgba(122, 141, 206, 0.32);
-  border-radius: 11px;
-  background: rgba(9, 13, 26, 0.86);
+  border: 1px solid var(--line-mid);
+  border-radius: var(--radius-md);
+  background: var(--surface-2);
   padding: 0.45rem;
   display: grid;
   gap: 0.2rem;
@@ -1922,7 +1940,7 @@ th {
 
 .tensor-component-row {
   border: 1px solid rgba(119, 138, 201, 0.3);
-  border-radius: 11px;
+  border-radius: var(--radius-md);
   background: rgba(8, 11, 22, 0.84);
   padding: 0.42rem 0.48rem;
   display: grid;
@@ -1960,6 +1978,9 @@ th {
 }
 
 .signal-feed-list {
+  border: 1px solid rgba(98, 227, 255, 0.12);
+  border-radius: var(--radius-lg);
+  background: rgba(8, 12, 26, 0.82);
   box-shadow: inset 0 0 0 1px rgba(98, 227, 255, 0.08);
 }
 
@@ -2003,6 +2024,9 @@ th {
 }
 
 .decision-feed-list {
+  border: 1px solid rgba(127, 133, 255, 0.12);
+  border-radius: var(--radius-lg);
+  background: rgba(8, 12, 26, 0.82);
   box-shadow: inset 0 0 0 1px rgba(127, 133, 255, 0.09);
 }
 
@@ -2251,7 +2275,7 @@ th {
 
 .total-market-contrib-row {
   border: 1px solid rgba(121, 140, 201, 0.3);
-  border-radius: 10px;
+  border-radius: var(--radius-sm);
   background: rgba(8, 12, 24, 0.78);
   padding: 0.42rem 0.48rem;
   display: grid;
@@ -2280,7 +2304,7 @@ th {
 
 .total-market-contrib-bar-track {
   height: 7px;
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   overflow: hidden;
   border: 1px solid rgba(121, 140, 201, 0.28);
   background: rgba(10, 14, 28, 0.86);
@@ -2318,7 +2342,7 @@ th {
 
 .graph-strategy-row {
   border: 1px solid rgba(121, 140, 201, 0.3);
-  border-radius: 11px;
+  border-radius: var(--radius-md);
   background: rgba(8, 12, 24, 0.82);
   padding: 0.46rem 0.52rem;
   display: flex;
@@ -2366,7 +2390,7 @@ th {
 .graph-svg {
   width: 100%;
   border: 1px solid rgba(122, 143, 208, 0.3);
-  border-radius: 13px;
+  border-radius: var(--radius-xl);
   background:
     radial-gradient(circle at 7% 0%, rgba(76, 206, 255, 0.12), transparent 24%),
     radial-gradient(circle at 92% 98%, rgba(132, 118, 255, 0.12), transparent 28%),
