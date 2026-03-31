@@ -1,4 +1,5 @@
 import { create } from 'zustand';
+import { useCapitalStore } from './capitalStore';
 
 const MAX_TX_EVENTS = 320;
 const MAX_POSITION_EVENTS = 320;
@@ -92,6 +93,20 @@ export const useExecutionFeedStore = create((set) => ({
       positionEvents: trimHead([positionEvent, ...state.positionEvents], MAX_POSITION_EVENTS)
     }));
 
+    useCapitalStore.getState().upsertWalletAccounts({
+      walletAccounts: [
+        {
+          id: context.accountId,
+          name: context.accountName,
+          enabled: true,
+          wallet: walletSnapshot
+        }
+      ],
+      activeWalletId: context.accountId
+    });
+    useCapitalStore.getState().appendWalletTx(txEvent);
+    useCapitalStore.getState().appendWalletPosition(positionEvent);
+
     emitWindowEvent('cre8capital:wallet:tx', txEvent);
     emitWindowEvent('cre8capital:wallet:position', positionEvent);
     emitWindowEvent('cre8capital:wallet:execution', {
@@ -126,6 +141,19 @@ export const useExecutionFeedStore = create((set) => ({
       ...state,
       positionEvents: trimHead([positionEvent, ...state.positionEvents], MAX_POSITION_EVENTS)
     }));
+
+    useCapitalStore.getState().upsertWalletAccounts({
+      walletAccounts: [
+        {
+          id: context.accountId,
+          name: context.accountName,
+          enabled: true,
+          wallet: walletSnapshot
+        }
+      ],
+      activeWalletId: context.accountId
+    });
+    useCapitalStore.getState().appendWalletPosition(positionEvent);
 
     emitWindowEvent('cre8capital:wallet:position', positionEvent);
   },

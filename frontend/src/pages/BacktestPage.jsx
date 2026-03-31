@@ -67,6 +67,8 @@ const clamp = (value, min, max) => Math.min(max, Math.max(min, value));
 
 const normalizeAction = (value) => {
   const action = String(value || '').toLowerCase();
+  if (action === 'short' || action === 'sell') return 'reduce';
+  if (action === 'buy' || action === 'long') return 'accumulate';
   if (action === 'accumulate' || action === 'reduce' || action === 'hold') return action;
   return 'hold';
 };
@@ -168,45 +170,11 @@ const calcMaxDrawdownPct = (equitySeries = []) => {
   return maxDrawdown;
 };
 
-const solveDiscreteWindowOracle = ({
-  series = [],
-  startCash = 100000,
-  maxAbsUnits = 8,
-  slippageBps = 1.2,
-  windowSize = 12,
-  windowStep = 12,
-  minMovePct = 0,
-  smoothBlendPct = 0,
-  mode = 'long-only'
-}) => {
+const buildDiscreteWindows = ({ series = [], windowSize = 12, windowStep = 12, buildWindow }) => {
+  const windows = [];
   const safeSeries = Array.isArray(series) ? series : [];
-  if (safeSeries.length < 3) {
-    return {
-      stats: {
-        startCash,
-        endEquity: startCash,
-        pnl: 0,
-        returnPct: 0,
-        maxDrawdownPct: 0,
-        tradeCount: 0
-      },
-      equitySeries: [],
-      tradeLog: [],
-      windows: []
-    };
-  }
-
-  const safeStartCash = Math.max(100, toNum(startCash, 100000));
-  const safeMaxUnits = Math.max(1, Math.round(toNum(maxAbsUnits, 8)));
-  const safeSlippage = Math.max(0, toNum(slippageBps, 1.2));
   const safeWindowSize = Math.max(2, Math.round(toNum(windowSize, 12)));
   const safeWindowStep = Math.max(1, Math.round(toNum(windowStep, safeWindowSize)));
-  const safeMinMovePct = Math.max(0, toNum(minMovePct, 0));
-  const smoothBlend = clamp(toNum(smoothBlendPct, 0) / 100, 0, 1);
-  const shortEnabled = String(mode || 'long-only') === 'long-short';
-  const minUnits = shortEnabled ? -safeMaxUnits : 0;
-
-  const windows = [];
   for (let startIndex = 0; startIndex < safeSeries.length - 1; startIndex += safeWindowStep) {
     const endIndex = Math.min(safeSeries.length - 1, startIndex + safeWindowSize - 1);
     const startPoint = safeSeries[startIndex];
@@ -214,9 +182,7 @@ const solveDiscreteWindowOracle = ({
     const startPrice = Math.max(toNum(startPoint?.price, 0), 1e-9);
     const endPrice = Math.max(toNum(endPoint?.price, 0), 1e-9);
     const movePct = ((endPrice - startPrice) / startPrice) * 100;
-    const discreteTarget = movePct > safeMinMovePct ? safeMaxUnits : movePct < -safeMinMovePct ? (shortEnabled ? -safeMaxUnits : 0) : 0;
-    const action = discreteTarget > 0 ? 'accumulate' : discreteTarget < 0 ? 'short' : 'hold';
-    windows.push({
+    const defaultWindow = {
       id: `window:${startIndex}:${endIndex}`,
       windowIndex: windows.length,
       startIndex,
@@ -225,13 +191,43 @@ const solveDiscreteWindowOracle = ({
       endTs: toNum(endPoint?.t, Date.now()),
       startPrice,
       endPrice,
-      movePct,
-      action,
-      discreteTarget
+      movePct
+    };
+    const built = typeof buildWindow === 'function' ? buildWindow(defaultWindow, windows.length) || {} : {};
+    windows.push({
+      ...defaultWindow,
+      ...built
     });
   }
+  return windows;
+};
 
-  const windowByStartIndex = new Map(windows.map((row) => [row.startIndex, row]));
+const simulateDiscreteWindowPlan = ({
+  series = [],
+  windows = [],
+  startCash = 100000,
+  maxAbsUnits = 8,
+  slippageBps = 1.2,
+  smoothBlendPct = 0,
+  mode = 'long-only',
+  tradePrefix = 'solver'
+}) => {
+  const safeSeries = Array.isArray(series) ? series : [];
+  const safeStartCash = Math.max(100, toNum(startCash, 100000));
+  const safeMaxUnits = Math.max(1, Math.round(toNum(maxAbsUnits, 8)));
+  const safeSlippage = Math.max(0, toNum(slippageBps, 1.2));
+  const smoothBlend = clamp(toNum(smoothBlendPct, 0) / 100, 0, 1);
+  const shortEnabled = String(mode || 'long-only') === 'long-short';
+  const minUnits = shortEnabled ? -safeMaxUnits : 0;
+  const planWindows = Array.isArray(windows)
+    ? windows.map((window, index) => ({
+        ...window,
+        windowIndex: Math.max(0, Math.round(toNum(window?.windowIndex, index))),
+        discreteTarget: clamp(toNum(window?.discreteTarget, 0), minUnits, safeMaxUnits)
+      }))
+    : [];
+
+  const windowByStartIndex = new Map(planWindows.map((row) => [row.startIndex, row]));
   let wallet = createWalletState(safeStartCash);
   const tradeLog = [];
   const equitySeries = [];
@@ -279,7 +275,7 @@ const solveDiscreteWindowOracle = ({
     };
 
     tradeLog.push({
-      id: `oracle-virtual:${timestamp}:${windowIndex}:${Math.round(fillPrice * 1000)}:${Math.round(Math.abs(unitsDelta) * 1000)}`,
+      id: `${tradePrefix}-virtual:${timestamp}:${windowIndex}:${Math.round(fillPrice * 1000)}:${Math.round(Math.abs(unitsDelta) * 1000)}`,
       timestamp,
       action: unitsDelta > 0 ? 'accumulate' : 'reduce',
       unitsDelta,
@@ -294,7 +290,7 @@ const solveDiscreteWindowOracle = ({
     });
   };
 
-  const rebalanceToTarget = ({ point, targetUnits, windowIndex = -1, reason = 'oracle-window' }) => {
+  const rebalanceToTarget = ({ point, targetUnits, windowIndex = -1, reason = `${tradePrefix}-window` }) => {
     let guard = 0;
     const target = clamp(toNum(targetUnits, 0), minUnits, safeMaxUnits);
     if (shortEnabled) {
@@ -327,6 +323,7 @@ const solveDiscreteWindowOracle = ({
       if (!execution?.trade) break;
       tradeLog.push({
         ...execution.trade,
+        id: `${tradePrefix}:${execution.trade?.id || `${windowIndex}:${guard}`}`,
         windowIndex
       });
       guard += 1;
@@ -344,7 +341,7 @@ const solveDiscreteWindowOracle = ({
         point,
         targetUnits: blendedTarget,
         windowIndex: window.windowIndex,
-        reason: `oracle window ${window.windowIndex} move ${window.movePct.toFixed(3)}%`
+        reason: window.reason || `${tradePrefix} window ${window.windowIndex}`
       });
       window.executedUnits = toNum(wallet?.units, 0);
     }
@@ -354,7 +351,7 @@ const solveDiscreteWindowOracle = ({
         point,
         targetUnits: 0,
         windowIndex: -1,
-        reason: 'oracle end-of-series flatten'
+        reason: `${tradePrefix} end-of-series flatten`
       });
     }
 
@@ -367,7 +364,6 @@ const solveDiscreteWindowOracle = ({
   const endEquity = equitySeries[equitySeries.length - 1] || safeStartCash;
   const pnl = endEquity - safeStartCash;
   const returnPct = (pnl / Math.max(safeStartCash, 1e-9)) * 100;
-  const drawdownPct = calcMaxDrawdownPct(equitySeries);
 
   return {
     stats: {
@@ -375,15 +371,240 @@ const solveDiscreteWindowOracle = ({
       endEquity,
       pnl,
       returnPct,
-      maxDrawdownPct: drawdownPct,
+      maxDrawdownPct: calcMaxDrawdownPct(equitySeries),
       tradeCount: tradeLog.length
     },
     equitySeries,
     tradeLog: tradeLog.slice(-320).reverse(),
-    windows,
+    windows: planWindows,
     regimeSeries,
     positionSeries
   };
+};
+
+const solveDiscreteWindowOracle = ({
+  series = [],
+  startCash = 100000,
+  maxAbsUnits = 8,
+  slippageBps = 1.2,
+  windowSize = 12,
+  windowStep = 12,
+  minMovePct = 0,
+  smoothBlendPct = 0,
+  mode = 'long-only'
+}) => {
+  const safeSeries = Array.isArray(series) ? series : [];
+  if (safeSeries.length < 3) {
+    return {
+      stats: {
+        startCash,
+        endEquity: startCash,
+        pnl: 0,
+        returnPct: 0,
+        maxDrawdownPct: 0,
+        tradeCount: 0
+      },
+      equitySeries: [],
+      tradeLog: [],
+      windows: [],
+      regimeSeries: [],
+      positionSeries: []
+    };
+  }
+
+  const safeMaxUnits = Math.max(1, Math.round(toNum(maxAbsUnits, 8)));
+  const safeMinMovePct = Math.max(0, toNum(minMovePct, 0));
+  const shortEnabled = String(mode || 'long-only') === 'long-short';
+
+  const windows = buildDiscreteWindows({
+    series: safeSeries,
+    windowSize,
+    windowStep,
+    buildWindow: (window) => {
+      const discreteTarget = window.movePct > safeMinMovePct ? safeMaxUnits : window.movePct < -safeMinMovePct ? (shortEnabled ? -safeMaxUnits : 0) : 0;
+      const action = discreteTarget > 0 ? 'accumulate' : discreteTarget < 0 ? 'short' : 'hold';
+      return {
+        action,
+        discreteTarget,
+        reason: `oracle window ${window.windowIndex} move ${window.movePct.toFixed(3)}%`
+      };
+    }
+  });
+
+  return simulateDiscreteWindowPlan({
+    series: safeSeries,
+    windows,
+    startCash,
+    maxAbsUnits,
+    slippageBps,
+    smoothBlendPct,
+    mode,
+    tradePrefix: 'oracle'
+  });
+};
+
+const solveDiscreteWindowPdfPolicy = ({
+  series = [],
+  startCash = 100000,
+  maxAbsUnits = 8,
+  slippageBps = 1.2,
+  windowSize = 12,
+  windowStep = 12,
+  minMovePct = 0,
+  smoothBlendPct = 0,
+  mode = 'long-only',
+  market = null,
+  buckets = []
+}) => {
+  const safeSeries = Array.isArray(series) ? series : [];
+  if (safeSeries.length < 3) {
+    return {
+      stats: {
+        startCash,
+        endEquity: startCash,
+        pnl: 0,
+        returnPct: 0,
+        maxDrawdownPct: 0,
+        tradeCount: 0
+      },
+      equitySeries: [],
+      tradeLog: [],
+      windows: [],
+      regimeSeries: [],
+      positionSeries: []
+    };
+  }
+
+  const safeMaxUnits = Math.max(1, Math.round(toNum(maxAbsUnits, 8)));
+  const safeMinMovePct = Math.max(0, toNum(minMovePct, 0));
+  const shortEnabled = String(mode || 'long-only') === 'long-short';
+  const safeWindowStep = Math.max(1, Math.round(toNum(windowStep, 12)));
+  const safeBuckets = Array.isArray(buckets) && buckets.length ? buckets : buildPdfBuckets({ minPct: -4.5, maxPct: 4.5, stepPct: 0.25 });
+  const marketKey = String(market?.key || 'backtest:pdf-policy');
+  const symbol = String(market?.symbol || 'SIMUSDT');
+  const assetClass = String(market?.assetClass || 'crypto');
+
+  const windows = buildDiscreteWindows({
+    series: safeSeries,
+    windowSize,
+    windowStep: safeWindowStep,
+    buildWindow: (window) => {
+      const lookbackStart = Math.max(0, window.startIndex - 240);
+      const historySeries = safeSeries.slice(lookbackStart, window.startIndex + 1);
+      const recent = historySeries.slice(-32);
+      const modelMarket = {
+        key: marketKey,
+        symbol,
+        assetClass,
+        referencePrice: window.startPrice,
+        spreadBps: Math.max(0.2, toNum(recent[recent.length - 1]?.spread, 12)),
+        totalVolume: Math.max(
+          1,
+          recent.reduce((sum, point) => sum + Math.max(0, toNum(point?.volume, 0)), 0)
+        )
+      };
+
+      const ranking = rankMarketsByPdf({
+        markets: [modelMarket],
+        historyByMarket: {
+          [marketKey]: historySeries
+        },
+        buckets: safeBuckets,
+        horizon: safeWindowStep
+      });
+      const modelRow = ranking[0] || null;
+      const recommendation = modelRow?.recommendation || {};
+      let action = normalizeAction(recommendation.action);
+      const expectedMovePct = toNum(modelRow?.expectedMovePct, 0);
+      const confidencePct = toNum(modelRow?.confidencePct, 0);
+      const upProb = toNum(modelRow?.upProb, 0);
+      const downProb = toNum(modelRow?.downProb, 0);
+      const skew = toNum(modelRow?.skew, 0);
+
+      if (Math.abs(expectedMovePct) < safeMinMovePct) {
+        action = 'hold';
+      }
+
+      const discreteTarget = action === 'accumulate' ? safeMaxUnits : action === 'reduce' ? (shortEnabled ? -safeMaxUnits : 0) : 0;
+      return {
+        action,
+        discreteTarget,
+        predictedMovePct: expectedMovePct,
+        confidencePct,
+        upProb,
+        downProb,
+        skew,
+        reason: `pdf h${safeWindowStep} | up ${(upProb * 100).toFixed(1)}% | down ${(downProb * 100).toFixed(1)}% | E[r] ${expectedMovePct.toFixed(3)}%`
+      };
+    }
+  });
+
+  return simulateDiscreteWindowPlan({
+    series: safeSeries,
+    windows,
+    startCash,
+    maxAbsUnits,
+    slippageBps,
+    smoothBlendPct,
+    mode,
+    tradePrefix: 'pdf-policy'
+  });
+};
+
+const evaluateWindowAction = ({ action = 'hold', movePct = 0, minMovePct = 0 }) => {
+  const normalized = normalizeAction(action);
+  const move = toNum(movePct, 0);
+  const threshold = Math.max(0, toNum(minMovePct, 0));
+  if (normalized === 'accumulate') return move > threshold;
+  if (normalized === 'reduce') return move < -threshold;
+  return Math.abs(move) <= threshold;
+};
+
+const buildWindowComparisonRows = ({ oracleWindows = [], pdfWindows = [], minMovePct = 0 }) => {
+  const oracleByStart = new Map((Array.isArray(oracleWindows) ? oracleWindows : []).map((row) => [row.startIndex, row]));
+  const pdfByStart = new Map((Array.isArray(pdfWindows) ? pdfWindows : []).map((row) => [row.startIndex, row]));
+  const startIndices = new Set([...oracleByStart.keys(), ...pdfByStart.keys()]);
+  const rows = [];
+
+  for (const startIndex of startIndices) {
+    const oracle = oracleByStart.get(startIndex) || null;
+    const pdf = pdfByStart.get(startIndex) || null;
+    if (!oracle && !pdf) continue;
+    const movePct = toNum(pdf?.movePct, toNum(oracle?.movePct, 0));
+    const oracleAction = oracle?.action || (toNum(oracle?.discreteTarget, 0) > 0 ? 'accumulate' : toNum(oracle?.discreteTarget, 0) < 0 ? 'reduce' : 'hold');
+    const pdfAction = pdf?.action || (toNum(pdf?.discreteTarget, 0) > 0 ? 'accumulate' : toNum(pdf?.discreteTarget, 0) < 0 ? 'reduce' : 'hold');
+    const oracleCorrect = evaluateWindowAction({
+      action: oracleAction,
+      movePct,
+      minMovePct
+    });
+    const pdfCorrect = evaluateWindowAction({
+      action: pdfAction,
+      movePct,
+      minMovePct
+    });
+
+    rows.push({
+      id: `window-compare:${startIndex}`,
+      startIndex,
+      endIndex: Math.max(toNum(pdf?.endIndex, 0), toNum(oracle?.endIndex, 0)),
+      timestamp: toNum(pdf?.startTs, toNum(oracle?.startTs, Date.now())),
+      movePct,
+      oracleAction,
+      pdfAction,
+      oracleTarget: toNum(oracle?.targetUnits, toNum(oracle?.discreteTarget, 0)),
+      pdfTarget: toNum(pdf?.targetUnits, toNum(pdf?.discreteTarget, 0)),
+      oracleCorrect,
+      pdfCorrect,
+      agreement: String(oracleAction) === String(pdfAction),
+      expectedMovePct: toNum(pdf?.predictedMovePct, 0),
+      confidencePct: toNum(pdf?.confidencePct, 0),
+      upProb: toNum(pdf?.upProb, 0),
+      downProb: toNum(pdf?.downProb, 0)
+    });
+  }
+
+  return rows.sort((a, b) => toNum(b.startIndex, 0) - toNum(a.startIndex, 0));
 };
 
 export default function BacktestPage({ snapshot, historyByMarket }) {
@@ -419,6 +640,7 @@ export default function BacktestPage({ snapshot, historyByMarket }) {
   const [oracleMinMovePct, setOracleMinMovePct] = useState(0.15);
   const [oracleSmoothBlendPct, setOracleSmoothBlendPct] = useState(0);
   const [oracleMode, setOracleMode] = useState('long-only');
+  const [oracleGraphMarketCount, setOracleGraphMarketCount] = useState(14);
 
   useEffect(() => {
     if (!sortedMarkets.length) {
@@ -504,6 +726,14 @@ export default function BacktestPage({ snapshot, historyByMarket }) {
     setRunTick((value) => value + 1);
   };
 
+  const pdfBuckets = useMemo(() => {
+    return buildPdfBuckets({
+      minPct: -4.5,
+      maxPct: 4.5,
+      stepPct: 0.25
+    });
+  }, []);
+
   const oracleResult = useMemo(() => {
     return solveDiscreteWindowOracle({
       series: activeSeries,
@@ -518,7 +748,32 @@ export default function BacktestPage({ snapshot, historyByMarket }) {
     });
   }, [activeSeries, maxAbsUnits, oracleMinMovePct, oracleMode, oracleSmoothBlendPct, oracleWindowSize, oracleWindowStep, slippageBps, startCash]);
 
+  const pdfPolicyResult = useMemo(() => {
+    return solveDiscreteWindowPdfPolicy({
+      series: activeSeries,
+      startCash,
+      maxAbsUnits,
+      slippageBps,
+      windowSize: oracleWindowSize,
+      windowStep: oracleWindowStep,
+      minMovePct: oracleMinMovePct,
+      smoothBlendPct: oracleSmoothBlendPct,
+      mode: oracleMode,
+      market: selectedMarket,
+      buckets: pdfBuckets
+    });
+  }, [activeSeries, maxAbsUnits, oracleMinMovePct, oracleMode, oracleSmoothBlendPct, oracleWindowSize, oracleWindowStep, pdfBuckets, selectedMarket, slippageBps, startCash]);
+
   const oracleStats = oracleResult?.stats || {
+    startCash: Math.max(100, toNum(startCash, 100000)),
+    endEquity: Math.max(100, toNum(startCash, 100000)),
+    pnl: 0,
+    returnPct: 0,
+    maxDrawdownPct: 0,
+    tradeCount: 0
+  };
+
+  const pdfPolicyStats = pdfPolicyResult?.stats || {
     startCash: Math.max(100, toNum(startCash, 100000)),
     endEquity: Math.max(100, toNum(startCash, 100000)),
     pnl: 0,
@@ -532,13 +787,46 @@ export default function BacktestPage({ snapshot, historyByMarket }) {
     return [...rows].sort((a, b) => Math.abs(toNum(b.movePct, 0)) - Math.abs(toNum(a.movePct, 0))).slice(0, 120);
   }, [oracleResult?.windows]);
 
-  const pdfBuckets = useMemo(() => {
-    return buildPdfBuckets({
-      minPct: -4.5,
-      maxPct: 4.5,
-      stepPct: 0.25
+  const pdfWindowRows = useMemo(() => {
+    const rows = Array.isArray(pdfPolicyResult?.windows) ? pdfPolicyResult.windows : [];
+    return [...rows].sort((a, b) => toNum(b.confidencePct, 0) - toNum(a.confidencePct, 0)).slice(0, 120);
+  }, [pdfPolicyResult?.windows]);
+
+  const oraclePdfWindowRows = useMemo(() => {
+    return buildWindowComparisonRows({
+      oracleWindows: oracleResult?.windows || [],
+      pdfWindows: pdfPolicyResult?.windows || [],
+      minMovePct: oracleMinMovePct
     });
-  }, []);
+  }, [oracleMinMovePct, oracleResult?.windows, pdfPolicyResult?.windows]);
+
+  const oraclePdfWindowStats = useMemo(() => {
+    const rows = oraclePdfWindowRows;
+    const total = rows.length;
+    if (!total) {
+      return {
+        totalWindows: 0,
+        agreementPct: 0,
+        oracleAccuracyPct: 0,
+        pdfAccuracyPct: 0,
+        pdfVsOracleAccuracyEdgePct: 0,
+        avgMoveDiffPct: 0
+      };
+    }
+    const agreementCount = rows.filter((row) => row.agreement).length;
+    const oracleCorrectCount = rows.filter((row) => row.oracleCorrect).length;
+    const pdfCorrectCount = rows.filter((row) => row.pdfCorrect).length;
+    const avgMoveDiffPct = rows.reduce((sum, row) => sum + Math.abs(toNum(row.expectedMovePct, 0) - toNum(row.movePct, 0)), 0) / total;
+
+    return {
+      totalWindows: total,
+      agreementPct: (agreementCount / total) * 100,
+      oracleAccuracyPct: (oracleCorrectCount / total) * 100,
+      pdfAccuracyPct: (pdfCorrectCount / total) * 100,
+      pdfVsOracleAccuracyEdgePct: ((pdfCorrectCount - oracleCorrectCount) / total) * 100,
+      avgMoveDiffPct
+    };
+  }, [oraclePdfWindowRows]);
 
   const totalMarketBacktest = useMemo(() => {
     const selectedUniverse = sortedMarkets.slice(0, Math.max(4, Math.min(48, Math.round(toNum(totalMarketCount, 18)))));
@@ -861,6 +1149,134 @@ export default function BacktestPage({ snapshot, historyByMarket }) {
     });
   };
 
+  const oraclePdfGraph = useMemo(() => {
+    const marketLimit = Math.max(4, Math.min(32, Math.round(toNum(oracleGraphMarketCount, 14))));
+    const selectedUniverse = sortedMarkets.slice(0, marketLimit);
+    const rows = [];
+    const safeSample = Math.max(96, Math.round(toNum(sampleSize, 280)));
+
+    for (const market of selectedUniverse) {
+      const raw = Array.isArray(historyByMarket?.[market.key]) ? historyByMarket[market.key] : [];
+      const normalized = normalizeSeriesRows(raw, Math.max(2, toNum(market?.spreadBps, 12))).slice(-safeSample);
+      if (normalized.length < 42) continue;
+
+      const oracle = solveDiscreteWindowOracle({
+        series: normalized,
+        startCash,
+        maxAbsUnits,
+        slippageBps,
+        windowSize: oracleWindowSize,
+        windowStep: oracleWindowStep,
+        minMovePct: oracleMinMovePct,
+        smoothBlendPct: oracleSmoothBlendPct,
+        mode: oracleMode
+      });
+
+      const pdf = solveDiscreteWindowPdfPolicy({
+        series: normalized,
+        startCash,
+        maxAbsUnits,
+        slippageBps,
+        windowSize: oracleWindowSize,
+        windowStep: oracleWindowStep,
+        minMovePct: oracleMinMovePct,
+        smoothBlendPct: oracleSmoothBlendPct,
+        mode: oracleMode,
+        market,
+        buckets: pdfBuckets
+      });
+
+      const windows = buildWindowComparisonRows({
+        oracleWindows: oracle?.windows || [],
+        pdfWindows: pdf?.windows || [],
+        minMovePct: oracleMinMovePct
+      });
+      const totalWindows = windows.length;
+      const oracleAccuracyPct = totalWindows > 0 ? (windows.filter((window) => window.oracleCorrect).length / totalWindows) * 100 : 0;
+      const pdfAccuracyPct = totalWindows > 0 ? (windows.filter((window) => window.pdfCorrect).length / totalWindows) * 100 : 0;
+
+      rows.push({
+        id: `oracle-pdf-market:${market.key}`,
+        key: market.key,
+        symbol: market.symbol,
+        assetClass: market.assetClass,
+        oracleReturnPct: toNum(oracle?.stats?.returnPct, 0),
+        pdfReturnPct: toNum(pdf?.stats?.returnPct, 0),
+        oraclePnl: toNum(oracle?.stats?.pnl, 0),
+        pdfPnl: toNum(pdf?.stats?.pnl, 0),
+        oracleTrades: Math.max(0, Math.round(toNum(oracle?.stats?.tradeCount, 0))),
+        pdfTrades: Math.max(0, Math.round(toNum(pdf?.stats?.tradeCount, 0))),
+        oracleAccuracyPct,
+        pdfAccuracyPct,
+        oracleEdgePct: toNum(oracle?.stats?.returnPct, 0) - toNum(pdf?.stats?.returnPct, 0),
+        windowCount: totalWindows
+      });
+    }
+
+    rows.sort((a, b) => b.oracleEdgePct - a.oracleEdgePct);
+    return {
+      rows,
+      oracleSeries: rows.map((row) => row.oracleReturnPct),
+      pdfSeries: rows.map((row) => row.pdfReturnPct),
+      edgeSeries: rows.map((row) => row.oracleEdgePct),
+      labels: rows.map((row) => row.symbol)
+    };
+  }, [
+    historyByMarket,
+    maxAbsUnits,
+    oracleGraphMarketCount,
+    oracleMinMovePct,
+    oracleMode,
+    oracleSmoothBlendPct,
+    oracleWindowSize,
+    oracleWindowStep,
+    pdfBuckets,
+    sampleSize,
+    slippageBps,
+    sortedMarkets,
+    startCash
+  ]);
+
+  const oraclePdfGraphStats = useMemo(() => {
+    const rows = oraclePdfGraph.rows;
+    if (!rows.length) {
+      return {
+        markets: 0,
+        avgOracleReturnPct: 0,
+        avgPdfReturnPct: 0,
+        avgOracleEdgePct: 0,
+        avgOracleAccuracyPct: 0,
+        avgPdfAccuracyPct: 0
+      };
+    }
+    const totals = rows.reduce(
+      (acc, row) => {
+        acc.oracleReturnPct += toNum(row.oracleReturnPct, 0);
+        acc.pdfReturnPct += toNum(row.pdfReturnPct, 0);
+        acc.oracleEdgePct += toNum(row.oracleEdgePct, 0);
+        acc.oracleAccuracyPct += toNum(row.oracleAccuracyPct, 0);
+        acc.pdfAccuracyPct += toNum(row.pdfAccuracyPct, 0);
+        return acc;
+      },
+      {
+        oracleReturnPct: 0,
+        pdfReturnPct: 0,
+        oracleEdgePct: 0,
+        oracleAccuracyPct: 0,
+        pdfAccuracyPct: 0
+      }
+    );
+    const count = rows.length;
+    return {
+      markets: count,
+      avgOracleReturnPct: totals.oracleReturnPct / count,
+      avgPdfReturnPct: totals.pdfReturnPct / count,
+      avgOracleEdgePct: totals.oracleEdgePct / count,
+      avgOracleAccuracyPct: totals.oracleAccuracyPct / count,
+      avgPdfAccuracyPct: totals.pdfAccuracyPct / count
+    };
+  }, [oraclePdfGraph.rows]);
+
   const totalMarketStats = totalMarketBacktest?.stats || {
     startCash: Math.max(100, toNum(startCash, 100000)),
     endEquity: Math.max(100, toNum(startCash, 100000)),
@@ -989,8 +1405,20 @@ export default function BacktestPage({ snapshot, historyByMarket }) {
           <strong className={oracleStats.returnPct >= 0 ? 'up' : 'down'}>{fmtPct(oracleStats.returnPct)}</strong>
         </GlowCard>
         <GlowCard className="stat-card">
+          <span>PDF Return</span>
+          <strong className={pdfPolicyStats.returnPct >= 0 ? 'up' : 'down'}>{fmtPct(pdfPolicyStats.returnPct)}</strong>
+        </GlowCard>
+        <GlowCard className="stat-card">
           <span>Oracle Edge</span>
           <strong className={oracleStats.returnPct - stats.returnPct >= 0 ? 'up' : 'down'}>{fmtPct(oracleStats.returnPct - stats.returnPct)}</strong>
+        </GlowCard>
+        <GlowCard className="stat-card">
+          <span>PDF Edge</span>
+          <strong className={pdfPolicyStats.returnPct - stats.returnPct >= 0 ? 'up' : 'down'}>{fmtPct(pdfPolicyStats.returnPct - stats.returnPct)}</strong>
+        </GlowCard>
+        <GlowCard className="stat-card">
+          <span>Oracle vs PDF</span>
+          <strong className={oracleStats.returnPct - pdfPolicyStats.returnPct >= 0 ? 'up' : 'down'}>{fmtPct(oracleStats.returnPct - pdfPolicyStats.returnPct)}</strong>
         </GlowCard>
       </div>
 
@@ -1093,6 +1521,13 @@ export default function BacktestPage({ snapshot, historyByMarket }) {
           fillTo="rgba(100, 232, 136, 0.02)"
           overlays={[
             {
+              key: 'pdf-policy-equity',
+              label: 'pdf policy equity',
+              points: pdfPolicyResult.equitySeries || [],
+              stroke: '#72ecff',
+              strokeWidth: 1.6
+            },
+            {
               key: 'oracle-vs-backtest',
               label: 'backtest equity',
               points: result.equitySeries || [],
@@ -1177,6 +1612,171 @@ export default function BacktestPage({ snapshot, historyByMarket }) {
           />
         </GlowCard>
       </div>
+
+      <GlowCard className="panel-card">
+        <div className="section-head">
+          <h2>PDF Policy Window Solver</h2>
+          <span>
+            {fmtInt(pdfPolicyResult?.windows?.length || 0)} windows | {fmtInt(pdfPolicyStats.tradeCount)} trades
+          </span>
+        </div>
+        <p className="socket-status-copy">
+          Same discrete windows, but targets come from forward PDF policy estimates (no lookahead). This is the live-usable policy baseline against oracle hindsight.
+        </p>
+        <p className="socket-status-copy">
+          window agreement {fmtPct(oraclePdfWindowStats.agreementPct)} | oracle acc {fmtPct(oraclePdfWindowStats.oracleAccuracyPct)} | pdf acc {fmtPct(oraclePdfWindowStats.pdfAccuracyPct)} | pdf-oracle edge{' '}
+          {fmtPct(oraclePdfWindowStats.pdfVsOracleAccuracyEdgePct)}
+        </p>
+      </GlowCard>
+
+      <div className="two-col">
+        <GlowCard className="panel-card">
+          <div className="section-head">
+            <h2>PDF Window Plan</h2>
+            <span>{fmtInt(pdfWindowRows.length)} rows</span>
+          </div>
+          <FlashList
+            items={pdfWindowRows}
+            height={320}
+            itemHeight={76}
+            className="tick-flash-list"
+            emptyCopy="No PDF window rows yet."
+            keyExtractor={(row) => row.id}
+            renderItem={(row) => (
+              <article className="tensor-event-row">
+                <strong className={row.discreteTarget > 0 ? 'up' : row.discreteTarget < 0 ? 'down' : ''}>
+                  window {fmtInt(row.windowIndex)} | {row.action} | conf {fmtNum(row.confidencePct, 1)}%
+                </strong>
+                <p>
+                  E[r] {fmtPct(row.predictedMovePct)} | up {fmtPct(row.upProb * 100)} | down {fmtPct(row.downProb * 100)}
+                </p>
+                <small>
+                  target {fmtNum(row.targetUnits, 2)} / discrete {fmtNum(row.discreteTarget, 2)} | px {fmtNum(row.startPrice, 4)} {'->'} {fmtNum(row.endPrice, 4)} | {fmtTime(row.startTs)}
+                </small>
+              </article>
+            )}
+          />
+        </GlowCard>
+
+        <GlowCard className="panel-card">
+          <div className="section-head">
+            <h2>Oracle vs PDF Window Diff</h2>
+            <span>{fmtInt(oraclePdfWindowRows.length)} rows</span>
+          </div>
+          <FlashList
+            items={oraclePdfWindowRows}
+            height={320}
+            itemHeight={84}
+            className="tick-flash-list"
+            emptyCopy="No oracle/pdf window comparisons yet."
+            keyExtractor={(row) => row.id}
+            renderItem={(row) => (
+              <article className="tensor-event-row">
+                <strong className={row.pdfCorrect ? 'up' : 'down'}>
+                  w{fmtInt(row.startIndex)}-{fmtInt(row.endIndex)} | oracle {row.oracleAction} | pdf {row.pdfAction} | {row.agreement ? 'agree' : 'diverge'}
+                </strong>
+                <p>
+                  move {fmtPct(row.movePct)} | pdf E[r] {fmtPct(row.expectedMovePct)} | conf {fmtNum(row.confidencePct, 1)}%
+                </p>
+                <small>
+                  oracle {row.oracleCorrect ? 'hit' : 'miss'} | pdf {row.pdfCorrect ? 'hit' : 'miss'} | oracle tgt {fmtNum(row.oracleTarget, 2)} | pdf tgt {fmtNum(row.pdfTarget, 2)} |{' '}
+                  {fmtTime(row.timestamp)}
+                </small>
+              </article>
+            )}
+          />
+        </GlowCard>
+      </div>
+
+      <GlowCard className="panel-card">
+        <div className="section-head">
+          <h2>Cross-Market Oracle/PDF Graph</h2>
+          <span>
+            {fmtInt(oraclePdfGraphStats.markets)} markets | avg oracle edge {fmtPct(oraclePdfGraphStats.avgOracleEdgePct)}
+          </span>
+        </div>
+        <p className="socket-status-copy">
+          Market graph view of the same window solver setup. Oracle is hindsight upper bound; PDF is policy approximation from local history only.
+        </p>
+        <div className="strategy-control-grid">
+          <label className="control-field">
+            <span>Market Count</span>
+            <input
+              type="number"
+              min={4}
+              max={32}
+              step={1}
+              value={oracleGraphMarketCount}
+              onChange={(event) => setOracleGraphMarketCount(Math.max(4, Math.min(32, Math.round(toNum(event.target.value, 14)))))}
+            />
+          </label>
+          <label className="control-field">
+            <span>Avg Oracle Return</span>
+            <input disabled value={fmtPct(oraclePdfGraphStats.avgOracleReturnPct)} />
+          </label>
+          <label className="control-field">
+            <span>Avg PDF Return</span>
+            <input disabled value={fmtPct(oraclePdfGraphStats.avgPdfReturnPct)} />
+          </label>
+          <label className="control-field">
+            <span>Avg Accuracy (O/P)</span>
+            <input disabled value={`${fmtPct(oraclePdfGraphStats.avgOracleAccuracyPct)} / ${fmtPct(oraclePdfGraphStats.avgPdfAccuracyPct)}`} />
+          </label>
+        </div>
+        <LineChart
+          title="Per-Market Return Graph (oracle vs pdf)"
+          points={oraclePdfGraph.oracleSeries}
+          stroke="#8dff8a"
+          fillFrom="rgba(100, 232, 136, 0.22)"
+          fillTo="rgba(100, 232, 136, 0.02)"
+          unit="%"
+          overlays={[
+            {
+              key: 'oracle-pdf-market-returns',
+              label: 'pdf return',
+              points: oraclePdfGraph.pdfSeries,
+              stroke: '#72ecff',
+              strokeWidth: 1.6
+            },
+            {
+              key: 'oracle-pdf-market-edge',
+              label: 'oracle edge',
+              points: oraclePdfGraph.edgeSeries,
+              stroke: '#ffd166',
+              strokeWidth: 1.4,
+              dasharray: '5 4'
+            }
+          ]}
+        />
+      </GlowCard>
+
+      <GlowCard className="panel-card">
+        <div className="section-head">
+          <h2>Cross-Market Oracle/PDF Tape</h2>
+          <span>{fmtInt(oraclePdfGraph.rows.length)} rows</span>
+        </div>
+        <FlashList
+          items={oraclePdfGraph.rows}
+          height={320}
+          itemHeight={84}
+          className="tick-flash-list"
+          emptyCopy="Need deeper market history to compare across markets."
+          keyExtractor={(row) => row.id}
+          renderItem={(row) => (
+            <article className="tensor-event-row">
+              <strong className={row.oracleEdgePct >= 0 ? 'up' : 'down'}>
+                {row.symbol} ({row.assetClass}) | oracle {fmtPct(row.oracleReturnPct)} | pdf {fmtPct(row.pdfReturnPct)}
+              </strong>
+              <p>
+                oracle edge {fmtPct(row.oracleEdgePct)} | windows {fmtInt(row.windowCount)} | trades {fmtInt(row.oracleTrades)} / {fmtInt(row.pdfTrades)}
+              </p>
+              <small>
+                acc oracle {fmtPct(row.oracleAccuracyPct)} | acc pdf {fmtPct(row.pdfAccuracyPct)} | pnl {fmtNum(row.oraclePnl, 2)} / {fmtNum(row.pdfPnl, 2)}
+              </small>
+            </article>
+          )}
+        />
+      </GlowCard>
 
       <GlowCard className="panel-card">
         <div className="section-head">

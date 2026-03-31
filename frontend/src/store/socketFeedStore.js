@@ -1,4 +1,5 @@
 import { create } from 'zustand';
+import { useCapitalStore } from './capitalStore';
 
 const MAX_POINTS = 240;
 const MAX_RECENT_TICKS = 320;
@@ -139,13 +140,18 @@ const sanitizeDepthSide = (levels, side) => {
 
 export const useSocketFeedStore = create((set) => ({
   ...baseState,
-  resetForMarket: (marketKey) =>
+  resetForMarket: (marketKey) => {
+    useCapitalStore.getState().setActiveRefs({
+      marketId: marketKey || ''
+    });
     set({
       ...baseState,
       marketKey: marketKey || null
-    }),
+    });
+  },
   applyWorkerSnapshot: (payload) => {
     if (!payload || typeof payload !== 'object') return;
+    useCapitalStore.getState().ingestSocketSnapshot(payload);
     set((state) => ({
       marketKey: payload.marketKey ?? state.marketKey,
       providerStateById: payload.providerStateById || state.providerStateById,

@@ -86,6 +86,9 @@ export default function useSocketProviders({ market, enabled }) {
   const localProviders = useMemo(() => {
     return getLocalFallbackProviders().filter((provider) => provider.supportsMarket(market));
   }, [market]);
+  const allProviderModels = useMemo(() => {
+    return [...externalProviders, ...localProviders];
+  }, [externalProviders, localProviders]);
 
   useEffect(() => {
     if (!market || !enabled || externalProviders.length === 0) {
@@ -258,9 +261,18 @@ export default function useSocketProviders({ market, enabled }) {
   const primaryProvider = sortedProviders.find((provider) => provider.connected) || sortedProviders[0] || null;
   const primarySeries = primaryProvider ? seriesByProvider[primaryProvider.id] || [] : [];
   const primaryDepth = primaryProvider ? depthByProvider[primaryProvider.id] || null : null;
+  const providerById = useMemo(() => {
+    const map = {};
+    for (const provider of allProviderModels) {
+      if (!provider?.id) continue;
+      map[provider.id] = provider;
+    }
+    return map;
+  }, [allProviderModels]);
 
   return {
     providerStates: sortedProviders,
+    providerById,
     seriesByProvider,
     depthByProvider,
     primaryProvider,

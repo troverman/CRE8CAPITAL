@@ -9,6 +9,12 @@ const randomBetween = (min, max) => {
   return min + Math.random() * (max - min);
 };
 
+const HISTORY_WINDOWS = {
+  '5m': { points: 60, stepMs: 5000 },
+  '1h': { points: 120, stepMs: 30000 },
+  '24h': { points: 288, stepMs: 300000 }
+};
+
 const buildSyntheticDepth = ({ midPrice, spreadBps, levels = 18 }) => {
   const bids = [];
   const asks = [];
@@ -39,6 +45,38 @@ export default class LocalSyntheticProvider extends Provider {
 
   supportsMarket(market) {
     return Boolean(market && market.symbol);
+  }
+
+  async fetchHistory({ market, window = '1h' } = {}) {
+    const config = HISTORY_WINDOWS[window] || HISTORY_WINDOWS['1h'];
+    const now = Date.now();
+    const symbol = String(market?.symbol || 'SIM');
+    const basePrice = Math.max(toNum(market?.referencePrice, 100), 0.00001);
+    const baseSpreadBps = Math.max(toNum(market?.spreadBps, 8), 0.5);
+    const volumeAnchor = Math.max(toNum(market?.totalVolume, 100000), 1);
+    const trendBias = Math.max(Math.min(toNum(market?.changePct, 0) / 100, 0.006), -0.006);
+
+    let cursorPrice = basePrice * (1 - trendBias * 0.3);
+    const rows = [];
+
+    for (let index = 0; index < config.points; index += 1) {
+      const drift = randomBetween(-0.0018, 0.0018) + trendBias * 0.12;
+      cursorPrice = Math.max(cursorPrice * (1 + drift), 0.000001);
+      const spread = Math.max(baseSpreadBps + randomBetween(-1.2, 1.2), 0.35);
+      const t = now - (config.points - 1 - index) * config.stepMs;
+      rows.push({
+        t,
+        price: cursorPrice,
+        spread,
+        volume: Math.max(volumeAnchor * randomBetween(0.0001, 0.0016), 1),
+        providerId: this.id,
+        providerName: this.name,
+        symbol,
+        source: 'local-history'
+      });
+    }
+
+    return rows;
   }
 
   connect({ market, onTick, onDepth, onStatus }) {

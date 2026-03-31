@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { getSnapshotUrl, getStreamUrl, restrategyUrl } from '../lib/capitalApi';
 import { buildLocalFallbackSnapshot } from '../lib/localSnapshot';
+import { useCapitalStore } from '../store/capitalStore';
 
 const initialSnapshot = {
   running: false,
@@ -270,6 +271,17 @@ export default function useCapitalLive() {
     },
     []
   );
+
+  useEffect(() => {
+    const markets = Array.isArray(snapshot?.markets) ? snapshot.markets : [];
+    const providers = Array.isArray(snapshot?.providers) ? snapshot.providers : [];
+    if (markets.length > 0) {
+      useCapitalStore.getState().upsertMarkets(markets);
+    }
+    if (providers.length > 0) {
+      useCapitalStore.getState().upsertProviders(providers);
+    }
+  }, [snapshot?.markets, snapshot?.providers]);
 
   return {
     snapshot,

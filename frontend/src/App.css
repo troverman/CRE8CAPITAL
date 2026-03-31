@@ -1162,6 +1162,21 @@ a {
   color: var(--ink-soft);
 }
 
+.live-window-toggle-row {
+  justify-content: flex-start;
+}
+
+.live-window-chip-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.36rem;
+}
+
+.live-window-chip-row .market-subtab-btn {
+  padding: 0.32rem 0.68rem;
+  font-size: 0.68rem;
+}
+
 .toggle-label {
   display: inline-flex;
   align-items: center;

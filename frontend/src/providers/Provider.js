@@ -14,5 +14,8 @@ export default class Provider {
       disconnect: () => {}
     };
   }
-}
 
+  async fetchHistory() {
+    return [];
+  }
+}

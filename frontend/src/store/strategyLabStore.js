@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 import { createWalletState, executeWalletAction, evaluateStrategy, markWallet, STRATEGY_OPTIONS } from '../lib/strategyEngine';
 import { useExecutionFeedStore } from './executionFeedStore';
+import { useCapitalStore } from './capitalStore';
 
 const MAX_RUNTIME_POINTS = 480;
 const MAX_EQUITY_POINTS = 480;
@@ -69,6 +70,8 @@ const toNum = (value, fallback = 0) => {
   return Number.isFinite(num) ? num : fallback;
 };
 
+const toTs = (value) => Math.max(0, Math.round(toNum(value, Date.now())));
+
 const toFiniteOrNull = (value) => {
   const num = Number(value);
   return Number.isFinite(num) ? num : null;
@@ -135,6 +138,23 @@ const createDefaultWalletAccounts = () => {
 const defaultEnabledStrategies = sanitizeEnabledStrategyIds([DEFAULT_PRIMARY_STRATEGY_ID], DEFAULT_PRIMARY_STRATEGY_ID);
 const defaultSignalActionMap = buildSignalActionMap(defaultEnabledStrategies);
 
+const syncWalletAccountsToCapital = ({ walletAccounts = [], activeWalletAccountId = '', marketKey = '' } = {}) => {
+  useCapitalStore.getState().upsertWalletAccounts({
+    walletAccounts,
+    activeWalletId: activeWalletAccountId
+  });
+  if (marketKey) {
+    useCapitalStore.getState().setActiveRefs({
+      marketId: marketKey,
+      walletId: activeWalletAccountId || ''
+    });
+  } else if (activeWalletAccountId) {
+    useCapitalStore.getState().setActiveRefs({
+      walletId: activeWalletAccountId
+    });
+  }
+};
+
 const baseState = {
   running: true,
   sourceId: 'local-scenario',
@@ -191,8 +211,14 @@ export const useStrategyLabStore = create((set) => ({
             }))
           : state.walletAccounts
     }));
+    const nextState = useStrategyLabStore.getState();
+    syncWalletAccountsToCapital({
+      walletAccounts: nextState.walletAccounts,
+      activeWalletAccountId: nextState.activeWalletAccountId,
+      marketKey: nextState.marketKey
+    });
   },
-  hardReset: () =>
+  hardReset: () => {
     set({
       ...baseState,
       walletAccounts: createDefaultWalletAccounts(),
@@ -201,8 +227,15 @@ export const useStrategyLabStore = create((set) => ({
       enabledStrategyIds: defaultEnabledStrategies,
       lastSignalActionByStrategy: defaultSignalActionMap,
       lastSignalAction: defaultSignalActionMap[baseState.strategyId] || 'hold'
-    }),
-  resetRuntime: ({ price, preserveBacktest = true } = {}) =>
+    });
+    const nextState = useStrategyLabStore.getState();
+    syncWalletAccountsToCapital({
+      walletAccounts: nextState.walletAccounts,
+      activeWalletAccountId: nextState.activeWalletAccountId,
+      marketKey: nextState.marketKey
+    });
+  },
+  resetRuntime: ({ price, preserveBacktest = true } = {}) => {
     set((state) => {
       const walletAccounts = state.walletAccounts.map((account) => ({
         ...account,
@@ -223,7 +256,14 @@ export const useStrategyLabStore = create((set) => ({
         stepSequence: 0,
         backtest: preserveBacktest ? state.backtest : null
       };
-    }),
+    });
+    const nextState = useStrategyLabStore.getState();
+    syncWalletAccountsToCapital({
+      walletAccounts: nextState.walletAccounts,
+      activeWalletAccountId: nextState.activeWalletAccountId,
+      marketKey: nextState.marketKey
+    });
+  },
   clearBacktest: () =>
     set((state) => ({
       ...state,
@@ -234,7 +274,7 @@ export const useStrategyLabStore = create((set) => ({
       ...state,
       backtest
     })),
-  addWalletAccount: ({ name = '', startCash = 100000 } = {}) =>
+  addWalletAccount: ({ name = '', startCash = 100000 } = {}) => {
     set((state) => {
       if (state.walletAccounts.length >= MAX_WALLET_ACCOUNTS) return state;
       const account = createWalletAccount({
@@ -254,8 +294,15 @@ export const useStrategyLabStore = create((set) => ({
         activeWalletAccountId,
         wallet: activeWallet.wallet
       };
-    }),
-  updateWalletAccount: (accountId, patch = {}) =>
+    });
+    const nextState = useStrategyLabStore.getState();
+    syncWalletAccountsToCapital({
+      walletAccounts: nextState.walletAccounts,
+      activeWalletAccountId: nextState.activeWalletAccountId,
+      marketKey: nextState.marketKey
+    });
+  },
+  updateWalletAccount: (accountId, patch = {}) => {
     set((state) => {
       const id = String(accountId || '');
       if (!id) return state;
@@ -276,8 +323,15 @@ export const useStrategyLabStore = create((set) => ({
           };
         })
       };
-    }),
-  removeWalletAccount: (accountId) =>
+    });
+    const nextState = useStrategyLabStore.getState();
+    syncWalletAccountsToCapital({
+      walletAccounts: nextState.walletAccounts,
+      activeWalletAccountId: nextState.activeWalletAccountId,
+      marketKey: nextState.marketKey
+    });
+  },
+  removeWalletAccount: (accountId) => {
     set((state) => {
       const id = String(accountId || '');
       if (!id) return state;
@@ -301,14 +355,28 @@ export const useStrategyLabStore = create((set) => ({
         activeWalletAccountId,
         wallet: activeWallet.wallet
       };
-    }),
-  clearWalletAccounts: () =>
+    });
+    const nextState = useStrategyLabStore.getState();
+    syncWalletAccountsToCapital({
+      walletAccounts: nextState.walletAccounts,
+      activeWalletAccountId: nextState.activeWalletAccountId,
+      marketKey: nextState.marketKey
+    });
+  },
+  clearWalletAccounts: () => {
     set((state) => ({
       ...state,
       walletAccounts: [],
       activeWalletAccountId: '',
       wallet: createWalletState()
-    })),
+    }));
+    const nextState = useStrategyLabStore.getState();
+    syncWalletAccountsToCapital({
+      walletAccounts: nextState.walletAccounts,
+      activeWalletAccountId: nextState.activeWalletAccountId,
+      marketKey: nextState.marketKey
+    });
+  },
   setExecutionConfig: ({ strategyMode, walletScope } = {}) =>
     set((state) => ({
       ...state,
@@ -378,7 +446,7 @@ export const useStrategyLabStore = create((set) => ({
         lastSignalAction: lastSignalActionByStrategy[strategyId] || 'hold'
       };
     }),
-  setActiveWalletAccount: (accountId) =>
+  setActiveWalletAccount: (accountId) => {
     set((state) => {
       const id = String(accountId || '');
       if (!id) return state;
@@ -389,7 +457,14 @@ export const useStrategyLabStore = create((set) => ({
         activeWalletAccountId: id,
         wallet: activeWallet.wallet
       };
-    }),
+    });
+    const nextState = useStrategyLabStore.getState();
+    syncWalletAccountsToCapital({
+      walletAccounts: nextState.walletAccounts,
+      activeWalletAccountId: nextState.activeWalletAccountId,
+      marketKey: nextState.marketKey
+    });
+  },
   stepRuntime: ({ point, sourceLabel = '', forceEvent = false, signalRows = [], selectedMarket = null }) =>
     {
       const emitPayloads = [];
@@ -644,6 +719,53 @@ export const useStrategyLabStore = create((set) => ({
         };
       });
 
+      const nextState = useStrategyLabStore.getState();
+      const activeMarketId = selectedMarket?.key || nextState.marketKey || '';
+      syncWalletAccountsToCapital({
+        walletAccounts: nextState.walletAccounts,
+        activeWalletAccountId: nextState.activeWalletAccountId,
+        marketKey: activeMarketId
+      });
+      if (activeMarketId) {
+        const tensorPoint = {
+          t: toTs(point?.t || Date.now()),
+          price: toNum(point?.price, 0),
+          spreadBps: toNum(point?.spread, 0),
+          volume: toNum(point?.volume, 0),
+          strategyId: nextState.strategyId,
+          action: nextState.lastSignalAction,
+          source: sourceLabel || nextState.sourceId || 'strategy-runtime'
+        };
+        useCapitalStore.getState().appendTensorSlice({
+          marketId: activeMarketId,
+          slice: tensorPoint
+        });
+
+        const depthBids = sanitizeDepthSide(point?.depth?.bids, 'bid');
+        const depthAsks = sanitizeDepthSide(point?.depth?.asks, 'ask');
+        if (depthBids.length > 0 || depthAsks.length > 0) {
+          const bidPressure = depthBids.reduce((sum, level) => sum + toNum(level?.size, 0), 0);
+          const askPressure = depthAsks.reduce((sum, level) => sum + toNum(level?.size, 0), 0);
+          const imbalance = bidPressure + askPressure > 0 ? (bidPressure - askPressure) / (bidPressure + askPressure) : 0;
+          useCapitalStore.getState().appendMarketImageSlice({
+            marketId: activeMarketId,
+            slice: {
+              t: tensorPoint.t,
+              source: 'strategy-runtime-depth',
+              aggregate: {
+                imbalance,
+                bidPressure,
+                askPressure
+              },
+              depth: {
+                bids: depthBids,
+                asks: depthAsks
+              }
+            }
+          });
+        }
+      }
+
       if (emitPayloads.length > 0) {
         const feed = useExecutionFeedStore.getState();
         for (const payload of emitPayloads) {
@@ -658,3 +780,9 @@ export const useStrategyLabStore = create((set) => ({
       }
     }
 }));
+
+syncWalletAccountsToCapital({
+  walletAccounts: baseState.walletAccounts,
+  activeWalletAccountId: baseState.activeWalletAccountId,
+  marketKey: baseState.marketKey
+});

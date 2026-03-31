@@ -1,64 +1,55 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo } from 'react';
+import { useCapitalStore } from '../store/capitalStore';
 
 const MAX_MARKETS_TRACKED = 180;
 const MAX_POINTS_PER_MARKET = 180;
 
-const isSamePoint = (a, b) => {
-  if (!a || !b) return false;
-  return a.t === b.t && a.price === b.price && a.spread === b.spread && a.volume === b.volume;
+const toNum = (value, fallback = 0) => {
+  const num = Number(value);
+  return Number.isFinite(num) ? num : fallback;
 };
 
 export default function useMarketHistory(markets = [], now = Date.now()) {
-  const [historyByMarket, setHistoryByMarket] = useState({});
+  const marketTicksById = useCapitalStore((state) => state.series.marketTicksById);
+  const upsertMarkets = useCapitalStore((state) => state.upsertMarkets);
+  const getMarketSeriesRange = useCapitalStore((state) => state.getMarketSeriesRange);
 
   useEffect(() => {
     if (!Array.isArray(markets) || markets.length === 0) return;
+    upsertMarkets(markets, { appendSnapshotTick: true });
+  }, [markets, now, upsertMarkets]);
 
-    setHistoryByMarket((previous) => {
-      const rankedMarkets = [...markets]
-        .filter((market) => Boolean(market?.key))
-        .sort((a, b) => {
-          const aScore = (Number(a.totalVolume) || 0) + Math.abs(Number(a.changePct) || 0) * 1000000;
-          const bScore = (Number(b.totalVolume) || 0) + Math.abs(Number(b.changePct) || 0) * 1000000;
-          return bScore - aScore;
-        })
-        .slice(0, MAX_MARKETS_TRACKED);
+  const rankedMarkets = useMemo(() => {
+    if (!Array.isArray(markets) || markets.length === 0) return [];
+    return [...markets]
+      .filter((market) => Boolean(market?.key))
+      .sort((a, b) => {
+        const aScore = toNum(a?.totalVolume, 0) + Math.abs(toNum(a?.changePct, 0)) * 1000000;
+        const bScore = toNum(b?.totalVolume, 0) + Math.abs(toNum(b?.changePct, 0)) * 1000000;
+        return bScore - aScore;
+      })
+      .slice(0, MAX_MARKETS_TRACKED);
+  }, [markets]);
 
-      const allowedKeys = new Set(rankedMarkets.map((market) => market.key));
-      const next = {};
-
-      for (const key of allowedKeys) {
-        if (previous[key]) {
-          next[key] = previous[key];
-        }
-      }
-
-      for (const market of rankedMarkets) {
-        if (!market?.key) continue;
-        const price = Number(market.referencePrice);
-        if (!Number.isFinite(price)) continue;
-
-        const point = {
-          t: Number(market.updatedAt) || Number(now) || Date.now(),
-          price,
-          spread: Number(market.spreadBps) || 0,
-          volume: Number(market.totalVolume) || 0
-        };
-
-        const series = next[market.key] ? [...next[market.key]] : [];
-        const tail = series[series.length - 1];
-        if (!isSamePoint(tail, point)) {
-          series.push(point);
-          if (series.length > MAX_POINTS_PER_MARKET) {
-            series.splice(0, series.length - MAX_POINTS_PER_MARKET);
-          }
-          next[market.key] = series;
-        }
-      }
-
-      return next;
-    });
-  }, [markets, now]);
-
-  return historyByMarket;
+  return useMemo(() => {
+    const next = {};
+    for (const market of rankedMarkets) {
+      const marketId = String(market?.key || '').trim();
+      if (!marketId) continue;
+      const rows = getMarketSeriesRange({
+        marketId,
+        limit: MAX_POINTS_PER_MARKET
+      });
+      next[marketId] = rows.map((row) => ({
+        t: toNum(row?.t, Date.now()),
+        price: toNum(row?.price, 0),
+        spread: toNum(row?.spread, 0),
+        volume: toNum(row?.volume, 0),
+        bid: toNum(row?.bid, 0),
+        ask: toNum(row?.ask, 0)
+      }));
+    }
+    return next;
+  }, [getMarketSeriesRange, marketTicksById, rankedMarkets]);
 }
+

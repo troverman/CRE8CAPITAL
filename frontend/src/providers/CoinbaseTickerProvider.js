@@ -1,6 +1,12 @@
 import Provider from './Provider';
 import { toCoinbaseProduct } from './symbolUtils';
 
+const HISTORY_WINDOWS = {
+  '5m': { granularity: 60, spanMs: 5 * 60 * 1000 },
+  '1h': { granularity: 60, spanMs: 60 * 60 * 1000 },
+  '24h': { granularity: 300, spanMs: 24 * 60 * 60 * 1000 }
+};
+
 const toNum = (value) => {
   const num = Number(value);
   return Number.isFinite(num) ? num : null;
@@ -19,6 +25,57 @@ export default class CoinbaseTickerProvider extends Provider {
     if (!market) return false;
     if (String(market.assetClass).toLowerCase() !== 'crypto') return false;
     return Boolean(toCoinbaseProduct(market.symbol));
+  }
+
+  async fetchHistory({ market, window = '1h', signal } = {}) {
+    const productId = toCoinbaseProduct(market?.symbol);
+    if (!productId || typeof fetch !== 'function') return [];
+
+    const config = HISTORY_WINDOWS[window] || HISTORY_WINDOWS['1h'];
+    const endMs = Date.now();
+    const startMs = Math.max(0, endMs - config.spanMs);
+
+    const params = new URLSearchParams({
+      granularity: String(config.granularity),
+      start: new Date(startMs).toISOString(),
+      end: new Date(endMs).toISOString()
+    });
+
+    const response = await fetch(`https://api.exchange.coinbase.com/products/${encodeURIComponent(productId)}/candles?${params.toString()}`, {
+      method: 'GET',
+      signal,
+      headers: {
+        Accept: 'application/json'
+      }
+    });
+    if (!response.ok) {
+      throw new Error(`Coinbase history request failed (${response.status})`);
+    }
+
+    const rows = await response.json();
+    if (!Array.isArray(rows)) return [];
+
+    return rows
+      .map((row) => {
+        const tSec = Number(row?.[0]);
+        const low = Number(row?.[1]);
+        const high = Number(row?.[2]);
+        const close = Number(row?.[4]);
+        const volume = Number(row?.[5]);
+        if (!Number.isFinite(tSec) || !Number.isFinite(close) || close <= 0) return null;
+        const spread = Number.isFinite(high) && Number.isFinite(low) && high >= low ? ((high - low) / Math.max(close, 1e-9)) * 10000 : 0;
+        return {
+          t: tSec * 1000,
+          price: close,
+          spread,
+          volume: Number.isFinite(volume) ? volume : 0,
+          providerId: this.id,
+          providerName: this.name,
+          source: 'provider-history'
+        };
+      })
+      .filter((row) => Boolean(row))
+      .sort((a, b) => a.t - b.t);
   }
 
   connect({ market, onTick, onDepth, onStatus }) {
