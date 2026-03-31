@@ -1,4 +1,5 @@
 const Provider = require('./Provider');
+const log = require('../shared/logger');
 
 class CCXTProvider extends Provider {
 	constructor({
@@ -67,6 +68,7 @@ class CCXTProvider extends Provider {
 		if (this._timer) return;
 		this.setError(null);
 		try {
+			log.info('CCXT', `connecting to ${this.exchangeId} for ${this.symbols.length} symbols`);
 			this._exchange = await this._createExchange();
 			await this._exchange.loadMarkets();
 		} catch (error) {
@@ -78,6 +80,7 @@ class CCXTProvider extends Provider {
 			this._poll().catch((error) => this.setError(error));
 		}, this.intervalMs);
 		this.setConnected(true);
+		log.info('CCXT', `connected to ${this.exchangeId}`);
 	}
 
 	async disconnect() {

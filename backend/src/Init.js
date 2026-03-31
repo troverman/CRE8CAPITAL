@@ -1,4 +1,5 @@
 const { createCapitalRuntime } = require('./runtime');
+const log = require('./shared/logger');
 
 const runtime = createCapitalRuntime();
 
@@ -6,7 +7,7 @@ let heartbeatIntervalId = null;
 
 const start = async () => {
 	await runtime.start();
-	console.log('[CRE8CAPITAL] runtime started');
+	log.info('Init', 'runtime started');
 
 	heartbeatIntervalId = setInterval(() => {
 		const snapshot = runtime.getSnapshot({
@@ -15,7 +16,7 @@ const start = async () => {
 			decisionLimit: 1,
 			feedLimit: 1
 		});
-		console.log('[CRE8CAPITAL] heartbeat', {
+		log.debug('Init', 'heartbeat', {
 			ticksProcessed: snapshot.telemetry.ticksProcessed,
 			signalsGenerated: snapshot.telemetry.signalsGenerated,
 			decisionsGenerated: snapshot.telemetry.decisionsGenerated,
@@ -36,11 +37,11 @@ const shutdown = async () => {
 		heartbeatIntervalId = null;
 	}
 	await runtime.stop();
-	console.log('[CRE8CAPITAL] runtime stopped');
+	log.info('Init', 'runtime stopped');
 };
 
 start().catch((error) => {
-	console.error('[CRE8CAPITAL] fatal runtime error:', error.message);
+	log.error('Init', 'fatal runtime error', error.message);
 	process.exit(1);
 });
 
@@ -48,7 +49,7 @@ process.on('SIGINT', () => {
 	shutdown()
 		.then(() => process.exit(0))
 		.catch((error) => {
-			console.error('[CRE8CAPITAL] shutdown failed:', error.message);
+			log.error('Init', 'shutdown failed', error.message);
 			process.exit(1);
 		});
 });
@@ -57,7 +58,7 @@ process.on('SIGTERM', () => {
 	shutdown()
 		.then(() => process.exit(0))
 		.catch((error) => {
-			console.error('[CRE8CAPITAL] shutdown failed:', error.message);
+			log.error('Init', 'shutdown failed', error.message);
 			process.exit(1);
 		});
 });

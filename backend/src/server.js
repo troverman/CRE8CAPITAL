@@ -1,5 +1,12 @@
 const http = require('node:http');
+const { WebSocketServer } = require('ws');
 const { runtime } = require('./runtime');
+const BacktestEngine = require('./backtest/BacktestEngine');
+const HistoryProvider = require('./backtest/HistoryProvider');
+const log = require('./shared/logger');
+
+const backtestEngine = new BacktestEngine();
+const historyProvider = new HistoryProvider();
 
 const PORT = Number(process.env.PORT || 8787);
 const HOST = process.env.HOST || '0.0.0.0';
@@ -7,11 +14,12 @@ const STREAM_INTERVAL_MS = Number(process.env.CAPITAL_STREAM_INTERVAL_MS || 1000
 
 const corsHeaders = {
 	'Access-Control-Allow-Origin': '*',
-	'Access-Control-Allow-Methods': 'GET,POST,OPTIONS',
+	'Access-Control-Allow-Methods': 'GET,POST,PUT,OPTIONS',
 	'Access-Control-Allow-Headers': 'Content-Type'
 };
 
 const sseClients = new Set();
+const wsClients = new Set();
 
 const sendJson = (res, statusCode, payload) => {
 	res.writeHead(statusCode, {
@@ -80,7 +88,7 @@ const snapshotForLimits = (limits) => {
 };
 
 const broadcastSnapshot = () => {
-	if (sseClients.size === 0) {
+	if (sseClients.size === 0 && wsClients.size === 0) {
 		return;
 	}
 
@@ -91,6 +99,36 @@ const broadcastSnapshot = () => {
 		} catch (error) {
 			client.res.end();
 			sseClients.delete(client);
+		}
+	}
+
+	// Broadcast to WebSocket clients
+	if (wsClients.size > 0) {
+		const defaultLimits = { marketLimit: 150, signalLimit: 120, decisionLimit: 120, feedLimit: 140 };
+		const wsPayload = JSON.stringify({ type: 'snapshot', data: snapshotForLimits(defaultLimits) });
+		for (const ws of wsClients) {
+			try {
+				if (ws.readyState === 1) { // WebSocket.OPEN
+					ws.send(wsPayload);
+				}
+			} catch (_) {
+				wsClients.delete(ws);
+			}
+		}
+	}
+};
+
+/**
+ * Broadcast a specific event (tick, signal, decision, trade) to all WS clients.
+ */
+const broadcastWsEvent = (type, data) => {
+	if (wsClients.size === 0) return;
+	const msg = JSON.stringify({ type, data });
+	for (const ws of wsClients) {
+		try {
+			if (ws.readyState === 1) ws.send(msg);
+		} catch (_) {
+			wsClients.delete(ws);
 		}
 	}
 };
@@ -236,12 +274,97 @@ const api = async (req, res) => {
 		});
 	}
 
+	if (req.method === 'GET' && url.pathname === '/api/trades') {
+		const persistence = require('./shared/persistence');
+		const limit = numberParam(url.searchParams.get('limit'), 50);
+		const strategyId = url.searchParams.get('strategyId');
+		const items = strategyId
+			? persistence.getTradesByStrategy(strategyId, limit)
+			: persistence.getRecentTrades(limit);
+		return sendJson(res, 200, { items });
+	}
+
+	if (req.method === 'GET' && url.pathname === '/api/positions') {
+		const persistence = require('./shared/persistence');
+		return sendJson(res, 200, { items: persistence.getPositions() });
+	}
+
+	if (req.method === 'GET' && url.pathname === '/api/wallet') {
+		const persistence = require('./shared/persistence');
+		return sendJson(res, 200, persistence.getWallet());
+	}
+
+	if (req.method === 'GET' && url.pathname === '/api/signals/history') {
+		const persistence = require('./shared/persistence');
+		const limit = numberParam(url.searchParams.get('limit'), 100);
+		return sendJson(res, 200, { items: persistence.getRecentSignals(limit) });
+	}
+
+	if (req.method === 'GET' && url.pathname === '/api/decisions/history') {
+		const persistence = require('./shared/persistence');
+		const limit = numberParam(url.searchParams.get('limit'), 100);
+		return sendJson(res, 200, { items: persistence.getRecentDecisions(limit) });
+	}
+
+	if (req.method === 'GET' && url.pathname === '/api/execution') {
+		return sendJson(res, 200, {
+			stats: runtime.executionEngine.getStats(),
+			wallet: require('./shared/persistence').getWallet()
+		});
+	}
+
+	// POST /api/backtest -- run a server-side backtest
+	if (req.method === 'POST' && url.pathname === '/api/backtest') {
+		try {
+			const body = await readBody(req);
+			const strategy = body.strategy || { protocol: 'trend-follow' };
+			const symbols = body.symbols || ['BTC-USDT'];
+			const days = numberParam(body.days, 30);
+			const initialCash = numberParam(body.initialCash, 10000);
+			const feeRate = numberParam(body.feeRate, 0.001);
+
+			const engine = new BacktestEngine({ initialCash, feeRate, slippageBps: numberParam(body.slippageBps, 5) });
+			const history = await historyProvider.getHistory(symbols, days);
+			const result = engine.run(strategy, history, { initialCash });
+
+			return sendJson(res, 200, {
+				ok: true,
+				symbols,
+				days,
+				strategy: { protocol: strategy.protocol },
+				candleCount: history.length,
+				...result
+			});
+		} catch (error) {
+			log.error('Backtest', 'backtest failed', error.message);
+			return sendJson(res, 500, { error: 'Backtest failed', message: error.message });
+		}
+	}
+
+	if (req.method === 'GET' && url.pathname === '/api/risk') {
+		return sendJson(res, 200, runtime.executionEngine.riskManager.getStatus());
+	}
+
+	if (req.method === 'PUT' && url.pathname === '/api/risk') {
+		try {
+			const body = await readBody(req);
+			runtime.executionEngine.riskManager.updateParams(body);
+			return sendJson(res, 200, {
+				ok: true,
+				risk: runtime.executionEngine.riskManager.getStatus()
+			});
+		} catch (error) {
+			return sendJson(res, 400, { error: 'Invalid risk parameters', message: error.message });
+		}
+	}
+
 	return sendJson(res, 404, {
 		error: 'Not found',
 		availableRoutes: [
 			'/health',
 			'/api/snapshot',
 			'/api/stream',
+			'/ws',
 			'/api/providers',
 			'/api/markets',
 			'/api/signals',
@@ -249,6 +372,14 @@ const api = async (req, res) => {
 			'/api/decisions',
 			'/api/feed',
 			'/api/controller',
+			'/api/trades',
+			'/api/positions',
+			'/api/wallet',
+			'/api/execution',
+			'/api/signals/history',
+			'/api/decisions/history',
+			'/api/backtest',
+			'/api/risk',
 			'/api/triggers/restrategy',
 			'/api/runtime/start',
 			'/api/runtime/stop'
@@ -265,12 +396,56 @@ const server = http.createServer((req, res) => {
 	});
 });
 
+// --- WebSocket server on /ws path ---
+const wss = new WebSocketServer({ server, path: '/ws' });
+
+wss.on('connection', (ws, req) => {
+	wsClients.add(ws);
+	log.info('WebSocket', `client connected (total: ${wsClients.size})`);
+
+	// Send initial snapshot immediately
+	try {
+		const snapshot = runtime.getSnapshot({ marketLimit: 150, signalLimit: 120, decisionLimit: 120, feedLimit: 140 });
+		ws.send(JSON.stringify({ type: 'snapshot', data: snapshot }));
+	} catch (_) { /* initial send failure is non-fatal */ }
+
+	ws.on('close', () => {
+		wsClients.delete(ws);
+		log.debug('WebSocket', `client disconnected (total: ${wsClients.size})`);
+	});
+
+	ws.on('error', () => {
+		wsClients.delete(ws);
+	});
+
+	// Handle incoming commands from frontend
+	ws.on('message', async (raw) => {
+		try {
+			const msg = JSON.parse(String(raw));
+			if (msg.type === 'restrategy') {
+				const result = await runtime.triggerRestrategy({
+					reason: msg.reason || 'manual-ws',
+					source: 'websocket'
+				});
+				ws.send(JSON.stringify({ type: 'restrategy-ack', data: result }));
+			} else if (msg.type === 'ping') {
+				ws.send(JSON.stringify({ type: 'pong', timestamp: Date.now() }));
+			}
+		} catch (_) { /* invalid message, ignore */ }
+	});
+});
+
+// Wire execution engine to broadcast trades to WS clients
+runtime.executionEngine.onTrade((trade) => {
+	broadcastWsEvent('trade', trade);
+});
+
 server.listen(PORT, HOST, async () => {
-	console.log(`[CRE8 Capital API] listening on http://${HOST}:${PORT}`);
+	log.info('Server', `listening on http://${HOST}:${PORT} (WS on /ws)`);
 	try {
 		await runtime.start();
 	} catch (error) {
-		console.error('[CRE8 Capital API] runtime start failed:', error.message);
+		log.error('Server', 'runtime start failed', error.message);
 	}
 });
 
@@ -285,10 +460,15 @@ const shutdown = async () => {
 		client.res.end();
 	}
 	sseClients.clear();
+	for (const ws of wsClients) {
+		try { ws.close(); } catch (_) {}
+	}
+	wsClients.clear();
+	wss.close();
 	try {
 		await runtime.stop();
 	} catch (error) {
-		console.error('[CRE8 Capital API] runtime shutdown failed:', error.message);
+		log.error('Server', 'runtime shutdown failed', error.message);
 	}
 	server.close(() => {
 		process.exit(0);
@@ -298,13 +478,13 @@ const shutdown = async () => {
 
 process.on('SIGINT', () => {
 	shutdown().catch((error) => {
-		console.error('[CRE8 Capital API] SIGINT shutdown failure:', error.message);
+		log.error('Server', 'SIGINT shutdown failure', error.message);
 		process.exit(1);
 	});
 });
 process.on('SIGTERM', () => {
 	shutdown().catch((error) => {
-		console.error('[CRE8 Capital API] SIGTERM shutdown failure:', error.message);
+		log.error('Server', 'SIGTERM shutdown failure', error.message);
 		process.exit(1);
 	});
 });

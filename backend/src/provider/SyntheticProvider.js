@@ -1,4 +1,5 @@
 const Provider = require('./Provider');
+const log = require('../shared/logger');
 
 class SyntheticProvider extends Provider {
 	constructor({
@@ -57,6 +58,7 @@ class SyntheticProvider extends Provider {
 	async connect() {
 		if (this._timer) return;
 		this.setError(null);
+		log.info('Synthetic', `starting ${this.id} with ${this.symbols.length} symbols`);
 		for (const symbol of this.symbols) {
 			this._emitSymbol(symbol);
 		}

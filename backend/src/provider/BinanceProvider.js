@@ -1,4 +1,5 @@
 const Provider = require('./Provider');
+const log = require('../shared/logger');
 
 class BinanceProvider extends Provider {
 	constructor({ symbols = ['BTCUSDT', 'ETHUSDT'] } = {}) {
@@ -10,6 +11,10 @@ class BinanceProvider extends Provider {
 		});
 		this.symbols = symbols.map((symbol) => String(symbol).toUpperCase());
 		this._binance = null;
+		this._reconnectDelay = 5000;
+		this._maxReconnectDelay = 60000;
+		this._reconnectTimer = null;
+		this._intentionalDisconnect = false;
 	}
 
 	_normalizeSymbol(symbol) {
@@ -39,11 +44,31 @@ class BinanceProvider extends Provider {
 		};
 	}
 
+	_scheduleReconnect() {
+		if (this._intentionalDisconnect || this._reconnectTimer) return;
+		log.warn('Binance', `reconnecting in ${this._reconnectDelay}ms`);
+		this._reconnectTimer = setTimeout(async () => {
+			this._reconnectTimer = null;
+			if (this._intentionalDisconnect) return;
+			try {
+				await this.connect();
+				// Reset delay on successful reconnect
+				this._reconnectDelay = 5000;
+			} catch (err) {
+				log.error('Binance', `reconnect failed: ${err.message}`);
+				// Exponential backoff
+				this._reconnectDelay = Math.min(this._reconnectDelay * 2, this._maxReconnectDelay);
+				this._scheduleReconnect();
+			}
+		}, this._reconnectDelay);
+	}
+
 	async connect() {
 		if (this._binance) {
 			return;
 		}
 
+		this._intentionalDisconnect = false;
 		this.setError(null);
 		let BinanceLib;
 		try {
@@ -54,6 +79,7 @@ class BinanceProvider extends Provider {
 		}
 
 		try {
+			log.info('Binance', `connecting to ${this.symbols.length} symbols`);
 			this._binance = new BinanceLib().options({
 				reconnect: true,
 				verbose: false
@@ -91,16 +117,24 @@ class BinanceProvider extends Provider {
 			});
 
 			this.setConnected(true);
+			log.info('Binance', 'connected successfully');
 		} catch (error) {
 			this.setError(error);
+			log.error('Binance', `connection failed: ${error.message}`);
 			if (this._binance?.websockets?.terminate) {
 				this._binance.websockets.terminate();
 			}
 			this._binance = null;
+			this._scheduleReconnect();
 		}
 	}
 
 	async disconnect() {
+		this._intentionalDisconnect = true;
+		if (this._reconnectTimer) {
+			clearTimeout(this._reconnectTimer);
+			this._reconnectTimer = null;
+		}
 		try {
 			if (this._binance?.websockets?.terminate) {
 				this._binance.websockets.terminate();
@@ -109,6 +143,7 @@ class BinanceProvider extends Provider {
 			this.setError(error);
 		} finally {
 			this._binance = null;
+			this._reconnectDelay = 5000;
 			await super.disconnect();
 		}
 	}

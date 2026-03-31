@@ -2,7 +2,10 @@ const ControllerInterface = require('../controller/ControllerInterface');
 const MultiMarketStore = require('../market/MultiMarketStore');
 const SignalEngine = require('../signal/SignalEngine');
 const StrategyEngine = require('../strategy/StrategyEngine');
+const ExecutionEngine = require('../execution/ExecutionEngine');
 const { createProviders } = require('../provider');
+const log = require('../shared/logger');
+const persistence = require('../shared/persistence');
 
 class CapitalRuntime {
 	constructor({
@@ -15,6 +18,14 @@ class CapitalRuntime {
 		this.marketStore = new MultiMarketStore();
 		this.signalEngine = new SignalEngine();
 		this.strategyEngine = new StrategyEngine();
+		this.executionEngine = new ExecutionEngine({
+			mode: process.env.CAPITAL_EXECUTION_MODE || 'paper',
+			persistence,
+			marketStore: this.marketStore,
+			maxPositionSize: Number(process.env.CAPITAL_MAX_POSITION_SIZE || 0.1),
+			defaultFeeRate: Number(process.env.CAPITAL_FEE_RATE || 0.001),
+			slippageBps: Number(process.env.CAPITAL_SLIPPAGE_BPS || 5)
+		});
 		this.providers = Array.isArray(providers) ? providers : createProviders();
 		this.controller = ControllerInterface({
 			tickRate,
@@ -28,6 +39,8 @@ class CapitalRuntime {
 		this.running = false;
 		this.startedAt = null;
 		this.lastAutoRestrategySignalAt = null;
+		this._tickCountBySymbol = new Map();
+		this._reconnectTimers = new Map();
 
 		this.telemetry = {
 			ticksReceived: 0,
@@ -110,6 +123,26 @@ class CapitalRuntime {
 						this.telemetry.ticksProcessed += 1;
 						this.telemetry.lastTickAt = ingested.tick.timestamp;
 						this._pushFeed('tick', ingested.tick);
+
+						// Persist every 10th tick per symbol
+						const sym = ingested.tick.symbol;
+						const count = (this._tickCountBySymbol.get(sym) || 0) + 1;
+						this._tickCountBySymbol.set(sym, count);
+						if (count % 10 === 0) {
+							try {
+								persistence.saveTick({
+									symbol: ingested.tick.symbol,
+									bid: ingested.tick.bid,
+									ask: ingested.tick.ask,
+									price: ingested.tick.price,
+									volume: ingested.tick.volume,
+									provider: ingested.tick.providerId,
+									venue: ingested.tick.venue,
+									timestamp: ingested.tick.timestamp
+								});
+							} catch (_) { /* non-critical */ }
+						}
+
 						return ingested;
 					}
 				},
@@ -125,7 +158,10 @@ class CapitalRuntime {
 						if (signals.length > 0) {
 							this.telemetry.signalsGenerated += signals.length;
 							this.telemetry.lastSignalAt = signals[0].timestamp;
-							signals.forEach((signal) => this._pushFeed('signal', signal));
+							signals.forEach((signal) => {
+								this._pushFeed('signal', signal);
+								try { persistence.saveSignal(signal); } catch (_) { /* non-critical */ }
+							});
 							const highSignal = signals.find((signal) => signal.severity === 'high');
 							if (highSignal) {
 								this.lastAutoRestrategySignalAt = highSignal.timestamp;
@@ -145,9 +181,71 @@ class CapitalRuntime {
 						if (decisions.length > 0) {
 							this.telemetry.decisionsGenerated += decisions.length;
 							this.telemetry.lastDecisionAt = decisions[0].timestamp;
-							decisions.forEach((decision) => this._pushFeed('strategy-decision', decision));
+							decisions.forEach((decision) => {
+								this._pushFeed('strategy-decision', decision);
+								try {
+									persistence.saveDecision({
+										id: decision.id,
+										strategyId: decision.strategyId,
+										signal: { id: decision.signalId, symbol: decision.symbol },
+										action: decision.action,
+										intent: decision.intent,
+										reason: decision.reason,
+										timestamp: decision.timestamp
+									});
+								} catch (_) { /* non-critical */ }
+							});
 						}
 						return { decisions };
+					}
+				},
+				{
+					string: 'execution.run',
+					parameters: { input: { 'strategy.evaluate': true } },
+					protocol: async ({ dependencies }) => {
+						const strategyResult = dependencies['strategy.evaluate'] || { decisions: [] };
+						const trades = [];
+						for (const decision of strategyResult.decisions || []) {
+							try {
+								const trade = await this.executionEngine.execute(decision);
+								if (trade) {
+									trades.push(trade);
+									this._pushFeed('trade', trade);
+								}
+							} catch (err) {
+								log.warn('Execution', `execution error for decision ${decision.id}: ${err.message}`);
+							}
+						}
+
+						// Check stop-loss / take-profit on every tick
+						try {
+							const stopActions = this.executionEngine.checkStopsTakeProfits();
+							for (const action of stopActions) {
+								const stopDecision = {
+									id: `risk_${action.action}_${action.symbol}_${Date.now()}`,
+									strategyId: 'risk-manager',
+									symbol: action.symbol,
+									action: 'sell',
+									intent: action.action,
+									reason: action.reason,
+									assetClass: 'crypto',
+									timestamp: Date.now()
+								};
+								try {
+									const trade = await this.executionEngine.execute(stopDecision);
+									if (trade) {
+										trades.push(trade);
+										this._pushFeed('trade', trade);
+										this._pushFeed('risk-action', { ...action, tradeId: trade.id });
+										log.info('RiskManager', `${action.action} executed for ${action.symbol}: ${action.reason}`);
+									}
+								} catch (err) {
+									log.warn('RiskManager', `failed to execute ${action.action} for ${action.symbol}: ${err.message}`);
+								}
+							}
+						} catch (_) { /* risk check non-critical */ }
+
+						return { trades };
 					}
 				}
 			]
@@ -175,13 +273,40 @@ class CapitalRuntime {
 				if (decisions.length > 0) {
 					this.telemetry.decisionsGenerated += decisions.length;
 					this.telemetry.lastDecisionAt = decisions[0].timestamp;
-					decisions.forEach((decision) => this._pushFeed('restrategy-decision', decision));
+					decisions.forEach((decision) => {
+						this._pushFeed('restrategy-decision', decision);
+						try {
+							persistence.saveDecision({
+								id: decision.id,
+								strategyId: decision.strategyId,
+								signal: { id: decision.signalId, symbol: decision.symbol },
+								action: decision.action,
+								intent: decision.intent,
+								reason: decision.reason,
+								timestamp: decision.timestamp
+							});
+						} catch (_) { /* non-critical */ }
+					});
+				}
+				// Execute decisions through the execution engine
+				const trades = [];
+				for (const decision of decisions) {
+					try {
+						const trade = await this.executionEngine.execute(decision);
+						if (trade) {
+							trades.push(trade);
+							this._pushFeed('trade', trade);
+						}
+					} catch (err) {
+						log.warn('Execution', `restrategy execution error for ${decision.id}: ${err.message}`);
+					}
 				}
 				return {
 					reason: params.reason,
 					source: params.source,
 					decisionCount: decisions.length,
-					decisions
+					decisions,
+					trades
 				};
 			}
 		};
@@ -210,11 +335,35 @@ class CapitalRuntime {
 
 		const onStatus = (status) => {
 			this._pushFeed('provider-status', status);
+			// Auto-reconnect on disconnect
+			if (!status.connected && this.running && status.lastError) {
+				this._scheduleReconnect(provider);
+			}
 		};
 
 		provider.on('tick', onTick);
 		provider.on('status', onStatus);
 		this.providerListeners.set(provider.id, { onTick, onStatus });
+	}
+
+	_scheduleReconnect(provider, delayMs = 5000) {
+		if (this._reconnectTimers.has(provider.id)) {
+			return;
+		}
+		log.warn('Runtime', `scheduling reconnect for ${provider.id} in ${delayMs}ms`);
+		const timer = setTimeout(async () => {
+			this._reconnectTimers.delete(provider.id);
+			if (!this.running) return;
+			try {
+				await provider.connect();
+				log.info('Runtime', `reconnected provider ${provider.id}`);
+			} catch (error) {
+				log.error('Runtime', `reconnect failed for ${provider.id}`, error.message);
+				this._pushFeed('provider-error', { providerId: provider.id, message: error.message });
+				this._scheduleReconnect(provider, Math.min(delayMs * 2, 60000));
+			}
+		}, delayMs);
+		this._reconnectTimers.set(provider.id, timer);
 	}
 
 	_detachProvider(provider) {
@@ -239,6 +388,7 @@ class CapitalRuntime {
 		this.running = true;
 		this.startedAt = Date.now();
 		this.controller.start();
+		log.info('Runtime', `starting with ${this.providers.length} providers`);
 		this._pushFeed('runtime', { message: 'Capital runtime starting', providerCount: this.providers.length });
 
 		for (const provider of this.providers) {
@@ -246,11 +396,14 @@ class CapitalRuntime {
 			try {
 				// eslint-disable-next-line no-await-in-loop
 				await provider.connect();
+				log.info('Runtime', `provider ${provider.id} connected`);
 			} catch (error) {
+				log.error('Runtime', `provider ${provider.id} failed to connect`, error.message);
 				this._pushFeed('provider-error', {
 					providerId: provider.id,
 					message: error.message
 				});
+				this._scheduleReconnect(provider);
 			}
 		}
 	}
@@ -261,6 +414,11 @@ class CapitalRuntime {
 		}
 		this.running = false;
 		this.controller.stop();
+		// Clear all pending reconnect timers
+		for (const timer of this._reconnectTimers.values()) {
+			clearTimeout(timer);
+		}
+		this._reconnectTimers.clear();
 		for (const provider of this.providers) {
 			this._detachProvider(provider);
 			try {
@@ -273,6 +431,7 @@ class CapitalRuntime {
 				});
 			}
 		}
+		log.info('Runtime', 'stopped');
 		this._pushFeed('runtime', { message: 'Capital runtime stopped' });
 	}
 
@@ -325,6 +484,8 @@ class CapitalRuntime {
 		const marketSummary = this.marketStore.getSummary();
 		const signalSummary = this.signalEngine.getSummary();
 		const strategySummary = this.strategyEngine.getSummary();
+		const executionStats = this.executionEngine.getStats();
+		const wallet = persistence.getWallet();
 
 		return {
 			running: this.running,
@@ -332,7 +493,8 @@ class CapitalRuntime {
 			now: Date.now(),
 			telemetry: {
 				...this.telemetry,
-				uptimeMs: this.startedAt ? Date.now() - this.startedAt : 0
+				uptimeMs: this.startedAt ? Date.now() - this.startedAt : 0,
+				execution: executionStats
 			},
 			controller: this.getControllerState(),
 			providers: this.getProviderStatuses(),
@@ -344,6 +506,8 @@ class CapitalRuntime {
 			strategySummary,
 			positions: this.strategyEngine.getPositions(),
 			decisions: this.strategyEngine.listDecisions({ limit: decisionLimit }),
+			wallet,
+			execution: executionStats,
 			feed: this.getFeed({ limit: feedLimit })
 		};
 	}

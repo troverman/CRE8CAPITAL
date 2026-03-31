@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { getSnapshotUrl, getStreamUrl, restrategyUrl } from '../lib/capitalApi';
+import { getSnapshotUrl, getStreamUrl, getWsUrl, restrategyUrl } from '../lib/capitalApi';
 import { buildLocalFallbackSnapshot } from '../lib/localSnapshot';
 import { useCapitalStore } from '../store/capitalStore';
 
@@ -139,6 +139,7 @@ export default function useCapitalLive() {
   const [actionMessage, setActionMessage] = useState('');
 
   const requestRef = useRef({ id: 0, controller: null });
+  const wsRef = useRef(null);
   const streamRef = useRef(null);
   const pollTimerRef = useRef(null);
   const mountedRef = useRef(false);
@@ -147,6 +148,13 @@ export default function useCapitalLive() {
     if (pollTimerRef.current) {
       clearInterval(pollTimerRef.current);
       pollTimerRef.current = null;
+    }
+  }, []);
+
+  const closeWs = useCallback(() => {
+    if (wsRef.current) {
+      wsRef.current.close();
+      wsRef.current = null;
     }
   }, []);
 
@@ -204,47 +212,111 @@ export default function useCapitalLive() {
     }, 3000);
   }, [loadSnapshot, stopPolling]);
 
-  useEffect(() => {
-    mountedRef.current = true;
-    loadSnapshot();
+  const setupSSE = useCallback(() => {
+    if (typeof window === 'undefined' || !('EventSource' in window)) {
+      startPolling();
+      return;
+    }
 
-    if (typeof window !== 'undefined' && 'EventSource' in window) {
-      const eventSource = new EventSource(getStreamUrl(liveLimits));
-      streamRef.current = eventSource;
-      setTransport('stream');
+    const eventSource = new EventSource(getStreamUrl(liveLimits));
+    streamRef.current = eventSource;
+    setTransport('stream');
 
-      const onSnapshot = (event) => {
-        const payload = parseEventData(event.data);
-        if (!payload || !mountedRef.current) return;
-        setSnapshot((previous) => mergeSnapshotWithHistory(previous, payload));
+    const onSnapshot = (event) => {
+      const payload = parseEventData(event.data);
+      if (!payload || !mountedRef.current) return;
+      setSnapshot((previous) => mergeSnapshotWithHistory(previous, payload));
+      setConnected(true);
+      setLocalFallback(false);
+      setError('');
+      setLastSyncedAt(Date.now());
+      setLoading(false);
+    };
+
+    eventSource.addEventListener('snapshot', onSnapshot);
+    eventSource.onerror = () => {
+      if (!mountedRef.current) return;
+      closeStream();
+      setConnected(false);
+      setError('Live stream disconnected. Falling back to polling.');
+      startPolling();
+    };
+  }, [closeStream, startPolling]);
+
+  const setupWebSocket = useCallback(() => {
+    if (typeof window === 'undefined' || !('WebSocket' in window)) {
+      setupSSE();
+      return;
+    }
+
+    try {
+      const ws = new WebSocket(getWsUrl());
+      wsRef.current = ws;
+      setTransport('websocket');
+      let didFallback = false;
+
+      const fallbackToSSE = (reason) => {
+        if (didFallback || !mountedRef.current) return;
+        didFallback = true;
+        wsRef.current = null;
+        setError(reason);
+        setupSSE();
+      };
+
+      ws.onopen = () => {
+        if (!mountedRef.current) return;
         setConnected(true);
-        setLocalFallback(false);
         setError('');
-        setLastSyncedAt(Date.now());
         setLoading(false);
       };
 
-      eventSource.addEventListener('snapshot', onSnapshot);
-      eventSource.onerror = () => {
+      ws.onmessage = (event) => {
         if (!mountedRef.current) return;
-        closeStream();
-        setConnected(false);
-        setError('Live stream disconnected. Falling back to polling.');
-        startPolling();
+        const msg = parseEventData(event.data);
+        if (!msg) return;
+
+        if (msg.type === 'snapshot' && msg.data) {
+          setSnapshot((previous) => mergeSnapshotWithHistory(previous, msg.data));
+          setConnected(true);
+          setLocalFallback(false);
+          setError('');
+          setLastSyncedAt(Date.now());
+          setLoading(false);
+        } else if (msg.type === 'trade' && msg.data) {
+          setSnapshot((previous) => ({
+            ...previous,
+            feed: [{ id: msg.data.id, type: 'trade', timestamp: msg.data.timestamp, payload: msg.data }, ...(previous.feed || [])].slice(0, FEED_HISTORY_MAX)
+          }));
+        }
       };
-    } else {
-      startPolling();
+
+      ws.onerror = () => {
+        fallbackToSSE('WebSocket failed. Falling back to SSE.');
+      };
+
+      ws.onclose = () => {
+        fallbackToSSE('WebSocket closed. Falling back to SSE.');
+      };
+    } catch (_) {
+      setupSSE();
     }
+  }, [closeWs, setupSSE]);
+
+  useEffect(() => {
+    mountedRef.current = true;
+    loadSnapshot();
+    setupWebSocket();
 
     return () => {
       mountedRef.current = false;
+      closeWs();
       closeStream();
       stopPolling();
       if (requestRef.current.controller) {
         requestRef.current.controller.abort();
       }
     };
-  }, [closeStream, loadSnapshot, startPolling, stopPolling]);
+  }, [closeWs, closeStream, loadSnapshot, setupWebSocket, stopPolling]);
 
   const triggerRestrategy = useCallback(
     async (reason) => {

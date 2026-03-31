@@ -1,4 +1,5 @@
 const EventEmitter = require('node:events');
+const log = require('../shared/logger');
 
 class Provider extends EventEmitter {
 	constructor({
@@ -23,6 +24,14 @@ class Provider extends EventEmitter {
 			providerName: this.name,
 			assetClass: this.assetClass,
 			kind: this.kind,
+			symbol: tick.symbol || null,
+			bid: Number.isFinite(tick.bid) ? tick.bid : null,
+			ask: Number.isFinite(tick.ask) ? tick.ask : null,
+			price: Number.isFinite(tick.price) ? tick.price : null,
+			volume: Number.isFinite(tick.volume) ? tick.volume : null,
+			timestamp: tick.timestamp || Date.now(),
+			provider: this.id,
+			venue: tick.venue || 'UNKNOWN',
 			...tick
 		};
 		this.lastHeartbeat = Date.now();
@@ -36,6 +45,9 @@ class Provider extends EventEmitter {
 
 	setError(error) {
 		this.lastError = error ? String(error.message || error) : null;
+		if (error) {
+			log.error('Provider', `${this.id}: ${this.lastError}`);
+		}
 		this.emit('status', this.getStatus());
 	}
 

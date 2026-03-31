@@ -1,3 +1,5 @@
+const log = require('../shared/logger');
+
 const createEventBus = () => {
 	const subscribers = {};
 
@@ -65,7 +67,7 @@ const ControllerInterface = (initState = {}) => {
 						}
 					}
 				} catch (error) {
-					console.error(`[Controller] event trigger \"${trigger.string}\" failed:`, error.message);
+					log.error('Controller', `event trigger "${trigger.string}" failed`, error.message);
 				}
 			});
 		},
@@ -204,7 +206,7 @@ const ControllerInterface = (initState = {}) => {
 							});
 						}
 					} catch (error) {
-						console.error(`[Controller] tick trigger \"${triggerName}\" failed:`, error.message);
+						log.error('Controller', `tick trigger "${triggerName}" failed`, error.message);
 					}
 				}
 

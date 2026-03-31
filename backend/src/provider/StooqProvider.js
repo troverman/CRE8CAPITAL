@@ -1,4 +1,5 @@
 const Provider = require('./Provider');
+const log = require('../shared/logger');
 
 const DEFAULT_STOOQ_SYMBOLS = ['aapl.us', 'msft.us', 'nvda.us', 'spy.us'];
 
@@ -74,11 +75,18 @@ class StooqProvider extends Provider {
 	async connect() {
 		if (this._timer) return;
 		this.setError(null);
-		await this._poll();
+		log.info('Stooq', `connecting for ${this.symbols.length} symbols`);
+		try {
+			await this._poll();
+		} catch (error) {
+			this.setError(error);
+			return;
+		}
 		this._timer = setInterval(() => {
 			this._poll().catch((error) => this.setError(error));
 		}, this.intervalMs);
 		this.setConnected(true);
+		log.info('Stooq', 'connected');
 	}
 
 	async disconnect() {

@@ -9,7 +9,9 @@
     "runtime": "node src/Init.js"
   },
   "dependencies": {
+    "better-sqlite3": "^11.10.0",
     "ccxt": "^4.0.0",
-    "node-binance-api": "^1.0.0"
+    "node-binance-api": "^1.0.0",
+    "ws": "^8.20.0"
   }
 }
