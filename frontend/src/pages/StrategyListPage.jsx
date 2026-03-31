@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import GlowCard from '../components/GlowCard';
 import { fmtInt, fmtNum, fmtTime } from '../lib/format';
 import { buildStrategyRows } from '../lib/strategyView';
-import { Link } from '../lib/router';
+import { Link, navigate } from '../lib/router';
 import { useStrategyToggleStore } from '../store/strategyToggleStore';
 
 const resolveEnabled = (strategy, enabledByKey) => {
@@ -46,6 +46,29 @@ export default function StrategyListPage({ snapshot }) {
     });
   }, [hydratedStrategies, search]);
 
+  const openStrategy = (strategy) => {
+    const strategyTarget = strategy?.id || strategy?.name || strategy?.key;
+    navigate(`/strategy/${encodeURIComponent(strategyTarget)}`);
+  };
+
+  const shouldSkipCardNavigate = (event) => {
+    const target = event?.target;
+    if (!(target instanceof HTMLElement)) return false;
+    return Boolean(target.closest('a,button,input,select,textarea,label'));
+  };
+
+  const onCardClick = (event, strategy) => {
+    if (shouldSkipCardNavigate(event)) return;
+    openStrategy(strategy);
+  };
+
+  const onCardKeyDown = (event, strategy) => {
+    if (event.key !== 'Enter' && event.key !== ' ') return;
+    if (shouldSkipCardNavigate(event)) return;
+    event.preventDefault();
+    openStrategy(strategy);
+  };
+
   return (
     <section className="page-grid">
       <GlowCard className="list-header-card">
@@ -53,7 +76,7 @@ export default function StrategyListPage({ snapshot }) {
           <h1>Strategies</h1>
           <div className="section-actions">
             <span>{filtered.length} shown</span>
-            <Link to="/strategy" className="btn primary">
+            <Link to="/strategy/create" className="btn primary">
               Create Strategy
             </Link>
             <Link to="/strategy" className="btn secondary">
@@ -73,7 +96,14 @@ export default function StrategyListPage({ snapshot }) {
 
       <div className="strategy-grid">
         {filtered.map((strategy) => (
-          <GlowCard key={strategy.key} className="strategy-card">
+          <GlowCard
+            key={strategy.key}
+            className="strategy-card strategy-card-clickable"
+            role="link"
+            tabIndex={0}
+            onClick={(event) => onCardClick(event, strategy)}
+            onKeyDown={(event) => onCardKeyDown(event, strategy)}
+          >
             <div className="strategy-head">
               <strong>
                 <Link to={`/strategy/${encodeURIComponent(strategy.id || strategy.name || strategy.key)}`} className="inline-link strategy-title-link">

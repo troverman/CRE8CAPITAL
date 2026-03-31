@@ -8,6 +8,7 @@ import { usePathname } from './lib/router';
 import AssetDetailPage from './pages/AssetDetailPage';
 import AssetListPage from './pages/AssetListPage';
 import AccountPage from './pages/AccountPage';
+import BacktestPage from './pages/BacktestPage';
 import DerivativesPage from './pages/DerivativesPage';
 import ExchangePage from './pages/ExchangePage';
 import HomePage from './pages/HomePage';
@@ -24,8 +25,10 @@ import ProbabilityLabPage from './pages/ProbabilityLabPage';
 import ProviderDetailPage from './pages/ProviderDetailPage';
 import ProviderListPage from './pages/ProviderListPage';
 import StrategyLabPage from './pages/StrategyLabPage';
+import StrategyCreatePage from './pages/StrategyCreatePage';
 import StrategyDetailPage from './pages/StrategyDetailPage';
 import StrategyListPage from './pages/StrategyListPage';
+import TotalMarketLabPage from './pages/TotalMarketLabPage';
 import WalletPage from './pages/WalletPage';
 import WalletDetailPage from './pages/WalletDetailPage';
 
@@ -36,16 +39,19 @@ const parseRoute = (pathname) => {
   if (routePath === '/') return { name: 'home' };
   if (routePath === '/markets') return { name: 'markets' };
   if (routePath === '/assets') return { name: 'assets' };
+  if (routePath === '/backtest') return { name: 'backtest' };
   if (routePath === '/derivatives' || routePath === '/deriv') return { name: 'derivatives' };
   if (routePath === '/graph') return { name: 'graph' };
   if (routePath === '/knowledge') return { name: 'knowledge' };
   if (routePath === '/other') return { name: 'other' };
   if (routePath === '/exchange') return { name: 'exchange' };
+  if (routePath === '/total-market') return { name: 'total-market' };
   if (routePath === '/providers') return { name: 'providers' };
   if (routePath === '/signals') return { name: 'signals' };
   if (routePath === '/decisions') return { name: 'decisions' };
   if (routePath === '/probability') return { name: 'probability' };
   if (routePath === '/strategies') return { name: 'strategies' };
+  if (routePath === '/strategy/create') return { name: 'strategy-create' };
   if (routePath === '/strategy') return { name: 'strategy' };
   if (routePath === '/account' || routePath === '/settings') return { name: 'account' };
   if (routePath === '/wallet') return { name: 'wallet' };
@@ -94,7 +100,8 @@ const NotFoundPage = () => {
       <GlowCard className="detail-card">
         <h1>Route not found</h1>
         <p>
-          Try `/markets`, `/assets`, `/other`, `/exchange`, `/derivatives`, `/knowledge`, `/providers`, `/signals`, `/decisions`, `/probability`, `/strategies`, `/graph`, `/strategy`, `/account`,
+          Try `/markets`, `/assets`, `/other`, `/backtest`, `/exchange`, `/total-market`, `/derivatives`, `/knowledge`, `/providers`, `/signals`, `/decisions`, `/probability`, `/strategies`, `/graph`,
+          `/strategy`, `/strategy/create`, `/account`,
           `/wallet`,
           `/signal/:id`, `/decision/:id`, `/strategy/:id`, `/wallet/:id`, or `/provider/:id`.
         </p>
@@ -163,6 +170,8 @@ export default function App() {
 
       {route.name === 'asset' ? <AssetDetailPage assetId={route.id} markets={snapshot.markets} historyByMarket={historyByMarket} /> : null}
 
+      {route.name === 'backtest' ? <BacktestPage snapshot={snapshot} historyByMarket={historyByMarket} /> : null}
+
       {route.name === 'derivatives' ? <DerivativesPage snapshot={snapshot} /> : null}
 
       {route.name === 'knowledge' ? <KnowledgePage snapshot={snapshot} /> : null}
@@ -170,6 +179,8 @@ export default function App() {
       {route.name === 'other' ? <OtherPage snapshot={snapshot} /> : null}
 
       {route.name === 'exchange' ? <ExchangePage snapshot={snapshot} /> : null}
+
+      {route.name === 'total-market' ? <TotalMarketLabPage snapshot={snapshot} /> : null}
 
       {route.name === 'providers' ? <ProviderListPage snapshot={snapshot} /> : null}
 
@@ -186,6 +197,8 @@ export default function App() {
       {route.name === 'decision-detail' ? <DecisionDetailPage decisionId={route.id} snapshot={snapshot} /> : null}
 
       {route.name === 'strategies' ? <StrategyListPage snapshot={snapshot} /> : null}
+
+      {route.name === 'strategy-create' ? <StrategyCreatePage snapshot={snapshot} /> : null}
 
       {route.name === 'strategy-detail' ? <StrategyDetailPage strategyId={route.id} snapshot={snapshot} /> : null}
 

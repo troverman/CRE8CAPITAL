@@ -28,6 +28,20 @@ const buildOtherLinks = (snapshot) => {
       meta: `${fmtInt(providers.length)} provider routes planned`
     },
     {
+      id: 'total-market',
+      label: 'Total Market Lab',
+      to: '/total-market',
+      description: 'Experimental animated tensor view for total market drift, breadth, liquidity, and stress over time.',
+      meta: `${fmtInt(markets.length)} markets in tensor scope`
+    },
+    {
+      id: 'backtest',
+      label: 'Backtest',
+      to: '/backtest',
+      description: 'Dedicated backtest surface for strategy runs, equity curves, and full trade/signal replay.',
+      meta: `${fmtInt(strategyCount)} strategy templates`
+    },
+    {
       id: 'probability',
       label: 'PDF Lab',
       to: '/probability',

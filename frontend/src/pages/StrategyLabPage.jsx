@@ -141,7 +141,6 @@ export default function StrategyLabPage({ snapshot, historyByMarket }) {
     toggleRunning,
     updateInterval,
     changeSource,
-    changeStrategy,
     changeEnabledStrategies,
     toggleStrategyEnabled,
     enableAllStrategies,
@@ -598,7 +597,7 @@ export default function StrategyLabPage({ snapshot, historyByMarket }) {
           <div className="section-head">
             <h2>Control Deck</h2>
             <span>
-              {strategyLabel} | {fmtInt(enabledStrategyIds.length)} enabled
+              Multi strategy only | {fmtInt(enabledStrategyIds.length)} enabled
             </span>
           </div>
 
@@ -618,17 +617,6 @@ export default function StrategyLabPage({ snapshot, historyByMarket }) {
               <span>Scenario</span>
               <select value={scenarioId} onChange={(event) => changeScenario(event.target.value)} disabled={sourceId !== 'local-scenario'}>
                 {scenarioOptions.map((option) => (
-                  <option key={option.id} value={option.id}>
-                    {option.label}
-                  </option>
-                ))}
-              </select>
-            </label>
-
-            <label className="control-field">
-              <span>Strategy</span>
-              <select value={strategyId} onChange={(event) => changeStrategy(event.target.value)}>
-                {strategyOptions.map((option) => (
                   <option key={option.id} value={option.id}>
                     {option.label}
                   </option>

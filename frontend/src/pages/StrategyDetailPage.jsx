@@ -62,6 +62,28 @@ export default function StrategyDetailPage({ strategyId, snapshot }) {
     if (linkedSignals.length >= 14) break;
   }
 
+  const signalLinkRate = decisions.length > 0 ? (linkedSignals.length / decisions.length) * 100 : 0;
+  const runtimeFacts = [
+    {
+      label: 'Trigger Kind',
+      value: implementation.triggerKind
+    },
+    {
+      label: 'Runtime Path',
+      value: implementation.runtimePath,
+      mono: true
+    },
+    {
+      label: 'Source File',
+      value: implementation.sourceFile,
+      mono: true
+    },
+    {
+      label: 'Signal Link Rate',
+      value: `${fmtNum(signalLinkRate, 2)}%`
+    }
+  ];
+
   return (
     <section className="page-grid">
       <GlowCard className="detail-card">
@@ -75,6 +97,9 @@ export default function StrategyDetailPage({ strategyId, snapshot }) {
             <Link to="/strategies" className="inline-link">
               Back to strategies
             </Link>
+            <Link to="/strategy/create" className="inline-link">
+              Create strategy
+            </Link>
             <Link to="/strategy" className="inline-link">
               Open strategy lab
             </Link>
@@ -87,14 +112,35 @@ export default function StrategyDetailPage({ strategyId, snapshot }) {
       </GlowCard>
 
       <GlowCard className="panel-card strategy-function-card">
-        <div className="section-head">
-          <h2>Function Runtime Detail</h2>
-          <span>{implementation.runtimePath}</span>
+        <div className="strategy-runtime-head">
+          <div>
+            <div className="section-head">
+              <h2>Function Runtime Detail</h2>
+              <span>{implementation.name}</span>
+            </div>
+            <p className="socket-status-copy">
+              {implementation.summary} | trigger {implementation.triggerKind} | source {implementation.sourceFile}
+            </p>
+          </div>
+          <div className="strategy-runtime-badges">
+            <span className="status-pill">{implementation.triggerKind}</span>
+            <span className={strategyEnabled ? 'status-pill online' : 'status-pill'}>{strategyEnabled ? 'enabled' : 'disabled'}</span>
+          </div>
         </div>
+
+        <div className="strategy-runtime-facts">
+          {runtimeFacts.map((fact) => (
+            <article key={`runtime-fact:${fact.label}`} className="strategy-runtime-fact">
+              <span className="strategy-runtime-fact-label">{fact.label}</span>
+              <strong className={fact.mono ? 'strategy-runtime-fact-value mono' : 'strategy-runtime-fact-value'}>{fact.value}</strong>
+            </article>
+          ))}
+        </div>
+
         <p className="socket-status-copy">
-          {implementation.summary} | trigger {implementation.triggerKind} | source {implementation.sourceFile}
+          Runtime snapshot shows how this strategy scores, what it depends on, and how it transitions from signals/price into actions.
         </p>
-        <div className="strategy-function-grid">
+        <div className="strategy-function-grid strategy-runtime-metric-grid">
           <article>
             <span>Score Model</span>
             <strong>{implementation.scoreModel}</strong>
@@ -112,7 +158,7 @@ export default function StrategyDetailPage({ strategyId, snapshot }) {
             <strong>{fmtInt(implementation.prerequisites.length)}</strong>
           </article>
         </div>
-        <div className="two-col">
+        <div className="two-col strategy-detail-two-col">
           <GlowCard className="panel-card">
             <div className="section-head">
               <h2>Inputs</h2>
@@ -136,6 +182,22 @@ export default function StrategyDetailPage({ strategyId, snapshot }) {
             </ul>
           </GlowCard>
         </div>
+
+        <GlowCard className="panel-card">
+          <div className="section-head">
+            <h2>Prerequisites</h2>
+            <span>{fmtInt(implementation.prerequisites.length)}</span>
+          </div>
+          <div className="strategy-prereq-grid">
+            {implementation.prerequisites.map((item, index) => (
+              <article key={`strategy-prereq:${implementation.id}:${index}`} className="strategy-prereq-card">
+                <strong>{fmtInt(index + 1)}</strong>
+                <p>{item}</p>
+              </article>
+            ))}
+          </div>
+        </GlowCard>
+
         <GlowCard className="panel-card">
           <div className="section-head">
             <h2>Pseudocode</h2>
@@ -166,7 +228,7 @@ export default function StrategyDetailPage({ strategyId, snapshot }) {
         </GlowCard>
       </div>
 
-      <div className="two-col">
+      <div className="two-col strategy-detail-two-col">
         <GlowCard className="panel-card">
           <div className="section-head">
             <h2>Decisions</h2>

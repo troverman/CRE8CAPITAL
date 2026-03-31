@@ -12,10 +12,10 @@ import { useStrategyLabStore } from '../store/strategyLabStore';
 import { useStrategyToggleStore } from '../store/strategyToggleStore';
 
 const WALLET_STORAGE_KEY = 'cre8capital.wallet-lab.v1';
-const PASSPORT_STORAGE_KEY = 'cre8capital.account-passport.v1';
 
 const MAX_EQUITY_POINTS = 420;
 const MAX_TRADES = 180;
+const MAX_PENDING_ORDERS = 180;
 const DEFAULT_START_CASH = 100000;
 const RUNTIME_SYNC_TABS = [
   { id: 'summary', label: 'Summary' },
@@ -46,16 +46,29 @@ const trimHead = (list, maxLength) => {
 
 const randBetween = (min, max) => min + Math.random() * (max - min);
 
+const sideLabel = (action) => (action === 'reduce' ? 'sell' : 'buy');
+
+const shouldLimitOrderFill = (action, limitPrice, livePrice) => {
+  const safeLimit = toNum(limitPrice, 0);
+  const safeLive = toNum(livePrice, 0);
+  if (safeLimit <= 0 || safeLive <= 0) return false;
+  if (action === 'reduce') return safeLive >= safeLimit;
+  return safeLive <= safeLimit;
+};
+
 const createDefaultWalletLab = () => ({
   wallet: createWalletState(DEFAULT_START_CASH),
   assetHoldings: {},
   tradeLog: [],
+  pendingOrders: [],
   equityHistory: [],
   selectedMarketKey: '',
+  orderSide: 'accumulate',
+  limitPrice: '',
   orderUnits: 1,
   maxAbsUnits: 12,
   slippageBps: 1.2,
-  note: 'manual wallet test'
+  note: 'position creator'
 });
 
 const sanitizeWalletState = (raw) => {
@@ -98,6 +111,26 @@ const sanitizeWalletState = (raw) => {
         .slice(0, MAX_TRADES)
     : [];
 
+  const pendingOrders = Array.isArray(raw.pendingOrders)
+    ? raw.pendingOrders
+        .map((order) => ({
+          id: String(order?.id || `pending:${Date.now()}`),
+          createdAt: Math.max(0, Math.round(toNum(order?.createdAt, Date.now()))),
+          marketKey: String(order?.marketKey || ''),
+          symbol: String(order?.symbol || '').toUpperCase(),
+          assetClass: String(order?.assetClass || 'unknown').toLowerCase(),
+          action: order?.action === 'reduce' ? 'reduce' : 'accumulate',
+          limitPrice: Math.max(0, toNum(order?.limitPrice, 0)),
+          requestedUnits: clamp(Math.round(toNum(order?.requestedUnits, 1)), 1, 25),
+          remainingUnits: clamp(Math.round(toNum(order?.remainingUnits, toNum(order?.requestedUnits, 1))), 1, 25),
+          maxAbsUnits: clamp(Math.round(toNum(order?.maxAbsUnits, base.maxAbsUnits)), 1, 80),
+          slippageBps: clamp(toNum(order?.slippageBps, base.slippageBps), 0, 50),
+          note: String(order?.note || '')
+        }))
+        .filter((order) => order.marketKey && order.limitPrice > 0 && order.remainingUnits > 0)
+        .slice(0, MAX_PENDING_ORDERS)
+    : [];
+
   const assetHoldings = {};
   if (raw.assetHoldings && typeof raw.assetHoldings === 'object') {
     for (const [marketKey, holding] of Object.entries(raw.assetHoldings)) {
@@ -132,8 +165,11 @@ const sanitizeWalletState = (raw) => {
     wallet,
     assetHoldings,
     tradeLog,
+    pendingOrders,
     equityHistory,
     selectedMarketKey: String(raw.selectedMarketKey || ''),
+    orderSide: raw.orderSide === 'reduce' ? 'reduce' : 'accumulate',
+    limitPrice: raw.limitPrice === '' ? '' : String(raw.limitPrice ?? ''),
     orderUnits: clamp(raw.orderUnits, 1, 25),
     maxAbsUnits: clamp(raw.maxAbsUnits, 1, 80),
     slippageBps: clamp(raw.slippageBps, 0, 50),
@@ -203,36 +239,6 @@ const applyAssetTrade = ({ holdings, trade, market, fallbackPrice, timestamp }) 
     updatedAt: Math.max(0, Math.round(toNum(timestamp, Date.now())))
   };
   return next;
-};
-
-const readPassportSummary = () => {
-  const base = {
-    linkedProviders: 0,
-    validatedProviders: 0,
-    liveReadyProviders: 0,
-    externalActionsEnabled: false,
-    executionMode: 'paper',
-    profileName: 'CRE8 Operator'
-  };
-
-  try {
-    const raw = window.localStorage.getItem(PASSPORT_STORAGE_KEY);
-    if (!raw) return base;
-    const parsed = JSON.parse(raw);
-    const providers = Array.isArray(parsed?.providers) ? parsed.providers : [];
-    const validated = providers.filter((provider) => provider?.status === 'validated').length;
-    const liveReady = providers.filter((provider) => provider?.status === 'validated' && provider?.testnet === false && provider?.permissions?.trade).length;
-    return {
-      linkedProviders: providers.length,
-      validatedProviders: validated,
-      liveReadyProviders: liveReady,
-      externalActionsEnabled: Boolean(parsed?.externalActionsEnabled),
-      executionMode: String(parsed?.executionMode || 'paper'),
-      profileName: String(parsed?.profileName || 'CRE8 Operator')
-    };
-  } catch (error) {
-    return base;
-  }
 };
 
 export default function WalletPage({ snapshot }) {
@@ -313,7 +319,6 @@ export default function WalletPage({ snapshot }) {
   const runtimeUnrealizedPnl = toNum(activeRuntimeWallet?.unrealizedPnl, 0);
 
   const [walletLab, setWalletLab] = useState(createDefaultWalletLab);
-  const [passportSummary, setPassportSummary] = useState(() => readPassportSummary());
   const [message, setMessage] = useState('');
   const [paperName, setPaperName] = useState('');
   const [paperCash, setPaperCash] = useState(100000);
@@ -346,10 +351,6 @@ export default function WalletPage({ snapshot }) {
   }, [walletLab]);
 
   useEffect(() => {
-    setPassportSummary(readPassportSummary());
-  }, []);
-
-  useEffect(() => {
     if (!rankedMarkets.length) return;
     const selectedExists = rankedMarkets.some((market) => market.key === walletLab.selectedMarketKey);
     if (selectedExists) return;
@@ -375,6 +376,18 @@ export default function WalletPage({ snapshot }) {
   const marketPrice = toNum(selectedMarket?.referencePrice, 0);
   const marketSpread = Math.max(0, toNum(selectedMarket?.spreadBps, 0));
   const marketVolume = Math.max(0, toNum(selectedMarket?.totalVolume, 0));
+
+  useEffect(() => {
+    if (!selectedMarket || marketPrice <= 0) return;
+    setWalletLab((previous) => {
+      const current = String(previous.limitPrice ?? '').trim();
+      if (current.length > 0) return previous;
+      return {
+        ...previous,
+        limitPrice: String(Number(marketPrice.toFixed(4)))
+      };
+    });
+  }, [marketPrice, selectedMarket]);
 
   useEffect(() => {
     if (!selectedMarket || marketPrice <= 0) return;
@@ -467,92 +480,161 @@ export default function WalletPage({ snapshot }) {
     setMessage('Paper account added.');
   };
 
-  const executeManual = useCallback(
-    (action) => {
-      if (!selectedMarket || marketPrice <= 0) {
-        setMessage('Select a valid market before submitting manual wallet actions.');
-        return;
-      }
+  const fillPositionOrder = useCallback(({ wallet, assetHoldings, order, market, livePrice, liveSpread, liveVolume, timestamp }) => {
+    const requestedUnits = clamp(Math.round(toNum(order?.remainingUnits, order?.requestedUnits)), 1, 25);
+    const maxAbsUnits = clamp(Math.round(toNum(order?.maxAbsUnits, 12)), 1, 80);
+    const slippageBps = clamp(toNum(order?.slippageBps, 1.2), 0, 50);
+    const point = {
+      price: livePrice,
+      spread: liveSpread,
+      volume: liveVolume
+    };
+    const reason = String(order?.note || `position ${sideLabel(order?.action)}`).slice(0, 140);
 
-      const now = Date.now();
-      const point = {
-        price: marketPrice,
-        spread: marketSpread,
-        volume: marketVolume
+    let nextWallet = wallet;
+    let nextAssetHoldings = { ...(assetHoldings || {}) };
+    const trades = [];
+
+    for (let index = 0; index < requestedUnits; index += 1) {
+      const execution = executeWalletAction({
+        wallet: nextWallet,
+        action: order?.action === 'reduce' ? 'reduce' : 'accumulate',
+        point,
+        timestamp: timestamp + index,
+        reason,
+        score: 0,
+        maxAbsUnits,
+        cooldownMs: 0,
+        slippageBps
+      });
+      nextWallet = execution.wallet;
+      if (!execution.trade) continue;
+      const trade = {
+        ...execution.trade,
+        marketKey: String(market?.key || order?.marketKey || ''),
+        symbol: String(market?.symbol || order?.symbol || market?.key || '').toUpperCase(),
+        assetClass: String(market?.assetClass || order?.assetClass || 'unknown').toLowerCase()
       };
+      trades.push(trade);
+      nextAssetHoldings = applyAssetTrade({
+        holdings: nextAssetHoldings,
+        trade,
+        market,
+        fallbackPrice: livePrice,
+        timestamp: timestamp + index
+      });
+    }
 
-      const requestedUnits = clamp(walletLab.orderUnits, 1, 25);
-      const maxAbsUnits = clamp(walletLab.maxAbsUnits, 1, 80);
-      const slippageBps = clamp(walletLab.slippageBps, 0, 50);
-      const reason = String(walletLab.note || `manual ${action}`).slice(0, 140);
+    const filledUnits = trades.reduce((sum, trade) => sum + Math.abs(toNum(trade.unitsDelta, 0)), 0);
+    const remainingUnits = Math.max(0, requestedUnits - Math.round(filledUnits));
 
-      let fills = 0;
-      setWalletLab((previous) => {
-        let wallet = previous.wallet;
-        const trades = [];
-        let assetHoldings = { ...(previous.assetHoldings || {}) };
+    return {
+      wallet: nextWallet,
+      assetHoldings: nextAssetHoldings,
+      trades,
+      remainingUnits
+    };
+  }, []);
 
-        for (let index = 0; index < requestedUnits; index += 1) {
-          const execution = executeWalletAction({
-            wallet,
-            action,
-            point,
-            timestamp: now + index,
-            reason,
-            score: 0,
-            maxAbsUnits,
-            cooldownMs: 0,
-            slippageBps
-          });
-          wallet = execution.wallet;
-          if (execution.trade) {
-            const trade = {
-              ...execution.trade,
-              marketKey: String(selectedMarket.key),
-              symbol: String(selectedMarket.symbol || selectedMarket.key).toUpperCase(),
-              assetClass: String(selectedMarket.assetClass || 'unknown').toLowerCase()
-            };
-            trades.push(trade);
-            assetHoldings = applyAssetTrade({
-              holdings: assetHoldings,
-              trade,
-              market: selectedMarket,
-              fallbackPrice: marketPrice,
-              timestamp: now + index
-            });
-          }
-        }
+  const handleCreatePosition = useCallback(() => {
+    if (!selectedMarket || marketPrice <= 0) {
+      setMessage('Select a valid market before creating a position order.');
+      return;
+    }
 
-        fills = trades.length;
-        const nextHistory = trimTail(
-          [
-            ...previous.equityHistory,
-            {
-              t: now,
-              equity: wallet.equity,
-              price: marketPrice
-            }
-          ],
-          MAX_EQUITY_POINTS
-        );
+    const action = walletLab.orderSide === 'reduce' ? 'reduce' : 'accumulate';
+    const limitPrice = Math.max(0, toNum(walletLab.limitPrice, 0));
+    if (limitPrice <= 0) {
+      setMessage('Set a valid limit price for the position order.');
+      return;
+    }
 
+    const now = Date.now();
+    const order = {
+      id: `pending:${selectedMarket.key}:${now}:${Math.floor(Math.random() * 100000)}`,
+      createdAt: now,
+      marketKey: String(selectedMarket.key),
+      symbol: String(selectedMarket.symbol || selectedMarket.key).toUpperCase(),
+      assetClass: String(selectedMarket.assetClass || 'unknown').toLowerCase(),
+      action,
+      limitPrice,
+      requestedUnits: clamp(Math.round(toNum(walletLab.orderUnits, 1)), 1, 25),
+      remainingUnits: clamp(Math.round(toNum(walletLab.orderUnits, 1)), 1, 25),
+      maxAbsUnits: clamp(Math.round(toNum(walletLab.maxAbsUnits, 12)), 1, 80),
+      slippageBps: clamp(toNum(walletLab.slippageBps, 1.2), 0, 50),
+      note: String(walletLab.note || `${sideLabel(action)} ${selectedMarket.symbol}`).slice(0, 140)
+    };
+
+    let immediateFills = 0;
+    let queuedUnits = order.remainingUnits;
+
+    setWalletLab((previous) => {
+      const shouldFillNow = shouldLimitOrderFill(order.action, order.limitPrice, marketPrice);
+      if (!shouldFillNow) {
         return {
           ...previous,
-          wallet,
-          assetHoldings,
-          tradeLog: trimHead([...trades.reverse(), ...previous.tradeLog], MAX_TRADES),
-          equityHistory: nextHistory
+          pendingOrders: trimHead([order, ...(previous.pendingOrders || [])], MAX_PENDING_ORDERS)
         };
+      }
+
+      const fillResult = fillPositionOrder({
+        wallet: previous.wallet,
+        assetHoldings: previous.assetHoldings || {},
+        order,
+        market: selectedMarket,
+        livePrice: marketPrice,
+        liveSpread: marketSpread,
+        liveVolume: marketVolume,
+        timestamp: now
       });
 
-      setMessage(
-        fills > 0
-          ? `${action === 'accumulate' ? 'Buy' : 'Sell'} filled ${fmtInt(fills)} unit${fills === 1 ? '' : 's'} on ${selectedMarket.symbol}.`
-          : 'No fill produced. Max-units guard may be reached.'
+      immediateFills = fillResult.trades.length;
+      queuedUnits = fillResult.remainingUnits;
+
+      const nextPendingOrders =
+        fillResult.remainingUnits > 0
+          ? trimHead([{ ...order, remainingUnits: fillResult.remainingUnits }, ...(previous.pendingOrders || [])], MAX_PENDING_ORDERS)
+          : previous.pendingOrders || [];
+
+      const nextHistory = trimTail(
+        [
+          ...previous.equityHistory,
+          {
+            t: now,
+            equity: fillResult.wallet.equity,
+            price: marketPrice
+          }
+        ],
+        MAX_EQUITY_POINTS
       );
-    },
-    [marketPrice, marketSpread, marketVolume, selectedMarket, walletLab.maxAbsUnits, walletLab.note, walletLab.orderUnits, walletLab.slippageBps]
-  );
+
+      return {
+        ...previous,
+        wallet: fillResult.wallet,
+        assetHoldings: fillResult.assetHoldings,
+        pendingOrders: nextPendingOrders,
+        tradeLog: trimHead([...fillResult.trades.reverse(), ...previous.tradeLog], MAX_TRADES),
+        equityHistory: nextHistory
+      };
+    });
+
+    if (immediateFills > 0 && queuedUnits <= 0) {
+      setMessage(`${sideLabel(action)} filled ${fmtInt(immediateFills)} unit${immediateFills === 1 ? '' : 's'} on ${selectedMarket.symbol}.`);
+      return;
+    }
+    if (immediateFills > 0 && queuedUnits > 0) {
+      setMessage(
+        `${sideLabel(action)} partially filled (${fmtInt(immediateFills)} units). ${fmtInt(queuedUnits)} unit${queuedUnits === 1 ? '' : 's'} queued at ${fmtNum(
+          limitPrice,
+          4
+        )}.`
+      );
+      return;
+    }
+    setMessage(
+      `${sideLabel(action)} queued: ${fmtInt(order.remainingUnits)} unit${order.remainingUnits === 1 ? '' : 's'} @ ${fmtNum(limitPrice, 4)} on ${selectedMarket.symbol}.`
+    );
+  }, [fillPositionOrder, marketPrice, marketSpread, marketVolume, selectedMarket, walletLab.limitPrice, walletLab.maxAbsUnits, walletLab.note, walletLab.orderSide, walletLab.orderUnits, walletLab.slippageBps]);
 
   const handleReset = () => {
     const startCash = DEFAULT_START_CASH;
@@ -679,6 +761,7 @@ export default function WalletPage({ snapshot }) {
       return {
         ...previous,
         selectedMarketKey: previous.selectedMarketKey || String(pickedMarkets[0]?.key || ''),
+        pendingOrders: [],
         wallet: {
           ...previous.wallet,
           cash: remainingCash,
@@ -705,10 +788,111 @@ export default function WalletPage({ snapshot }) {
     }
   }, [marketPrice, rankedMarkets]);
 
-  const refreshPassportSummary = () => {
-    setPassportSummary(readPassportSummary());
-    setMessage('Passport summary refreshed from account settings.');
-  };
+  useEffect(() => {
+    if (!marketByKey.size) return;
+
+    const now = Date.now();
+    let filledOrders = 0;
+    let filledTrades = 0;
+
+    setWalletLab((previous) => {
+      const pendingOrders = Array.isArray(previous.pendingOrders) ? previous.pendingOrders : [];
+      if (!pendingOrders.length) return previous;
+
+      let nextWallet = previous.wallet;
+      let nextAssetHoldings = { ...(previous.assetHoldings || {}) };
+      const nextPendingOrders = [];
+      const newTrades = [];
+
+      for (const order of pendingOrders) {
+        const market = marketByKey.get(order.marketKey);
+        const livePrice = Math.max(0, toNum(market?.referencePrice, 0));
+        const liveSpread = Math.max(0, toNum(market?.spreadBps, 0));
+        const liveVolume = Math.max(0, toNum(market?.totalVolume, 0));
+
+        if (!market || livePrice <= 0 || !shouldLimitOrderFill(order.action, order.limitPrice, livePrice)) {
+          nextPendingOrders.push(order);
+          continue;
+        }
+
+        const fillResult = fillPositionOrder({
+          wallet: nextWallet,
+          assetHoldings: nextAssetHoldings,
+          order,
+          market,
+          livePrice,
+          liveSpread,
+          liveVolume,
+          timestamp: now + newTrades.length
+        });
+
+        nextWallet = fillResult.wallet;
+        nextAssetHoldings = fillResult.assetHoldings;
+
+        if (fillResult.trades.length > 0) {
+          filledOrders += 1;
+          filledTrades += fillResult.trades.length;
+          newTrades.push(...fillResult.trades);
+        }
+
+        if (fillResult.remainingUnits > 0) {
+          nextPendingOrders.push({
+            ...order,
+            remainingUnits: fillResult.remainingUnits
+          });
+        }
+      }
+
+      if (!newTrades.length && nextPendingOrders.length === pendingOrders.length) {
+        return previous;
+      }
+
+      const historyPrice = marketPrice > 0 ? marketPrice : Math.max(0, toNum(marketByKey.get(previous.selectedMarketKey)?.referencePrice, 0));
+      const nextHistory =
+        newTrades.length > 0
+          ? trimTail(
+              [
+                ...previous.equityHistory,
+                {
+                  t: now,
+                  equity: nextWallet.equity,
+                  price: historyPrice
+                }
+              ],
+              MAX_EQUITY_POINTS
+            )
+          : previous.equityHistory;
+
+      return {
+        ...previous,
+        wallet: nextWallet,
+        assetHoldings: nextAssetHoldings,
+        pendingOrders: nextPendingOrders,
+        tradeLog: newTrades.length ? trimHead([...newTrades.reverse(), ...previous.tradeLog], MAX_TRADES) : previous.tradeLog,
+        equityHistory: nextHistory
+      };
+    });
+
+    if (filledTrades > 0) {
+      setMessage(`Live fill: ${fmtInt(filledTrades)} trade${filledTrades === 1 ? '' : 's'} across ${fmtInt(filledOrders)} queued order${filledOrders === 1 ? '' : 's'}.`);
+    }
+  }, [fillPositionOrder, marketByKey, marketPrice, snapshot?.now]);
+
+  const cancelPendingOrder = useCallback((orderId) => {
+    setWalletLab((previous) => ({
+      ...previous,
+      pendingOrders: (previous.pendingOrders || []).filter((order) => order.id !== orderId)
+    }));
+    setMessage('Pending order canceled.');
+  }, []);
+
+  const clearPendingOrders = useCallback(() => {
+    setWalletLab((previous) => ({
+      ...previous,
+      pendingOrders: []
+    }));
+    setMessage('All pending orders cleared.');
+  }, []);
 
   const openHoldings = useMemo(() => {
     const rows = [];
@@ -749,6 +933,7 @@ export default function WalletPage({ snapshot }) {
   }, [strategyStatusRows]);
 
   const equitySeries = walletLab.equityHistory.map((row) => row.equity);
+  const pendingOrders = Array.isArray(walletLab.pendingOrders) ? walletLab.pendingOrders : [];
   const openNotional = openHoldings.reduce((sum, holding) => sum + holding.notional, 0);
   const winRate = walletLab.wallet.tradeCount > 0 ? (walletLab.wallet.winCount / Math.max(walletLab.wallet.tradeCount, 1)) * 100 : 0;
 
@@ -794,6 +979,36 @@ export default function WalletPage({ snapshot }) {
         <div className="section-head">
           <h2>Strategy Runtime Sync</h2>
           <span>{fmtInt(activeRuntimeTxEvents.length)} account trades</span>
+        </div>
+        <div className="wallet-active-runtime-row">
+          <label className="control-field">
+            <span>Active Runtime Wallet</span>
+            <select
+              value={activePaperAccount?.id || ''}
+              disabled={paperAccounts.length === 0}
+              onChange={(event) => {
+                if (!event.target.value) return;
+                setActivePaperAccount(event.target.value);
+                setMessage(`Active runtime wallet set to ${paperAccounts.find((account) => account.id === event.target.value)?.name || event.target.value}.`);
+              }}
+            >
+              {paperAccounts.length === 0 ? <option value="">No paper accounts</option> : null}
+              {paperAccounts.map((account) => (
+                <option key={`runtime-wallet:${account.id}`} value={account.id}>
+                  {account.name} ({account.enabled ? 'enabled' : 'paused'})
+                </option>
+              ))}
+            </select>
+          </label>
+          <div className="wallet-active-runtime-actions">
+            {activePaperAccount?.id ? (
+              <Link to={`/wallet/${encodeURIComponent(activePaperAccount.id)}`} className="btn secondary">
+                Open Active Wallet ID
+              </Link>
+            ) : (
+              <span className="action-message">No paper wallet available yet.</span>
+            )}
+          </div>
         </div>
         <p className="socket-status-copy">
           Active wallet {activePaperAccount?.name || '-'} ({activePaperAccount?.enabled ? 'enabled' : 'paused'}) | strategy focus{' '}
@@ -1011,13 +1226,24 @@ export default function WalletPage({ snapshot }) {
           {paperAccounts.map((account) => (
             <article key={account.id} className={account.id === activePaperAccountId ? 'strategy-account-card active' : 'strategy-account-card'}>
               <div className="strategy-account-head">
-                <label className="toggle-label">
-                  <input type="checkbox" checked={account.id === activePaperAccountId} onChange={() => setActivePaperAccount(account.id)} />
-                  <span>{account.name}</span>
-                </label>
+                <strong>{account.name}</strong>
                 <span className={account.enabled ? 'status-pill online' : 'status-pill'}>{account.enabled ? 'enabled' : 'paused'}</span>
               </div>
               <div className="section-actions">
+                {account.id === activePaperAccountId ? (
+                  <span className="status-pill online">active runtime wallet</span>
+                ) : (
+                  <button
+                    type="button"
+                    className="btn secondary"
+                    onClick={() => {
+                      setActivePaperAccount(account.id);
+                      setMessage(`Active runtime wallet set to ${account.name}.`);
+                    }}
+                  >
+                    Set Active
+                  </button>
+                )}
                 <Link to={`/wallet/${encodeURIComponent(account.id)}`} className="inline-link">
                   Open Wallet ID
                 </Link>
@@ -1073,117 +1299,107 @@ export default function WalletPage({ snapshot }) {
         </div>
       </GlowCard>
 
-      <div className="wallet-grid">
-        <GlowCard className="panel-card wallet-control-card">
-          <div className="section-head">
-            <h2>Manual Paper Actions</h2>
-            <span>{selectedMarket ? selectedMarket.symbol : 'no market selected'}</span>
-          </div>
-          <div className="wallet-control-grid">
-            <label className="control-field">
-              <span>Market</span>
-              <select value={walletLab.selectedMarketKey} onChange={(event) => handleControlChange('selectedMarketKey', event.target.value)}>
-                {rankedMarkets.map((market) => (
-                  <option key={market.key} value={market.key}>
-                    {market.symbol} ({market.assetClass})
-                  </option>
-                ))}
-              </select>
-            </label>
-            <label className="control-field">
-              <span>Order Units</span>
-              <input
-                type="number"
-                min={1}
-                max={25}
-                step={1}
-                value={walletLab.orderUnits}
-                onChange={(event) => handleControlChange('orderUnits', clamp(event.target.value, 1, 25))}
-              />
-            </label>
-            <label className="control-field">
-              <span>Max Abs Units</span>
-              <input
-                type="number"
-                min={1}
-                max={80}
-                step={1}
-                value={walletLab.maxAbsUnits}
-                onChange={(event) => handleControlChange('maxAbsUnits', clamp(event.target.value, 1, 80))}
-              />
-            </label>
-            <label className="control-field">
-              <span>Slippage (bps)</span>
-              <input
-                type="number"
-                min={0}
-                max={50}
-                step={0.1}
-                value={walletLab.slippageBps}
-                onChange={(event) => handleControlChange('slippageBps', clamp(event.target.value, 0, 50))}
-              />
-            </label>
-          </div>
+      <GlowCard className="panel-card wallet-control-card">
+        <div className="section-head">
+          <h2>Position Creator</h2>
+          <span>{selectedMarket ? selectedMarket.symbol : 'no market selected'}</span>
+        </div>
+        <div className="wallet-control-grid">
           <label className="control-field">
-            <span>Reason</span>
-            <input value={walletLab.note} maxLength={140} onChange={(event) => handleControlChange('note', event.target.value)} placeholder="manual wallet test" />
+            <span>Market</span>
+            <select value={walletLab.selectedMarketKey} onChange={(event) => handleControlChange('selectedMarketKey', event.target.value)}>
+              {rankedMarkets.map((market) => (
+                <option key={market.key} value={market.key}>
+                  {market.symbol} ({market.assetClass})
+                </option>
+              ))}
+            </select>
           </label>
-          <div className="wallet-action-row">
-            <button type="button" className="btn primary" onClick={() => executeManual('accumulate')}>
-              Buy
-            </button>
-            <button type="button" className="btn secondary" onClick={() => executeManual('reduce')}>
-              Sell
-            </button>
-            <button type="button" className="btn secondary" onClick={handleGenerateRandomPortfolio}>
-              Generate Portfolio
-            </button>
-            <button type="button" className="btn secondary" onClick={handleReset}>
-              Reset Wallet
+          <label className="control-field">
+            <span>Side</span>
+            <select value={walletLab.orderSide} onChange={(event) => handleControlChange('orderSide', event.target.value === 'reduce' ? 'reduce' : 'accumulate')}>
+              <option value="accumulate">Buy / Accumulate</option>
+              <option value="reduce">Sell / Reduce</option>
+            </select>
+          </label>
+          <label className="control-field">
+            <span>Units</span>
+            <input
+              type="number"
+              min={1}
+              max={25}
+              step={1}
+              value={walletLab.orderUnits}
+              onChange={(event) => handleControlChange('orderUnits', clamp(Math.round(toNum(event.target.value, 1)), 1, 25))}
+            />
+          </label>
+          <label className="control-field">
+            <span>Limit Price</span>
+            <input
+              type="number"
+              min={0.00000001}
+              step="any"
+              value={walletLab.limitPrice}
+              onChange={(event) => handleControlChange('limitPrice', event.target.value)}
+              placeholder={marketPrice > 0 ? `${fmtNum(marketPrice, 4)}` : '0.0000'}
+            />
+          </label>
+          <label className="control-field">
+            <span>Max Abs Units</span>
+            <input type="number" min={1} max={80} step={1} value={walletLab.maxAbsUnits} onChange={(event) => handleControlChange('maxAbsUnits', clamp(event.target.value, 1, 80))} />
+          </label>
+          <label className="control-field">
+            <span>Slippage (bps)</span>
+            <input type="number" min={0} max={50} step={0.1} value={walletLab.slippageBps} onChange={(event) => handleControlChange('slippageBps', clamp(event.target.value, 0, 50))} />
+          </label>
+        </div>
+        <label className="control-field">
+          <span>Reason</span>
+          <input value={walletLab.note} maxLength={140} onChange={(event) => handleControlChange('note', event.target.value)} placeholder="position order note" />
+        </label>
+        <div className="wallet-action-row">
+          <button type="button" className="btn primary" onClick={handleCreatePosition}>
+            Create Position Order
+          </button>
+          <button type="button" className="btn secondary" onClick={handleGenerateRandomPortfolio}>
+            Generate Portfolio
+          </button>
+          <button type="button" className="btn secondary" onClick={handleReset}>
+            Reset Wallet
+          </button>
+        </div>
+        <p className="socket-status-copy">
+          live {fmtNum(marketPrice, 4)} | spread {fmtNum(marketSpread, 2)} bps | vol {fmtCompact(marketVolume)} | pending {fmtInt(pendingOrders.length)} | trades {fmtInt(walletLab.wallet.tradeCount)} |
+          {' '}win rate {fmtPct(winRate)}
+        </p>
+        <div className="section-head">
+          <h2>Pending Position Orders</h2>
+          <div className="section-actions">
+            <span>{fmtInt(pendingOrders.length)} queued</span>
+            <button type="button" className="btn secondary" disabled={pendingOrders.length === 0} onClick={clearPendingOrders}>
+              Clear Pending
             </button>
           </div>
-          <p className="socket-status-copy">
-            px {fmtNum(marketPrice, 4)} | spread {fmtNum(marketSpread, 2)} bps | vol {fmtCompact(marketVolume)} | trades {fmtInt(walletLab.wallet.tradeCount)} | win rate{' '}
-            {fmtPct(winRate)}
-          </p>
-        </GlowCard>
-
-        <GlowCard className="panel-card wallet-passport-card">
-          <div className="section-head">
-            <h2>Passport Integration</h2>
-            <span>coming soon</span>
-          </div>
-          <p className="socket-status-copy">
-            Profile {passportSummary.profileName} | mode {passportSummary.executionMode} | external actions{' '}
-            {passportSummary.externalActionsEnabled ? 'enabled' : 'disabled'}
-          </p>
-          <div className="wallet-passport-metrics">
-            <article>
-              <span>Linked</span>
-              <strong>{fmtInt(passportSummary.linkedProviders)}</strong>
+        </div>
+        <div className="list-stack">
+          {pendingOrders.slice(0, 10).map((order) => (
+            <article key={order.id} className="list-item">
+              <strong className={order.action === 'reduce' ? 'down' : 'up'}>
+                {sideLabel(order.action)} | {order.symbol} | {fmtInt(order.remainingUnits)} / {fmtInt(order.requestedUnits)} units
+              </strong>
+              <p>limit {fmtNum(order.limitPrice, 4)} | live {fmtNum(toNum(marketByKey.get(order.marketKey)?.referencePrice, 0), 4)} | max units {fmtInt(order.maxAbsUnits)}</p>
+              <div className="item-meta">
+                <small>{order.note || 'position order'}</small>
+                <small>{fmtTime(order.createdAt)}</small>
+                <button type="button" className="btn secondary" onClick={() => cancelPendingOrder(order.id)}>
+                  Cancel
+                </button>
+              </div>
             </article>
-            <article>
-              <span>Validated</span>
-              <strong>{fmtInt(passportSummary.validatedProviders)}</strong>
-            </article>
-            <article>
-              <span>Live Ready</span>
-              <strong>{fmtInt(passportSummary.liveReadyProviders)}</strong>
-            </article>
-          </div>
-          <p className="socket-status-copy">
-            Next step: route wallet actions through provider guards once passport links are validated and runtime worker approvals are active.
-          </p>
-          <div className="wallet-action-row">
-            <button type="button" className="btn secondary" onClick={refreshPassportSummary}>
-              Refresh Passport
-            </button>
-            <Link className="btn secondary" to="/account">
-              Open Account
-            </Link>
-          </div>
-        </GlowCard>
-      </div>
+          ))}
+          {pendingOrders.length === 0 ? <p className="action-message">No queued orders. Create one with a limit price and it will fill when live price crosses.</p> : null}
+        </div>
+      </GlowCard>
 
       <GlowCard className="chart-card">
         <LineChart
@@ -1219,7 +1435,7 @@ export default function WalletPage({ snapshot }) {
               </div>
             </article>
           ))}
-          {openHoldings.length === 0 ? <p className="action-message">No open assets. Submit Buy/Sell actions to create holdings.</p> : null}
+          {openHoldings.length === 0 ? <p className="action-message">No open assets yet. Use Position Creator to place limit orders.</p> : null}
         </div>
       </GlowCard>
 
@@ -1247,7 +1463,7 @@ export default function WalletPage({ snapshot }) {
               </div>
             </article>
           ))}
-          {walletLab.tradeLog.length === 0 ? <p className="action-message">No paper trades yet. Use Buy/Sell above to test execution flow.</p> : null}
+          {walletLab.tradeLog.length === 0 ? <p className="action-message">No paper trades yet. Create a position order and wait for live fill.</p> : null}
         </div>
       </GlowCard>
 

@@ -701,7 +701,7 @@ export default function MarketDetailPage({ marketId, snapshot, historyByMarket, 
         </div>
       ) : null}
 
-      {supportsSocketProviders && activeSubtab === 'depth' ? (
+      {supportsSocketProviders && activeSubtab === 'intel' ? (
         <GlowCard className="panel-card">
           <div className="section-head">
             <h2>Socket Provider Status</h2>
@@ -726,11 +726,7 @@ export default function MarketDetailPage({ marketId, snapshot, historyByMarket, 
                   price {fmtNum(provider.price, 4)} | bid {fmtNum(provider.bid, 4)} | ask {fmtNum(provider.ask, 4)}
                 </p>
                 <Sparkline data={(seriesByProvider[provider.id] || []).map((point) => point.price)} width={160} height={42} />
-                <small>
-                  {provider.error || `last tick ${fmtTime(provider.lastTickAt)}`}
-                  {depthByProvider[provider.id] ? ` | depth ${(depthByProvider[provider.id].bids?.length || 0) + (depthByProvider[provider.id].asks?.length || 0)} lvls` : ''}
-                  {provider.guardDrops > 0 ? ` | guard drops ${fmtInt(provider.guardDrops)}` : ''}
-                </small>
+                <small>{provider.error || `last tick ${fmtTime(provider.lastTickAt)}`}</small>
               </article>
             ))}
           </div>
@@ -770,7 +766,7 @@ export default function MarketDetailPage({ marketId, snapshot, historyByMarket, 
             <section className="depth-side bid">
               <h3>Bid Depth</h3>
               {(depthBook.bids || []).map((level, index) => (
-                <article key={`bid:${index}:${level.price}`} className="depth-row">
+                <article key={`bid:${index}:${level.price}`} className="depth-row bid-row">
                   <div className="depth-bar bid" style={{ width: `${Math.min(100, (Number(level.size) / depthBook.maxSize) * 100)}%` }} />
                   <div className="depth-content">
                     <strong>{fmtNum(level.price, 4)}</strong>
@@ -784,7 +780,7 @@ export default function MarketDetailPage({ marketId, snapshot, historyByMarket, 
             <section className="depth-side ask">
               <h3>Ask Depth</h3>
               {(depthBook.asks || []).map((level, index) => (
-                <article key={`ask:${index}:${level.price}`} className="depth-row">
+                <article key={`ask:${index}:${level.price}`} className="depth-row ask-row">
                   <div className="depth-bar ask" style={{ width: `${Math.min(100, (Number(level.size) / depthBook.maxSize) * 100)}%` }} />
                   <div className="depth-content">
                     <strong>{fmtNum(level.price, 4)}</strong>

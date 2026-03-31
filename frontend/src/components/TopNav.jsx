@@ -26,6 +26,8 @@ export default function TopNav({ pathname, connected, transport, localFallback }
         path === '/other' ||
         path === '/graph' ||
         path === '/exchange' ||
+        path === '/total-market' ||
+        path === '/backtest' ||
         path === '/derivatives' ||
         path === '/deriv' ||
         path === '/knowledge' ||

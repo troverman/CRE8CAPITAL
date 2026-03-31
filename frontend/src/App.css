@@ -580,6 +580,10 @@ a {
   gap: 0.4rem;
 }
 
+.strategy-account-head strong {
+  font-size: 0.81rem;
+}
+
 .strategy-account-metrics {
   display: flex;
   flex-wrap: wrap;
@@ -759,6 +763,21 @@ a {
   line-height: 1.4;
 }
 
+.strategy-card-clickable {
+  cursor: pointer;
+  transition: transform 120ms ease, border-color 120ms ease;
+}
+
+.strategy-card-clickable:hover {
+  transform: translateY(-1px);
+  border-color: rgba(106, 220, 255, 0.38);
+}
+
+.strategy-card-clickable:focus-visible {
+  outline: 2px solid rgba(106, 220, 255, 0.56);
+  outline-offset: 1px;
+}
+
 .strategy-metrics {
   display: grid;
   gap: 0.18rem;
@@ -771,6 +790,54 @@ a {
 
 .strategy-function-card {
   gap: 0.6rem;
+}
+
+.strategy-runtime-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 0.55rem;
+  flex-wrap: wrap;
+}
+
+.strategy-runtime-badges {
+  display: flex;
+  gap: 0.36rem;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.strategy-runtime-facts {
+  display: grid;
+  gap: 0.5rem;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.strategy-runtime-fact {
+  border: 1px solid rgba(118, 141, 212, 0.28);
+  border-radius: 11px;
+  background: rgba(8, 12, 24, 0.76);
+  padding: 0.44rem 0.5rem;
+  display: grid;
+  gap: 0.16rem;
+}
+
+.strategy-runtime-fact-label {
+  font-size: 0.64rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--ink-soft);
+}
+
+.strategy-runtime-fact-value {
+  font-size: 0.78rem;
+  color: #e7f3ff;
+}
+
+.strategy-runtime-fact-value.mono {
+  font-family: 'JetBrains Mono', 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace;
+  font-size: 0.69rem;
+  word-break: break-word;
 }
 
 .strategy-function-grid {
@@ -796,6 +863,12 @@ a {
 .strategy-function-grid strong {
   font-size: 0.78rem;
   color: #dff2ff;
+  line-height: 1.35;
+  word-break: break-word;
+}
+
+.strategy-runtime-metric-grid article:first-child {
+  grid-column: span 2;
 }
 
 .strategy-function-list {
@@ -809,6 +882,33 @@ a {
 
 .strategy-function-list.compact {
   margin: 0.35rem 0 0.5rem;
+}
+
+.strategy-prereq-grid {
+  display: grid;
+  gap: 0.42rem;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.strategy-prereq-card {
+  border: 1px solid rgba(118, 141, 212, 0.26);
+  border-radius: 11px;
+  background: rgba(8, 12, 24, 0.74);
+  padding: 0.42rem 0.5rem;
+  display: grid;
+  gap: 0.22rem;
+}
+
+.strategy-prereq-card strong {
+  font-size: 0.74rem;
+  color: #def1ff;
+}
+
+.strategy-prereq-card p {
+  margin: 0;
+  font-size: 0.7rem;
+  color: var(--ink-soft);
+  line-height: 1.42;
 }
 
 .strategy-function-code {
@@ -840,6 +940,109 @@ a {
   cursor: pointer;
   font-size: 0.76rem;
   color: #d8ebff;
+}
+
+.strategy-create-grid {
+  display: grid;
+  gap: 0.55rem;
+  grid-template-columns: 1.25fr 1fr;
+}
+
+.strategy-create-form {
+  display: grid;
+  gap: 0.55rem;
+}
+
+.strategy-create-scope-card {
+  gap: 0.5rem;
+}
+
+.strategy-create-scope-grid {
+  display: grid;
+  gap: 0.36rem;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  max-height: 300px;
+  overflow: auto;
+  padding-right: 0.1rem;
+}
+
+.strategy-scope-chip {
+  border: 1px solid rgba(121, 140, 201, 0.28);
+  border-radius: 11px;
+  background: rgba(8, 12, 24, 0.8);
+  padding: 0.36rem 0.42rem;
+  display: grid;
+  gap: 0.14rem;
+  cursor: pointer;
+}
+
+.strategy-scope-chip input {
+  margin: 0;
+}
+
+.strategy-scope-chip span {
+  font-size: 0.72rem;
+  color: #eaf5ff;
+}
+
+.strategy-scope-chip small {
+  font-size: 0.63rem;
+  color: var(--ink-soft);
+}
+
+.strategy-scope-chip.active {
+  border-color: rgba(97, 215, 255, 0.56);
+  box-shadow: inset 0 0 0 1px rgba(97, 215, 255, 0.18);
+}
+
+.strategy-create-notes {
+  width: 100%;
+  min-height: 120px;
+  resize: vertical;
+  border: 1px solid rgba(142, 162, 228, 0.4);
+  border-radius: 11px;
+  background: rgba(6, 9, 20, 0.94);
+  color: var(--ink);
+  padding: 0.54rem 0.58rem;
+  font-family: inherit;
+  font-size: 0.8rem;
+  line-height: 1.45;
+}
+
+.strategy-create-notes:focus {
+  outline: 2px solid rgba(100, 213, 255, 0.4);
+  border-color: rgba(100, 213, 255, 0.7);
+}
+
+.strategy-draft-list {
+  display: grid;
+  gap: 0.42rem;
+}
+
+.strategy-draft-row {
+  border: 1px solid rgba(121, 140, 201, 0.28);
+  border-radius: 11px;
+  background: rgba(8, 12, 24, 0.8);
+  padding: 0.44rem 0.5rem;
+  display: flex;
+  justify-content: space-between;
+  gap: 0.55rem;
+  align-items: flex-start;
+  flex-wrap: wrap;
+}
+
+.strategy-draft-main {
+  display: grid;
+  gap: 0.14rem;
+}
+
+.strategy-draft-main strong {
+  font-size: 0.8rem;
+}
+
+.strategy-draft-main small {
+  font-size: 0.66rem;
+  color: var(--ink-soft);
 }
 
 .market-head span {
@@ -1097,6 +1300,21 @@ a {
   gap: 0.5rem;
 }
 
+.wallet-active-runtime-row {
+  display: grid;
+  gap: 0.5rem;
+  grid-template-columns: minmax(0, 1.35fr) auto;
+  align-items: end;
+}
+
+.wallet-active-runtime-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 0.45rem;
+  flex-wrap: wrap;
+}
+
 .wallet-passport-metrics {
   display: grid;
   gap: 0.45rem;
@@ -1254,6 +1472,10 @@ a {
   display: grid;
   gap: 0.55rem;
   grid-template-columns: 1.25fr 1fr;
+}
+
+.strategy-detail-two-col {
+  align-items: start;
 }
 
 .panel-card {
@@ -1464,6 +1686,16 @@ th {
   gap: 0.35rem;
 }
 
+.depth-side.bid {
+  border-color: rgba(96, 238, 180, 0.28);
+  background: linear-gradient(180deg, rgba(68, 216, 166, 0.08), rgba(8, 12, 24, 0.84));
+}
+
+.depth-side.ask {
+  border-color: rgba(255, 146, 168, 0.3);
+  background: linear-gradient(180deg, rgba(255, 120, 148, 0.08), rgba(8, 12, 24, 0.84));
+}
+
 .depth-side h3 {
   font-size: 0.76rem;
   text-transform: uppercase;
@@ -1478,6 +1710,19 @@ th {
   overflow: hidden;
   min-height: 34px;
   background: rgba(8, 11, 22, 0.92);
+  transition: border-color 130ms ease, transform 130ms ease;
+}
+
+.depth-row:hover {
+  transform: translateY(-1px);
+}
+
+.depth-row.bid-row {
+  border-color: rgba(96, 238, 180, 0.26);
+}
+
+.depth-row.ask-row {
+  border-color: rgba(255, 146, 168, 0.28);
 }
 
 .depth-bar {
@@ -1491,7 +1736,8 @@ th {
 }
 
 .depth-bar.ask {
-  background: linear-gradient(90deg, rgba(255, 132, 149, 0.68), rgba(255, 132, 149, 0.08));
+  inset: 0 0 0 auto;
+  background: linear-gradient(270deg, rgba(255, 132, 149, 0.72), rgba(255, 132, 149, 0.08));
 }
 
 .depth-content {
@@ -1511,6 +1757,14 @@ th {
 .depth-content small {
   font-size: 0.68rem;
   color: var(--ink-soft);
+}
+
+.depth-row.bid-row .depth-content strong {
+  color: #a7f6da;
+}
+
+.depth-row.ask-row .depth-content strong {
+  color: #ffc0cd;
 }
 
 .depth-empty {
@@ -1944,6 +2198,113 @@ th {
   font-size: 0.67rem;
 }
 
+.total-market-grid {
+  display: grid;
+  gap: 0.55rem;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.tensor-axis-head {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 0.34rem;
+}
+
+.tensor-axis-head span {
+  font-size: 0.66rem;
+  color: var(--ink-soft);
+  text-align: center;
+}
+
+.tensor-matrix-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 0.34rem;
+}
+
+.tensor-cell {
+  border: 1px solid rgba(121, 140, 201, 0.34);
+  border-radius: 10px;
+  min-height: 72px;
+  padding: 0.34rem;
+  display: grid;
+  align-content: space-between;
+  justify-items: center;
+  text-align: center;
+  transition: transform 140ms ease, border-color 140ms ease;
+}
+
+.tensor-cell strong {
+  font-size: 0.85rem;
+  color: #f2f7ff;
+}
+
+.tensor-cell small {
+  font-size: 0.6rem;
+  color: rgba(236, 243, 255, 0.8);
+}
+
+.total-market-contrib-list {
+  display: grid;
+  gap: 0.42rem;
+}
+
+.total-market-contrib-row {
+  border: 1px solid rgba(121, 140, 201, 0.3);
+  border-radius: 10px;
+  background: rgba(8, 12, 24, 0.78);
+  padding: 0.42rem 0.48rem;
+  display: grid;
+  gap: 0.22rem;
+}
+
+.total-market-contrib-head {
+  display: grid;
+  grid-template-columns: 1fr auto auto;
+  gap: 0.36rem;
+  align-items: baseline;
+}
+
+.total-market-contrib-head strong {
+  font-size: 0.82rem;
+}
+
+.total-market-contrib-head small {
+  font-size: 0.66rem;
+  color: var(--ink-soft);
+}
+
+.total-market-contrib-head span {
+  font-size: 0.69rem;
+}
+
+.total-market-contrib-bar-track {
+  height: 7px;
+  border-radius: 999px;
+  overflow: hidden;
+  border: 1px solid rgba(121, 140, 201, 0.28);
+  background: rgba(10, 14, 28, 0.86);
+}
+
+.total-market-contrib-bar {
+  height: 100%;
+  border-radius: inherit;
+  transition: width 220ms ease;
+}
+
+.total-market-contrib-bar.up {
+  background: linear-gradient(90deg, rgba(90, 215, 255, 0.8), rgba(95, 255, 206, 0.86));
+}
+
+.total-market-contrib-bar.down {
+  background: linear-gradient(90deg, rgba(255, 163, 122, 0.8), rgba(255, 114, 150, 0.86));
+}
+
+.total-market-contrib-row small {
+  color: var(--ink-soft);
+  font-size: 0.66rem;
+}
+
 .graph-card {
   display: grid;
   gap: 0.5rem;
@@ -2213,6 +2574,14 @@ th {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
+  .wallet-active-runtime-row {
+    grid-template-columns: 1fr;
+  }
+
+  .wallet-active-runtime-actions {
+    justify-content: flex-start;
+  }
+
   .passport-provider-grid {
     grid-template-columns: 1fr;
   }
@@ -2239,6 +2608,22 @@ th {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
+  .strategy-runtime-facts {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .strategy-prereq-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .strategy-create-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .strategy-create-scope-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
   .strategy-function-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
@@ -2262,6 +2647,10 @@ th {
   }
 
   .graph-strategy-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .total-market-grid {
     grid-template-columns: 1fr;
   }
 
@@ -2329,6 +2718,18 @@ th {
     grid-template-columns: 1fr;
   }
 
+  .strategy-runtime-metric-grid article:first-child {
+    grid-column: span 1;
+  }
+
+  .strategy-runtime-facts {
+    grid-template-columns: 1fr;
+  }
+
+  .strategy-create-scope-grid {
+    grid-template-columns: 1fr;
+  }
+
   .probability-controls-grid {
     grid-template-columns: 1fr;
   }
@@ -2348,6 +2749,15 @@ th {
   .passport-config-grid,
   .passport-form-grid {
     grid-template-columns: 1fr;
+  }
+
+  .tensor-axis-head,
+  .tensor-matrix-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .total-market-contrib-head {
+    grid-template-columns: 1fr auto;
   }
 
   .wallet-control-grid,
