@@ -1,6 +1,7 @@
 import { useMemo } from 'react';
 import FlashList from '../components/FlashList';
 import GlowCard from '../components/GlowCard';
+import LineChart from '../components/LineChart';
 import WalletAccountSelectField from '../components/WalletAccountSelectField';
 import { buildDecisionWalletLinkIndex } from '../lib/decisionWalletLink';
 import { buildDecisionRows } from '../lib/decisionView';
@@ -29,6 +30,24 @@ const marketIdentity = (symbol, assetClass) => `${String(symbol || '').toUpperCa
 
 const positionKey = (row) => `${String(row?.accountId || '')}|${String(row?.marketKey || '')}|${String(row?.symbol || '')}`;
 
+const resolveNearestIndex = (rows, targetTs) => {
+  if (!Array.isArray(rows) || rows.length === 0) return -1;
+  const ts = toNum(targetTs, NaN);
+  if (!Number.isFinite(ts)) return -1;
+  let nearestIndex = -1;
+  let nearestDelta = Number.POSITIVE_INFINITY;
+  for (let index = 0; index < rows.length; index += 1) {
+    const rowTs = toNum(rows[index]?.t, NaN);
+    if (!Number.isFinite(rowTs)) continue;
+    const delta = Math.abs(rowTs - ts);
+    if (delta < nearestDelta) {
+      nearestDelta = delta;
+      nearestIndex = index;
+    }
+  }
+  return nearestIndex;
+};
+
 export default function RuntimePage({ snapshot }) {
   const walletAccounts = useStrategyLabStore((state) => state.walletAccounts);
   const activeWalletAccountId = useStrategyLabStore((state) => state.activeWalletAccountId);
@@ -50,6 +69,83 @@ export default function RuntimePage({ snapshot }) {
     if (!activeWalletId) return [];
     return positionEvents.filter((row) => String(row?.accountId || '') === activeWalletId);
   }, [activeWalletId, positionEvents]);
+
+  const accountTxEvents = useMemo(() => {
+    if (!activeWalletId) return [];
+    return txEvents.filter((row) => String(row?.accountId || '') === activeWalletId);
+  }, [activeWalletId, txEvents]);
+
+  const walletEquityTimeline = useMemo(() => {
+    const rows = accountPositionEvents
+      .map((row) => ({
+        t: toNum(row?.timestamp, 0),
+        equity: toNum(row?.wallet?.equity, NaN)
+      }))
+      .filter((row) => row.t > 0 && Number.isFinite(row.equity))
+      .sort((a, b) => a.t - b.t);
+
+    if (rows.length === 0) {
+      const start = toNum(activeWallet?.startCash, 100000);
+      const current = toNum(activeWallet?.wallet?.equity, start);
+      const now = Date.now();
+      return [
+        { t: now - 1, equity: start },
+        { t: now, equity: current }
+      ];
+    }
+
+    const deduped = [];
+    for (const row of rows) {
+      const last = deduped[deduped.length - 1];
+      if (last && last.t === row.t) {
+        deduped[deduped.length - 1] = row;
+        continue;
+      }
+      deduped.push(row);
+    }
+
+    if (deduped.length === 1) {
+      const base = toNum(activeWallet?.startCash, deduped[0].equity);
+      return [
+        { t: deduped[0].t - 1, equity: base },
+        deduped[0]
+      ];
+    }
+
+    return deduped.slice(-420);
+  }, [accountPositionEvents, activeWallet?.startCash, activeWallet?.wallet?.equity]);
+
+  const walletEquitySeries = useMemo(() => walletEquityTimeline.map((row) => row.equity), [walletEquityTimeline]);
+
+  const walletTradeMarkers = useMemo(() => {
+    if (!walletEquityTimeline.length || !accountTxEvents.length) return [];
+    const markerByIndex = new Map();
+    for (const trade of accountTxEvents.slice(0, 320)) {
+      const markerIndex = resolveNearestIndex(walletEquityTimeline, trade?.timestamp);
+      if (markerIndex < 0) continue;
+      const current = markerByIndex.get(markerIndex) || {
+        index: markerIndex,
+        value: walletEquityTimeline[markerIndex]?.equity,
+        tone: actionClass(trade?.action),
+        title: `${trade?.action || 'trade'} ${trade?.symbol || trade?.marketKey || '-'}`,
+        count: 0
+      };
+      current.count += 1;
+      current.tone = actionClass(trade?.action) || current.tone || '';
+      current.title = `${trade?.action || 'trade'} ${trade?.symbol || trade?.marketKey || '-'} @ ${fmtNum(trade?.fillPrice, 4)}`;
+      markerByIndex.set(markerIndex, current);
+    }
+    return [...markerByIndex.values()]
+      .sort((a, b) => a.index - b.index)
+      .map((marker) => ({
+        key: `wallet-trade:${activeWalletId}:${marker.index}`,
+        index: marker.index,
+        value: marker.value,
+        tone: marker.tone,
+        title: marker.title,
+        count: marker.count
+      }));
+  }, [accountTxEvents, activeWalletId, walletEquityTimeline]);
 
   const openPositions = useMemo(() => {
     const latestByKey = new Map();
@@ -264,6 +360,17 @@ export default function RuntimePage({ snapshot }) {
           <strong>{fmtInt(walletSignals.length)}</strong>
         </GlowCard>
       </div>
+
+      <GlowCard className="chart-card">
+        <LineChart
+          title={`Wallet Equity (${activeWallet.name})`}
+          points={walletEquitySeries}
+          stroke="#62ffcc"
+          fillFrom="rgba(98, 255, 204, 0.26)"
+          fillTo="rgba(98, 255, 204, 0.02)"
+          markers={walletTradeMarkers}
+        />
+      </GlowCard>
 
       <div className="two-col">
         <GlowCard className="panel-card">
