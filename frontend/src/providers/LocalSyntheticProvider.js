@@ -12,7 +12,9 @@ const randomBetween = (min, max) => {
 const HISTORY_WINDOWS = {
   '5m': { points: 60, stepMs: 5000 },
   '1h': { points: 120, stepMs: 30000 },
-  '24h': { points: 288, stepMs: 300000 }
+  '24h': { points: 288, stepMs: 300000 },
+  '7d': { points: 672, stepMs: 900000 },
+  '30d': { points: 720, stepMs: 3600000 }
 };
 
 const buildSyntheticDepth = ({ midPrice, spreadBps, levels = 18 }) => {

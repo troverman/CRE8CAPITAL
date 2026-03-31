@@ -4,7 +4,9 @@ import { toCoinbaseProduct } from './symbolUtils';
 const HISTORY_WINDOWS = {
   '5m': { granularity: 60, spanMs: 5 * 60 * 1000 },
   '1h': { granularity: 60, spanMs: 60 * 60 * 1000 },
-  '24h': { granularity: 300, spanMs: 24 * 60 * 60 * 1000 }
+  '24h': { granularity: 300, spanMs: 24 * 60 * 60 * 1000 },
+  '7d': { granularity: 3600, spanMs: 7 * 24 * 60 * 60 * 1000 },
+  '30d': { granularity: 21600, spanMs: 30 * 24 * 60 * 60 * 1000 }
 };
 
 const toNum = (value) => {

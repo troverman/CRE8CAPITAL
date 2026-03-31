@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import FlashList from '../components/FlashList';
 import GlowCard from '../components/GlowCard';
 import LineChart from '../components/LineChart';
+import useProviderWindowHistory from '../hooks/useProviderWindowHistory';
 import { fmtInt, fmtNum, fmtPct, fmtTime } from '../lib/format';
 import {
   buildMarketImageSnapshot,
@@ -16,6 +17,7 @@ import {
 } from '../lib/probabilityLab';
 import { Link } from '../lib/router';
 import { buildScenarioSeries, createWalletState, executeWalletAction, markWallet, runBacktest, SCENARIO_OPTIONS, STRATEGY_OPTIONS } from '../lib/strategyEngine';
+import { getExternalSocketProviders, getLocalFallbackProviders } from '../providers';
 
 const EMPTY_RESULT = {
   stats: {
@@ -31,6 +33,14 @@ const EMPTY_RESULT = {
   tradeLog: [],
   signalLog: []
 };
+
+const BACKTEST_HISTORY_WINDOW_OPTIONS = [
+  { key: '5m', label: '5m' },
+  { key: '1h', label: '1h' },
+  { key: '24h', label: '24h' },
+  { key: '7d', label: '7d' },
+  { key: '30d', label: '30d' }
+];
 
 const toNum = (value, fallback = 0) => {
   const numeric = Number(value);
@@ -610,6 +620,7 @@ const buildWindowComparisonRows = ({ oracleWindows = [], pdfWindows = [], minMov
 export default function BacktestPage({ snapshot, historyByMarket }) {
   const sortedMarkets = useMemo(() => sortMarkets(snapshot?.markets || []), [snapshot?.markets]);
   const [sourceMode, setSourceMode] = useState('live-history');
+  const [historyWindowKey, setHistoryWindowKey] = useState('24h');
   const [strategyId, setStrategyId] = useState('tensor-lite');
   const [scenarioId, setScenarioId] = useState('trend-rally');
   const [marketKey, setMarketKey] = useState('');
@@ -675,6 +686,25 @@ export default function BacktestPage({ snapshot, historyByMarket }) {
     );
   }, [marketKey, sortedMarkets]);
 
+  const providerCandidates = useMemo(() => {
+    const external = getExternalSocketProviders().filter((provider) => provider.supportsMarket(selectedMarket));
+    const local = getLocalFallbackProviders().filter((provider) => provider.supportsMarket(selectedMarket));
+    return {
+      external,
+      local,
+      primary: external[0] || local[0] || null,
+      fallback: local[0] || null
+    };
+  }, [selectedMarket]);
+
+  const providerWindowHistory = useProviderWindowHistory({
+    provider: providerCandidates.primary,
+    fallbackProvider: providerCandidates.fallback,
+    market: selectedMarket,
+    windowKey: historyWindowKey,
+    enabled: sourceMode === 'provider-history'
+  });
+
   const liveSeries = useMemo(() => {
     if (!selectedMarket?.key) return [];
     const raw = Array.isArray(historyByMarket?.[selectedMarket.key]) ? historyByMarket[selectedMarket.key] : [];
@@ -693,8 +723,22 @@ export default function BacktestPage({ snapshot, historyByMarket }) {
     });
   }, [sampleSize, scenarioId, selectedMarket?.referencePrice, selectedMarket?.symbol, snapshot?.now]);
 
-  const activeSeries = sourceMode === 'live-history' ? liveSeries : scenarioSeries;
-  const sourceLabel = sourceMode === 'live-history' ? `live history (${selectedMarket.symbol})` : `scenario (${scenarioId})`;
+  const providerHistorySeries = useMemo(() => {
+    const rows = normalizeSeriesRows(providerWindowHistory.rows || [], Math.max(2, toNum(selectedMarket?.spreadBps, 12)));
+    const minSamples = Math.max(64, Math.round(toNum(sampleSize, 280)));
+    return rows.slice(Math.max(0, rows.length - minSamples));
+  }, [providerWindowHistory.rows, sampleSize, selectedMarket?.spreadBps]);
+  const providerHistoryProviderName = useMemo(() => {
+    return String(providerWindowHistory.rows?.[0]?.providerName || providerWindowHistory.providerName || providerCandidates.primary?.name || '');
+  }, [providerCandidates.primary?.name, providerWindowHistory.providerName, providerWindowHistory.rows]);
+
+  const activeSeries = sourceMode === 'scenario' ? scenarioSeries : sourceMode === 'provider-history' ? providerHistorySeries : liveSeries;
+  const sourceLabel =
+    sourceMode === 'scenario'
+      ? `scenario (${scenarioId})`
+      : sourceMode === 'provider-history'
+        ? `provider history (${providerHistoryProviderName || 'fallback'} ${historyWindowKey})`
+        : `live history (${selectedMarket.symbol})`;
 
   const [ranAt, setRanAt] = useState(Date.now());
   const result = useMemo(() => {
@@ -1313,6 +1357,7 @@ export default function BacktestPage({ snapshot, historyByMarket }) {
             <span>Source</span>
             <select value={sourceMode} onChange={(event) => setSourceMode(event.target.value)}>
               <option value="live-history">live-history</option>
+              <option value="provider-history">provider-history</option>
               <option value="scenario">scenario</option>
             </select>
           </label>
@@ -1344,6 +1389,17 @@ export default function BacktestPage({ snapshot, historyByMarket }) {
             <select value={scenarioId} onChange={(event) => setScenarioId(event.target.value)} disabled={sourceMode !== 'scenario'}>
               {SCENARIO_OPTIONS.map((option) => (
                 <option key={option.id} value={option.id}>
+                  {option.label}
+                </option>
+              ))}
+            </select>
+          </label>
+
+          <label className="control-field">
+            <span>History Window</span>
+            <select value={historyWindowKey} onChange={(event) => setHistoryWindowKey(event.target.value)} disabled={sourceMode !== 'provider-history'}>
+              {BACKTEST_HISTORY_WINDOW_OPTIONS.map((option) => (
+                <option key={option.key} value={option.key}>
                   {option.label}
                 </option>
               ))}
@@ -1381,6 +1437,14 @@ export default function BacktestPage({ snapshot, historyByMarket }) {
         <p className="socket-status-copy">
           sample {fmtInt(activeSeries.length)} | market {selectedMarket.symbol} | last run {fmtTime(ranAt)}
         </p>
+        {sourceMode === 'provider-history' ? (
+          <p className="socket-status-copy">
+            provider {providerHistoryProviderName || 'none'} | window {historyWindowKey} | rows{' '}
+            {fmtInt(providerHistorySeries.length)}
+            {providerWindowHistory.loading ? ' | loading...' : ''}
+            {providerWindowHistory.error ? ` | ${providerWindowHistory.error}` : ''}
+          </p>
+        ) : null}
       </GlowCard>
 
       <div className="detail-stat-grid">

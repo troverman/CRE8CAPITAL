@@ -4,7 +4,9 @@ import { toBinanceSymbol } from './symbolUtils';
 const HISTORY_WINDOWS = {
   '5m': { interval: '1m', limit: 5 },
   '1h': { interval: '1m', limit: 60 },
-  '24h': { interval: '5m', limit: 288 }
+  '24h': { interval: '5m', limit: 288 },
+  '7d': { interval: '15m', limit: 672 },
+  '30d': { interval: '1h', limit: 720 }
 };
 
 const toNum = (value) => {
