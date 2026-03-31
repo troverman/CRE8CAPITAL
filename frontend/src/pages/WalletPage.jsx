@@ -2,13 +2,11 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import FlashList from '../components/FlashList';
 import GlowCard from '../components/GlowCard';
 import LineChart from '../components/LineChart';
-import RuntimeExecutionControls from '../components/RuntimeExecutionControls';
 import { fmtCompact, fmtInt, fmtNum, fmtPct, fmtTime } from '../lib/format';
-import { countEnabledWalletAccounts, filterRowsByAccountId, selectActiveWalletAccount } from '../lib/strategyLabSelectors';
+import { countEnabledWalletAccounts, selectActiveWalletAccount } from '../lib/strategyLabSelectors';
 import { createWalletState, executeWalletAction, markWallet } from '../lib/strategyEngine';
 import { buildStrategyRows, toStrategyKey } from '../lib/strategyView';
 import { Link } from '../lib/router';
-import { useExecutionFeedStore } from '../store/executionFeedStore';
 import { useStrategyLabStore } from '../store/strategyLabStore';
 import { useStrategyToggleStore } from '../store/strategyToggleStore';
 
@@ -18,11 +16,6 @@ const MAX_EQUITY_POINTS = 420;
 const MAX_TRADES = 180;
 const MAX_PENDING_ORDERS = 180;
 const DEFAULT_START_CASH = 100000;
-const RUNTIME_SYNC_TABS = [
-  { id: 'summary', label: 'Summary' },
-  { id: 'strategies', label: 'Strategies' },
-  { id: 'trades', label: 'Trades' }
-];
 
 const clamp = (value, min, max) => {
   const num = Number(value);
@@ -244,8 +237,6 @@ const applyAssetTrade = ({ holdings, trade, market, fallbackPrice, timestamp }) 
 
 export default function WalletPage({ snapshot }) {
   const strategyId = useStrategyLabStore((state) => state.strategyId);
-  const executionStrategyMode = useStrategyLabStore((state) => state.executionStrategyMode);
-  const executionWalletScope = useStrategyLabStore((state) => state.executionWalletScope);
   const paperAccounts = useStrategyLabStore((state) => state.walletAccounts);
   const activePaperAccountId = useStrategyLabStore((state) => state.activeWalletAccountId);
   const addPaperAccount = useStrategyLabStore((state) => state.addWalletAccount);
@@ -253,10 +244,9 @@ export default function WalletPage({ snapshot }) {
   const removePaperAccount = useStrategyLabStore((state) => state.removeWalletAccount);
   const clearPaperAccounts = useStrategyLabStore((state) => state.clearWalletAccounts);
   const setActivePaperAccount = useStrategyLabStore((state) => state.setActiveWalletAccount);
-  const setExecutionConfig = useStrategyLabStore((state) => state.setExecutionConfig);
-  const txEvents = useExecutionFeedStore((state) => state.txEvents);
   const enabledByKey = useStrategyToggleStore((state) => state.enabledByKey);
   const ensureStrategies = useStrategyToggleStore((state) => state.ensureStrategies);
+  const setStrategyEnabled = useStrategyToggleStore((state) => state.setStrategyEnabled);
 
   const rankedMarkets = useMemo(() => {
     const input = Array.isArray(snapshot?.markets) ? snapshot.markets : [];
@@ -299,26 +289,8 @@ export default function WalletPage({ snapshot }) {
     return selectActiveWalletAccount(paperAccounts, activePaperAccountId);
   }, [activePaperAccountId, paperAccounts]);
 
-  const activeRuntimeTxEvents = useMemo(() => {
-    if (!activePaperAccount?.id) return txEvents.slice(0, 180);
-    return filterRowsByAccountId(txEvents, activePaperAccount.id).slice(0, 180);
-  }, [activePaperAccount?.id, txEvents]);
-
-  const selectedStrategyStatus = useMemo(() => {
-    const key = toStrategyKey(strategyId);
-    return strategyStatusRows.find((strategy) => strategy.key === key) || null;
-  }, [strategyId, strategyStatusRows]);
-
-  const selectedStrategyRuntimeTxEvents = useMemo(() => {
-    const key = toStrategyKey(strategyId);
-    if (!key) return activeRuntimeTxEvents.slice(0, 180);
-    return activeRuntimeTxEvents.filter((event) => toStrategyKey(event.strategyId) === key).slice(0, 180);
-  }, [activeRuntimeTxEvents, strategyId]);
-
   const activeRuntimeWallet = activePaperAccount?.wallet || null;
   const runtimeEquity = toNum(activeRuntimeWallet?.equity, 0);
-  const runtimeCash = toNum(activeRuntimeWallet?.cash, 0);
-  const runtimeUnits = toNum(activeRuntimeWallet?.units, 0);
   const runtimeRealizedPnl = toNum(activeRuntimeWallet?.realizedPnl, 0);
   const runtimeUnrealizedPnl = toNum(activeRuntimeWallet?.unrealizedPnl, 0);
 
@@ -326,14 +298,6 @@ export default function WalletPage({ snapshot }) {
   const [message, setMessage] = useState('');
   const [paperName, setPaperName] = useState('');
   const [paperCash, setPaperCash] = useState(100000);
-  const [runtimeSyncTab, setRuntimeSyncTab] = useState('summary');
-  const [runtimeTradeScope, setRuntimeTradeScope] = useState('all');
-
-  const runtimeTradeRows = useMemo(() => {
-    return runtimeTradeScope === 'all' ? activeRuntimeTxEvents : selectedStrategyRuntimeTxEvents;
-  }, [activeRuntimeTxEvents, runtimeTradeScope, selectedStrategyRuntimeTxEvents]);
-
-  const latestRuntimeTrade = runtimeTradeRows[0] || null;
 
   useEffect(() => {
     try {
@@ -935,6 +899,9 @@ export default function WalletPage({ snapshot }) {
   const enabledStrategyCount = useMemo(() => {
     return strategyStatusRows.filter((strategy) => strategy.enabled).length;
   }, [strategyStatusRows]);
+  const activeStrategyRows = useMemo(() => {
+    return strategyStatusRows.filter((strategy) => strategy.enabled);
+  }, [strategyStatusRows]);
 
   const equitySeries = walletLab.equityHistory.map((row) => row.equity);
   const pendingOrders = Array.isArray(walletLab.pendingOrders) ? walletLab.pendingOrders : [];
@@ -982,7 +949,9 @@ export default function WalletPage({ snapshot }) {
       <GlowCard className="panel-card">
         <div className="section-head">
           <h2>Strategy Runtime Sync</h2>
-          <span>{fmtInt(activeRuntimeTxEvents.length)} account trades</span>
+          <span>
+            {fmtInt(enabledStrategyCount)} / {fmtInt(strategyStatusRows.length)} enabled
+          </span>
         </div>
         <div className="wallet-active-runtime-row">
           <label className="control-field">
@@ -1015,197 +984,58 @@ export default function WalletPage({ snapshot }) {
           </div>
         </div>
         <p className="socket-status-copy">
-          Active wallet {activePaperAccount?.name || '-'} ({activePaperAccount?.enabled ? 'enabled' : 'paused'}) | strategy focus{' '}
-          {selectedStrategyStatus?.name || strategyId || '-'} ({selectedStrategyStatus?.enabled === false ? 'disabled' : 'enabled'})
+          This panel only controls strategy activation for runtime. Trade/equity detail lives on Wallet ID, Strategy, and Decision pages.
         </p>
-        <RuntimeExecutionControls
-          strategyMode={executionStrategyMode}
-          walletScope={executionWalletScope}
-          onStrategyModeChange={(strategyMode) =>
-            setExecutionConfig({
-              strategyMode
-            })
-          }
-          onWalletScopeChange={(walletScope) =>
-            setExecutionConfig({
-              walletScope
-            })
-          }
-          summaryPrefix="Engine mode"
-        />
-        <div className="strategy-lab-tab-row" role="tablist" aria-label="Runtime sync views">
-          {RUNTIME_SYNC_TABS.map((tab) => (
-            <button
-              key={tab.id}
-              type="button"
-              role="tab"
-              aria-selected={runtimeSyncTab === tab.id}
-              className={runtimeSyncTab === tab.id ? 'strategy-lab-tab active' : 'strategy-lab-tab'}
-              onClick={() => setRuntimeSyncTab(tab.id)}
-            >
-              {tab.label}
-            </button>
-          ))}
+        <div className="section-actions">
+          <button
+            type="button"
+            className="btn secondary"
+            onClick={() => {
+              for (const strategy of strategyStatusRows) {
+                setStrategyEnabled(strategy.key, true);
+              }
+              setMessage(`Enabled all ${fmtInt(strategyStatusRows.length)} strategies.`);
+            }}
+            disabled={strategyStatusRows.length === 0}
+          >
+            Enable All Strategies
+          </button>
         </div>
-
-        {runtimeSyncTab === 'summary' ? (
-          <div className="list-stack">
-            <div className="tensor-metrics">
-              <article>
-                <span>Enabled Strategies</span>
+        <div className="list-stack">
+          {strategyStatusRows.map((strategy) => {
+            const selected = toStrategyKey(strategy.id) === toStrategyKey(strategyId);
+            return (
+              <article key={`wallet-strategy:${strategy.key}`} className="list-item">
                 <strong>
-                  {fmtInt(enabledStrategyCount)} / {fmtInt(strategyStatusRows.length)}
-                </strong>
-              </article>
-              <article>
-                <span>Enabled Wallets</span>
-                <strong>
-                  {fmtInt(enabledPaperCount)} / {fmtInt(paperAccounts.length)}
-                </strong>
-              </article>
-              <article>
-                <span>Runtime Equity</span>
-                <strong>{fmtNum(runtimeEquity, 2)}</strong>
-              </article>
-              <article>
-                <span>Runtime Cash</span>
-                <strong>{fmtNum(runtimeCash, 2)}</strong>
-              </article>
-              <article>
-                <span>Runtime Units</span>
-                <strong>{fmtNum(runtimeUnits, 4)}</strong>
-              </article>
-              <article>
-                <span>Latest Runtime Fill</span>
-                <strong>{fmtTime(activeRuntimeTxEvents[0]?.timestamp)}</strong>
-              </article>
-            </div>
-            <div className="item-meta">
-              <small>
-                active wallet:{' '}
-                {activePaperAccount?.id ? (
-                  <Link to={`/wallet/${encodeURIComponent(activePaperAccount.id)}`} className="inline-link">
-                    {activePaperAccount.name || activePaperAccount.id}
+                  <Link to={`/strategy/${encodeURIComponent(strategy.id || strategy.name || strategy.key)}`} className="inline-link">
+                    {strategy.name}
                   </Link>
-                ) : (
-                  '-'
-                )}
-              </small>
-              <small>
-                strategy:{' '}
-                <Link to={`/strategy/${encodeURIComponent(selectedStrategyStatus?.id || strategyId || 'tensor-lite')}`} className="inline-link">
-                  {selectedStrategyStatus?.name || strategyId || 'tensor-lite'}
-                </Link>
-              </small>
-              <small>
-                trade scope {runtimeTradeScope === 'all' ? 'all strategies' : 'selected strategy'} ({fmtInt(runtimeTradeRows.length)} rows)
-              </small>
-            </div>
-            {latestRuntimeTrade ? (
-              <article className="list-item">
-                <strong className={latestRuntimeTrade.action === 'accumulate' ? 'up' : latestRuntimeTrade.action === 'reduce' ? 'down' : ''}>
-                  latest {latestRuntimeTrade.action} | {latestRuntimeTrade.symbol || latestRuntimeTrade.marketKey || '-'} | {latestRuntimeTrade.strategyId}
+                  {selected ? ' | focus' : ''}
                 </strong>
-                <p>{latestRuntimeTrade.reason || 'strategy execution'}</p>
-                <div className="item-meta">
-                  <small>fill {fmtNum(latestRuntimeTrade.fillPrice, 4)}</small>
-                  <small>delta {fmtNum(latestRuntimeTrade.unitsDelta, 4)}</small>
-                  <small>units {fmtNum(latestRuntimeTrade.unitsAfter, 4)}</small>
-                  <small>pnl {fmtNum(latestRuntimeTrade.realizedDelta, 2)}</small>
-                  <small>{fmtTime(latestRuntimeTrade.timestamp)}</small>
+                <p>{strategy.description || 'No description available yet.'}</p>
+                <div className="section-actions">
+                  <span className={strategy.enabled ? 'status-pill online' : 'status-pill'}>{strategy.enabled ? 'enabled' : 'disabled'}</span>
+                  <button
+                    type="button"
+                    className={strategy.enabled ? 'btn secondary' : 'btn primary'}
+                    onClick={() => {
+                      setStrategyEnabled(strategy.key, !strategy.enabled);
+                      setMessage(`${strategy.enabled ? 'Disabled' : 'Enabled'} ${strategy.name}.`);
+                    }}
+                  >
+                    {strategy.enabled ? 'Disable' : 'Enable'}
+                  </button>
                 </div>
               </article>
-            ) : (
-              <p className="action-message">No runtime fills yet for the active wallet.</p>
-            )}
-          </div>
-        ) : null}
-
-        {runtimeSyncTab === 'strategies' ? (
-          <div className="list-stack">
-            <div className="section-head">
-              <h2>Strategy Runtime Map</h2>
-              <span>{fmtInt(strategyStatusRows.length)} total</span>
-            </div>
-            <p className="socket-status-copy">
-              Strategy enablement is shared with Strategy Lab. Configure execution mode above, then use Trades tab here to verify live fills.
-            </p>
-            {strategyStatusRows.map((strategy) => {
-              const selected = toStrategyKey(strategy.id) === toStrategyKey(strategyId);
-              return (
-                <article key={`wallet-strategy:${strategy.key}`} className="list-item">
-                  <strong>
-                    {selected ? (
-                      <span>
-                        {strategy.name} | selected focus
-                      </span>
-                    ) : (
-                      <Link to={`/strategy/${encodeURIComponent(strategy.id || strategy.name || strategy.key)}`} className="inline-link">
-                        {strategy.name}
-                      </Link>
-                    )}
-                  </strong>
-                  <p>{strategy.description || 'No description available yet.'}</p>
-                  <div className="item-meta">
-                    <small>id {strategy.id || strategy.key}</small>
-                    <small>{strategy.enabled ? 'enabled' : 'disabled'}</small>
-                    <small>decisions {fmtInt(strategy.decisionCount || 0)}</small>
-                  </div>
-                </article>
-              );
-            })}
-            {strategyStatusRows.length === 0 ? <p className="action-message">No strategies detected yet.</p> : null}
-          </div>
-        ) : null}
-
-        {runtimeSyncTab === 'trades' ? (
-          <>
-            <div className="section-head">
-              <h2>Live Runtime Trades</h2>
-              <span>{fmtInt(runtimeTradeRows.length)} rows</span>
-            </div>
-            <div className="hero-actions">
-              <button
-                type="button"
-                className={runtimeTradeScope === 'selected' ? 'btn primary' : 'btn secondary'}
-                onClick={() => setRuntimeTradeScope('selected')}
-              >
-                Selected Strategy
-              </button>
-              <button
-                type="button"
-                className={runtimeTradeScope === 'all' ? 'btn primary' : 'btn secondary'}
-                onClick={() => setRuntimeTradeScope('all')}
-              >
-                All Strategies
-              </button>
-            </div>
-            <p className="socket-status-copy">
-              scope {runtimeTradeScope === 'selected' ? selectedStrategyStatus?.name || strategyId || '-' : 'all enabled strategies'} | wallet{' '}
-              {activePaperAccount?.name || '-'}
-            </p>
-            <FlashList
-              items={runtimeTradeRows}
-              height={330}
-              itemHeight={74}
-              className="tick-flash-list"
-              emptyCopy={runtimeTradeScope === 'selected' ? 'No runtime trades for the selected strategy yet.' : 'No runtime trades for the active wallet yet.'}
-              keyExtractor={(event) => event.id}
-              renderItem={(event) => (
-                <article className="tensor-event-row">
-                  <strong className={event.action === 'accumulate' ? 'up' : event.action === 'reduce' ? 'down' : ''}>
-                    {event.accountName || 'paper'} | {event.action} | {event.symbol || event.marketKey || '-'}
-                  </strong>
-                  <p>{event.reason || 'strategy execution'}</p>
-                  <small>
-                    {event.strategyId} | fill {fmtNum(event.fillPrice, 4)} | delta {fmtNum(event.unitsDelta, 4)} | units {fmtNum(event.unitsAfter, 4)} | pnl{' '}
-                    {fmtNum(event.realizedDelta, 2)} | {fmtTime(event.timestamp)}
-                  </small>
-                </article>
-              )}
-            />
-          </>
-        ) : null}
+            );
+          })}
+          {strategyStatusRows.length === 0 ? <p className="action-message">No strategies detected yet.</p> : null}
+          {activeStrategyRows.length > 0 ? (
+            <p className="socket-status-copy">Active strategies: {activeStrategyRows.map((strategy) => strategy.name).join(', ')}</p>
+          ) : (
+            <p className="socket-status-copy">No active strategies yet. Enable at least one strategy for runtime.</p>
+          )}
+        </div>
       </GlowCard>
 
       <GlowCard className="panel-card">
