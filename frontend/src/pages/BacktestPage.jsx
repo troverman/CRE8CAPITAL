@@ -3,6 +3,17 @@ import FlashList from '../components/FlashList';
 import GlowCard from '../components/GlowCard';
 import LineChart from '../components/LineChart';
 import { fmtInt, fmtNum, fmtPct, fmtTime } from '../lib/format';
+import {
+  buildMarketImageSnapshot,
+  buildMarketTensorSnapshot,
+  buildPdfBuckets,
+  buildTensorPdfFromHistory,
+  createPdfPortfolioState,
+  PDF_HORIZONS,
+  rankMarketsByPdf,
+  rankMarketsByTensorPdf,
+  simulatePdfPortfolioCycle
+} from '../lib/probabilityLab';
 import { Link } from '../lib/router';
 import { buildScenarioSeries, createWalletState, executeWalletAction, markWallet, runBacktest, SCENARIO_OPTIONS, STRATEGY_OPTIONS } from '../lib/strategyEngine';
 
@@ -165,7 +176,8 @@ const solveDiscreteWindowOracle = ({
   windowSize = 12,
   windowStep = 12,
   minMovePct = 0,
-  smoothBlendPct = 0
+  smoothBlendPct = 0,
+  mode = 'long-only'
 }) => {
   const safeSeries = Array.isArray(series) ? series : [];
   if (safeSeries.length < 3) {
@@ -191,6 +203,8 @@ const solveDiscreteWindowOracle = ({
   const safeWindowStep = Math.max(1, Math.round(toNum(windowStep, safeWindowSize)));
   const safeMinMovePct = Math.max(0, toNum(minMovePct, 0));
   const smoothBlend = clamp(toNum(smoothBlendPct, 0) / 100, 0, 1);
+  const shortEnabled = String(mode || 'long-only') === 'long-short';
+  const minUnits = shortEnabled ? -safeMaxUnits : 0;
 
   const windows = [];
   for (let startIndex = 0; startIndex < safeSeries.length - 1; startIndex += safeWindowStep) {
@@ -200,8 +214,8 @@ const solveDiscreteWindowOracle = ({
     const startPrice = Math.max(toNum(startPoint?.price, 0), 1e-9);
     const endPrice = Math.max(toNum(endPoint?.price, 0), 1e-9);
     const movePct = ((endPrice - startPrice) / startPrice) * 100;
-    const discreteTarget = movePct > safeMinMovePct ? safeMaxUnits : 0;
-    const action = discreteTarget > 0 ? 'accumulate' : 'hold';
+    const discreteTarget = movePct > safeMinMovePct ? safeMaxUnits : movePct < -safeMinMovePct ? (shortEnabled ? -safeMaxUnits : 0) : 0;
+    const action = discreteTarget > 0 ? 'accumulate' : discreteTarget < 0 ? 'short' : 'hold';
     windows.push({
       id: `window:${startIndex}:${endIndex}`,
       windowIndex: windows.length,
@@ -221,10 +235,78 @@ const solveDiscreteWindowOracle = ({
   let wallet = createWalletState(safeStartCash);
   const tradeLog = [];
   const equitySeries = [];
+  const regimeSeries = [];
+  const positionSeries = [];
+
+  const applyVirtualRebalance = ({ targetUnits, point, timestamp, reason = '', windowIndex = -1 }) => {
+    const price = Math.max(toNum(point?.price, 0), 1e-9);
+    const target = clamp(toNum(targetUnits, 0), minUnits, safeMaxUnits);
+    const unitsBefore = toNum(wallet?.units, 0);
+    const unitsDelta = target - unitsBefore;
+    if (Math.abs(unitsDelta) <= 0.001) return;
+
+    const side = unitsDelta > 0 ? 'buy' : 'sell';
+    const fillPrice = Math.max(price * (1 + (side === 'buy' ? 1 : -1) * (safeSlippage / 10000)), 1e-9);
+    const cashBefore = toNum(wallet?.cash, 0);
+    const avgEntryBefore = wallet?.avgEntry === null ? null : toNum(wallet?.avgEntry, null);
+    const unitsAfter = unitsBefore + unitsDelta;
+    const cashAfter = cashBefore - unitsDelta * fillPrice;
+
+    let realizedDelta = 0;
+    const closedQty = Math.min(Math.abs(unitsDelta), Math.abs(unitsBefore));
+    if (closedQty > 0 && avgEntryBefore !== null) {
+      if (unitsBefore > 0 && unitsDelta < 0) realizedDelta += (fillPrice - avgEntryBefore) * closedQty;
+      if (unitsBefore < 0 && unitsDelta > 0) realizedDelta += (avgEntryBefore - fillPrice) * closedQty;
+    }
+
+    let avgEntryAfter = avgEntryBefore;
+    if (Math.abs(unitsAfter) <= 1e-9) {
+      avgEntryAfter = null;
+    } else if (unitsBefore === 0 || Math.sign(unitsBefore) !== Math.sign(unitsAfter)) {
+      avgEntryAfter = fillPrice;
+    } else if (Math.sign(unitsBefore) === Math.sign(unitsDelta)) {
+      const previousUnits = Math.abs(unitsBefore);
+      const nextUnits = Math.abs(unitsAfter);
+      avgEntryAfter = (previousUnits * (avgEntryBefore || fillPrice) + Math.abs(unitsDelta) * fillPrice) / Math.max(nextUnits, 1e-9);
+    }
+
+    wallet = {
+      ...wallet,
+      cash: cashAfter,
+      units: unitsAfter,
+      avgEntry: avgEntryAfter,
+      realizedPnl: toNum(wallet?.realizedPnl, 0) + realizedDelta
+    };
+
+    tradeLog.push({
+      id: `oracle-virtual:${timestamp}:${windowIndex}:${Math.round(fillPrice * 1000)}:${Math.round(Math.abs(unitsDelta) * 1000)}`,
+      timestamp,
+      action: unitsDelta > 0 ? 'accumulate' : 'reduce',
+      unitsDelta,
+      unitsAfter,
+      fillPrice,
+      markPrice: price,
+      spreadBps: toNum(point?.spread, 0),
+      realizedDelta,
+      reason,
+      score: Math.abs(unitsDelta),
+      windowIndex
+    });
+  };
 
   const rebalanceToTarget = ({ point, targetUnits, windowIndex = -1, reason = 'oracle-window' }) => {
     let guard = 0;
-    const target = clamp(toNum(targetUnits, 0), 0, safeMaxUnits);
+    const target = clamp(toNum(targetUnits, 0), minUnits, safeMaxUnits);
+    if (shortEnabled) {
+      applyVirtualRebalance({
+        targetUnits: target,
+        point,
+        timestamp: toNum(point?.t, Date.now()),
+        reason,
+        windowIndex
+      });
+      return;
+    }
     while (guard < 200) {
       const units = toNum(wallet?.units, 0);
       const delta = target - units;
@@ -256,7 +338,7 @@ const solveDiscreteWindowOracle = ({
     const window = windowByStartIndex.get(index);
     if (window) {
       const currentUnits = toNum(wallet?.units, 0);
-      const blendedTarget = clamp(currentUnits + (window.discreteTarget - currentUnits) * (1 - smoothBlend), 0, safeMaxUnits);
+      const blendedTarget = clamp(currentUnits + (window.discreteTarget - currentUnits) * (1 - smoothBlend), minUnits, safeMaxUnits);
       window.targetUnits = blendedTarget;
       rebalanceToTarget({
         point,
@@ -278,6 +360,8 @@ const solveDiscreteWindowOracle = ({
 
     wallet = markWallet(wallet, toNum(point?.price, 0));
     equitySeries.push(toNum(wallet?.equity, safeStartCash));
+    positionSeries.push(toNum(wallet?.units, 0));
+    regimeSeries.push(window ? toNum(window.discreteTarget, 0) : regimeSeries[regimeSeries.length - 1] ?? 0);
   }
 
   const endEquity = equitySeries[equitySeries.length - 1] || safeStartCash;
@@ -296,7 +380,9 @@ const solveDiscreteWindowOracle = ({
     },
     equitySeries,
     tradeLog: tradeLog.slice(-320).reverse(),
-    windows
+    windows,
+    regimeSeries,
+    positionSeries
   };
 };
 
@@ -321,10 +407,18 @@ export default function BacktestPage({ snapshot, historyByMarket }) {
   const [solverSortMode, setSolverSortMode] = useState('latest');
   const [solverFeedStrategyId, setSolverFeedStrategyId] = useState('all');
   const [solverStrategyIds, setSolverStrategyIds] = useState(() => STRATEGY_OPTIONS.map((option) => option.id));
+  const [totalSolverMode, setTotalSolverMode] = useState('tensor');
+  const [totalMarketCount, setTotalMarketCount] = useState(18);
+  const [totalStride, setTotalStride] = useState(3);
+  const [totalTopN, setTotalTopN] = useState(4);
+  const [totalMinConfidence, setTotalMinConfidence] = useState(52);
+  const [totalFeeBps, setTotalFeeBps] = useState(8);
+  const [totalHorizon, setTotalHorizon] = useState(3);
   const [oracleWindowSize, setOracleWindowSize] = useState(12);
   const [oracleWindowStep, setOracleWindowStep] = useState(12);
   const [oracleMinMovePct, setOracleMinMovePct] = useState(0.15);
   const [oracleSmoothBlendPct, setOracleSmoothBlendPct] = useState(0);
+  const [oracleMode, setOracleMode] = useState('long-only');
 
   useEffect(() => {
     if (!sortedMarkets.length) {
@@ -419,9 +513,10 @@ export default function BacktestPage({ snapshot, historyByMarket }) {
       windowSize: oracleWindowSize,
       windowStep: oracleWindowStep,
       minMovePct: oracleMinMovePct,
-      smoothBlendPct: oracleSmoothBlendPct
+      smoothBlendPct: oracleSmoothBlendPct,
+      mode: oracleMode
     });
-  }, [activeSeries, maxAbsUnits, oracleMinMovePct, oracleSmoothBlendPct, oracleWindowSize, oracleWindowStep, slippageBps, startCash]);
+  }, [activeSeries, maxAbsUnits, oracleMinMovePct, oracleMode, oracleSmoothBlendPct, oracleWindowSize, oracleWindowStep, slippageBps, startCash]);
 
   const oracleStats = oracleResult?.stats || {
     startCash: Math.max(100, toNum(startCash, 100000)),
@@ -436,6 +531,196 @@ export default function BacktestPage({ snapshot, historyByMarket }) {
     const rows = Array.isArray(oracleResult?.windows) ? oracleResult.windows : [];
     return [...rows].sort((a, b) => Math.abs(toNum(b.movePct, 0)) - Math.abs(toNum(a.movePct, 0))).slice(0, 120);
   }, [oracleResult?.windows]);
+
+  const pdfBuckets = useMemo(() => {
+    return buildPdfBuckets({
+      minPct: -4.5,
+      maxPct: 4.5,
+      stepPct: 0.25
+    });
+  }, []);
+
+  const totalMarketBacktest = useMemo(() => {
+    const selectedUniverse = sortedMarkets.slice(0, Math.max(4, Math.min(48, Math.round(toNum(totalMarketCount, 18)))));
+    if (selectedUniverse.length < 4) {
+      return {
+        stats: {
+          startCash: Math.max(100, toNum(startCash, 100000)),
+          endEquity: Math.max(100, toNum(startCash, 100000)),
+          pnl: 0,
+          returnPct: 0,
+          maxDrawdownPct: 0,
+          cycles: 0
+        },
+        equitySeries: [],
+        cycleRows: [],
+        selectedMarkets: []
+      };
+    }
+
+    const safeSample = Math.max(96, Math.round(toNum(sampleSize, 280)));
+    const seriesByKey = {};
+    let minLength = Number.POSITIVE_INFINITY;
+    const selectedMarkets = [];
+
+    for (const market of selectedUniverse) {
+      const raw = Array.isArray(historyByMarket?.[market.key]) ? historyByMarket[market.key] : [];
+      const normalized = normalizeSeriesRows(raw, Math.max(2, toNum(market?.spreadBps, 12))).slice(-safeSample);
+      if (normalized.length < 40) continue;
+      seriesByKey[market.key] = normalized;
+      minLength = Math.min(minLength, normalized.length);
+      selectedMarkets.push(market);
+    }
+
+    if (selectedMarkets.length < 4 || !Number.isFinite(minLength) || minLength < 40) {
+      return {
+        stats: {
+          startCash: Math.max(100, toNum(startCash, 100000)),
+          endEquity: Math.max(100, toNum(startCash, 100000)),
+          pnl: 0,
+          returnPct: 0,
+          maxDrawdownPct: 0,
+          cycles: 0
+        },
+        equitySeries: [],
+        cycleRows: [],
+        selectedMarkets
+      };
+    }
+
+    const warmup = Math.min(minLength - 1, Math.max(30, Math.round(minLength * 0.28)));
+    const stepStride = Math.max(1, Math.round(toNum(totalStride, 3)));
+    const startPortfolio = createPdfPortfolioState({
+      startCash: Math.max(100, toNum(startCash, 100000))
+    });
+    let portfolio = startPortfolio;
+    let tensorHistory = [];
+    const cycleRows = [];
+    const equitySeries = [];
+
+    for (let stepIndex = warmup; stepIndex < minLength; stepIndex += stepStride) {
+      const stepMarkets = selectedMarkets.map((market) => {
+        const series = seriesByKey[market.key];
+        const point = series[stepIndex];
+        const prev = series[Math.max(0, stepIndex - 1)] || point;
+        const price = Math.max(toNum(point?.price, market?.referencePrice), 1e-9);
+        const prevPrice = Math.max(toNum(prev?.price, price), 1e-9);
+        const changePct = ((price - prevPrice) / prevPrice) * 100;
+        return {
+          ...market,
+          referencePrice: price,
+          spreadBps: Math.max(0.2, toNum(point?.spread, market?.spreadBps)),
+          totalVolume: Math.max(1, toNum(point?.volume, market?.totalVolume)),
+          changePct
+        };
+      });
+
+      const stepHistoryByMarket = {};
+      for (const market of selectedMarkets) {
+        stepHistoryByMarket[market.key] = seriesByKey[market.key].slice(0, stepIndex + 1);
+      }
+
+      const nowTs = toNum(seriesByKey[selectedMarkets[0].key][stepIndex]?.t, Date.now());
+      const baseRankings = rankMarketsByPdf({
+        markets: stepMarkets,
+        historyByMarket: stepHistoryByMarket,
+        buckets: pdfBuckets,
+        horizon: Math.max(1, Math.round(toNum(totalHorizon, 3))),
+        now: nowTs
+      });
+
+      let rankings = baseRankings;
+      let tensorSnapshot = null;
+      let marketImage = null;
+      let tensorPdf = null;
+
+      if (totalSolverMode === 'tensor') {
+        tensorSnapshot = buildMarketTensorSnapshot({
+          markets: stepMarkets,
+          historyByMarket: stepHistoryByMarket,
+          now: nowTs,
+          limit: 160
+        });
+        marketImage = buildMarketImageSnapshot({
+          markets: stepMarkets,
+          tensorSnapshot,
+          depthBands: 11
+        });
+        tensorHistory = [
+          ...tensorHistory,
+          {
+            timestamp: nowTs,
+            tensorDriftPct: toNum(tensorSnapshot?.metrics?.tensorDriftPct, 0),
+            breadth: toNum(tensorSnapshot?.metrics?.breadth, 0),
+            stress: Math.max(0, toNum(tensorSnapshot?.metrics?.stress, 0)),
+            imageImbalance: toNum(marketImage?.aggregate?.imbalance, 0)
+          }
+        ].slice(-520);
+        tensorPdf = buildTensorPdfFromHistory({
+          tensorHistory,
+          buckets: pdfBuckets,
+          horizon: Math.max(1, Math.round(toNum(totalHorizon, 3))),
+          marketImage,
+          tensorSnapshot
+        });
+        rankings = rankMarketsByTensorPdf({
+          baseRankings,
+          tensorSnapshot,
+          marketImage,
+          tensorPdf
+        });
+      }
+
+      const cycle = simulatePdfPortfolioCycle({
+        portfolio,
+        rankings,
+        markets: stepMarkets,
+        topN: Math.max(1, Math.round(toNum(totalTopN, 4))),
+        minConfidencePct: Math.max(0, Math.min(100, toNum(totalMinConfidence, 52))),
+        feeBps: Math.max(0, toNum(totalFeeBps, 8)),
+        timestamp: nowTs
+      });
+
+      portfolio = cycle.portfolio;
+      equitySeries.push(toNum(portfolio?.equity, 0));
+      const best = rankings[0] || null;
+      cycleRows.push({
+        id: `total-cycle:${nowTs}:${stepIndex}`,
+        timestamp: nowTs,
+        stepIndex,
+        picks: cycle?.picked?.length || 0,
+        orders: cycle?.orders?.length || 0,
+        equityStart: toNum(cycle?.equityStart, 0),
+        equityEnd: toNum(cycle?.equityEnd, 0),
+        bestSymbol: best?.symbol || '-',
+        bestAction: best?.recommendation?.action || '-',
+        bestConfidencePct: toNum(best?.confidencePct, 0),
+        bestExpectedMovePct: toNum(best?.expectedMovePct, 0),
+        tensorDriftPct: toNum(tensorSnapshot?.metrics?.tensorDriftPct, 0),
+        aggregateImbalancePct: toNum(marketImage?.aggregate?.imbalance, 0) * 100,
+        tensorMovePct: toNum(tensorPdf?.summary?.expectedMovePct, 0),
+        tensorSkew: toNum(tensorPdf?.summary?.skew, 0)
+      });
+    }
+
+    const endEquity = equitySeries[equitySeries.length - 1] || toNum(startPortfolio?.equity, 0);
+    const pnl = endEquity - toNum(startPortfolio?.equity, 0);
+    const returnPct = (pnl / Math.max(toNum(startPortfolio?.equity, 1), 1e-9)) * 100;
+
+    return {
+      stats: {
+        startCash: toNum(startPortfolio?.equity, 0),
+        endEquity,
+        pnl,
+        returnPct,
+        maxDrawdownPct: calcMaxDrawdownPct(equitySeries),
+        cycles: cycleRows.length
+      },
+      equitySeries,
+      cycleRows: cycleRows.slice(-240).reverse(),
+      selectedMarkets
+    };
+  }, [historyByMarket, pdfBuckets, sampleSize, sortedMarkets, startCash, totalFeeBps, totalHorizon, totalMarketCount, totalMinConfidence, totalSolverMode, totalStride, totalTopN]);
 
   const solverEvaluation = useMemo(() => {
     if (!Array.isArray(activeSeries) || activeSeries.length < 6) {
@@ -574,6 +859,15 @@ export default function BacktestPage({ snapshot, historyByMarket }) {
       const next = [...set];
       return next.length > 0 ? next : [id];
     });
+  };
+
+  const totalMarketStats = totalMarketBacktest?.stats || {
+    startCash: Math.max(100, toNum(startCash, 100000)),
+    endEquity: Math.max(100, toNum(startCash, 100000)),
+    pnl: 0,
+    returnPct: 0,
+    maxDrawdownPct: 0,
+    cycles: 0
   };
 
   return (
@@ -730,10 +1024,18 @@ export default function BacktestPage({ snapshot, historyByMarket }) {
           </span>
         </div>
         <p className="socket-status-copy">
-          Formal discrete-window hindsight solver. For each window it computes the best long-only target, then rebalances and optionally smooths the target transition.
+          Formal discrete-window hindsight solver. For each window it computes the best regime target (long-only or long-short), then rebalances and optionally smooths the target transition.
         </p>
 
         <div className="strategy-control-grid">
+          <label className="control-field">
+            <span>Oracle Mode</span>
+            <select value={oracleMode} onChange={(event) => setOracleMode(event.target.value)}>
+              <option value="long-only">long-only</option>
+              <option value="long-short">long-short</option>
+            </select>
+          </label>
+
           <label className="control-field">
             <span>Window Size (bars)</span>
             <input
@@ -799,6 +1101,25 @@ export default function BacktestPage({ snapshot, historyByMarket }) {
             }
           ]}
         />
+
+        <LineChart
+          title="Window Regime State Trajectory (Discrete -> Smooth)"
+          points={oracleResult?.positionSeries || []}
+          stroke="#ffce73"
+          fillFrom="rgba(255, 194, 94, 0.28)"
+          fillTo="rgba(255, 194, 94, 0.02)"
+          unit=" u"
+          overlays={[
+            {
+              key: 'oracle-regime-target',
+              label: 'discrete regime target',
+              points: oracleResult?.regimeSeries || [],
+              stroke: '#72ecff',
+              strokeWidth: 1.5,
+              dasharray: '6 5'
+            }
+          ]}
+        />
       </GlowCard>
 
       <div className="two-col">
@@ -816,8 +1137,8 @@ export default function BacktestPage({ snapshot, historyByMarket }) {
             keyExtractor={(row) => row.id}
             renderItem={(row) => (
               <article className="tensor-event-row">
-                <strong className={row.discreteTarget > 0 ? 'up' : ''}>
-                  window {fmtInt(row.windowIndex)} | {row.discreteTarget > 0 ? 'accumulate' : 'hold'} | move {fmtPct(row.movePct)}
+                <strong className={row.discreteTarget > 0 ? 'up' : row.discreteTarget < 0 ? 'down' : ''}>
+                  window {fmtInt(row.windowIndex)} | {row.discreteTarget > 0 ? 'accumulate' : row.discreteTarget < 0 ? 'short' : 'hold'} | move {fmtPct(row.movePct)}
                 </strong>
                 <p>
                   target {fmtNum(row.targetUnits, 2)} / discrete {fmtNum(row.discreteTarget, 2)} units | executed {fmtNum(row.executedUnits, 2)} units
@@ -856,6 +1177,129 @@ export default function BacktestPage({ snapshot, historyByMarket }) {
           />
         </GlowCard>
       </div>
+
+      <GlowCard className="panel-card">
+        <div className="section-head">
+          <h2>Total Market Image/PDF Solver Backtest</h2>
+          <span>
+            {totalSolverMode} | {fmtInt(totalMarketStats.cycles)} cycles | {fmtInt(totalMarketBacktest?.selectedMarkets?.length || 0)} markets
+          </span>
+        </div>
+        <p className="socket-status-copy">
+          Cross-market backtest using market image + tensor PDF regime features. This approximates a total-market solver running portfolio cycles over discrete historical steps.
+        </p>
+
+        <div className="strategy-control-grid">
+          <label className="control-field">
+            <span>Solver Engine</span>
+            <select value={totalSolverMode} onChange={(event) => setTotalSolverMode(event.target.value)}>
+              <option value="tensor">tensor + market-image</option>
+              <option value="pdf">pdf only</option>
+            </select>
+          </label>
+
+          <label className="control-field">
+            <span>Markets</span>
+            <input
+              type="number"
+              min={4}
+              max={48}
+              step={1}
+              value={totalMarketCount}
+              onChange={(event) => setTotalMarketCount(Math.max(4, Math.min(48, Math.round(toNum(event.target.value, 18)))))}
+            />
+          </label>
+
+          <label className="control-field">
+            <span>Stride (bars)</span>
+            <input
+              type="number"
+              min={1}
+              max={30}
+              step={1}
+              value={totalStride}
+              onChange={(event) => setTotalStride(Math.max(1, Math.min(30, Math.round(toNum(event.target.value, 3)))))}
+            />
+          </label>
+
+          <label className="control-field">
+            <span>Horizon</span>
+            <select value={totalHorizon} onChange={(event) => setTotalHorizon(Math.max(1, toNum(event.target.value, 3)))}>
+              {PDF_HORIZONS.map((horizon) => (
+                <option key={`total-h:${horizon}`} value={horizon}>
+                  {horizon}
+                </option>
+              ))}
+            </select>
+          </label>
+        </div>
+
+        <div className="strategy-control-grid">
+          <label className="control-field">
+            <span>Top N Picks</span>
+            <input type="number" min={1} max={12} step={1} value={totalTopN} onChange={(event) => setTotalTopN(Math.max(1, Math.min(12, Math.round(toNum(event.target.value, 4)))))} />
+          </label>
+
+          <label className="control-field">
+            <span>Min Confidence %</span>
+            <input
+              type="number"
+              min={0}
+              max={100}
+              step={1}
+              value={totalMinConfidence}
+              onChange={(event) => setTotalMinConfidence(Math.max(0, Math.min(100, Math.round(toNum(event.target.value, 52)))))}
+            />
+          </label>
+
+          <label className="control-field">
+            <span>Fee (bps)</span>
+            <input type="number" min={0} max={60} step={0.5} value={totalFeeBps} onChange={(event) => setTotalFeeBps(Math.max(0, Math.min(60, toNum(event.target.value, 8))))} />
+          </label>
+
+          <label className="control-field">
+            <span>Return / Drawdown</span>
+            <input value={`${fmtPct(totalMarketStats.returnPct)} / ${fmtPct(totalMarketStats.maxDrawdownPct)}`} disabled />
+          </label>
+        </div>
+
+        <LineChart
+          title="Total Market Solver Equity"
+          points={totalMarketBacktest?.equitySeries || []}
+          stroke="#62ffcc"
+          fillFrom="rgba(98, 255, 204, 0.3)"
+          fillTo="rgba(98, 255, 204, 0.02)"
+        />
+      </GlowCard>
+
+      <GlowCard className="panel-card">
+        <div className="section-head">
+          <h2>Total Market Cycle Tape</h2>
+          <span>{fmtInt(totalMarketBacktest?.cycleRows?.length || 0)} rows</span>
+        </div>
+        <FlashList
+          items={totalMarketBacktest?.cycleRows || []}
+          height={320}
+          itemHeight={82}
+          className="tick-flash-list"
+          emptyCopy="No total market cycles yet (insufficient history depth)."
+          keyExtractor={(row) => row.id}
+          renderItem={(row) => (
+            <article className="tensor-event-row">
+              <strong className={row.equityEnd >= row.equityStart ? 'up' : 'down'}>
+                cycle {fmtInt(row.stepIndex)} | {row.bestSymbol} | {row.bestAction}
+              </strong>
+              <p>
+                conf {fmtNum(row.bestConfidencePct, 1)}% | expected {fmtPct(row.bestExpectedMovePct)} | picks {fmtInt(row.picks)} | orders {fmtInt(row.orders)}
+              </p>
+              <small>
+                eq {fmtNum(row.equityStart, 2)} {'->'} {fmtNum(row.equityEnd, 2)} | drift {fmtPct(row.tensorDriftPct)} | img {fmtPct(row.aggregateImbalancePct)} | tensor move{' '}
+                {fmtPct(row.tensorMovePct)} | skew {fmtNum(row.tensorSkew, 3)} | {fmtTime(row.timestamp)}
+              </small>
+            </article>
+          )}
+        />
+      </GlowCard>
 
       <GlowCard className="panel-card">
         <div className="section-head">
