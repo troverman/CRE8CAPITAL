@@ -13,6 +13,8 @@ import { Link } from '../lib/router';
 const MULTIMARKET_URL = import.meta.env.VITE_MULTIMARKET_URL || 'https://multimarket.cre8.xyz';
 const DEPTH_SNAPSHOT_LIMIT = 48;
 const DEPTH_LEVEL_LIMIT = 12;
+const QUOTE_SUFFIXES = ['USDT', 'USDC', 'USD', 'BTC', 'ETH', 'EUR', 'GBP', 'JPY'];
+const STABLE_QUOTES = new Set(['USDT', 'USDC', 'USD']);
 const MARKET_SUBTAB_DEFS = [
   {
     key: 'overview',
@@ -54,6 +56,35 @@ const pickFirstFinite = (...values) => {
     if (Number.isFinite(numeric)) return numeric;
   }
   return null;
+};
+
+const normalizeSymbolText = (value) => String(value || '').toUpperCase().replace(/[^A-Z0-9]/g, '');
+
+const splitSymbolPair = (symbol) => {
+  const normalized = normalizeSymbolText(symbol);
+  if (!normalized) return null;
+  for (const quote of QUOTE_SUFFIXES) {
+    if (normalized.endsWith(quote) && normalized.length > quote.length) {
+      const base = normalized.slice(0, normalized.length - quote.length);
+      if (base.length >= 2) return { base, quote, normalized };
+    }
+  }
+  return null;
+};
+
+const formatSymbolPair = (pair, fallbackSymbol) => {
+  if (!pair) return normalizeSymbolText(fallbackSymbol) || '-';
+  return `${pair.base}/${pair.quote}`;
+};
+
+const getPairBasis = (marketPair, rowPair) => {
+  if (!marketPair || !rowPair) return { label: 'unknown', className: '', score: 1 };
+  if (rowPair.base !== marketPair.base) return { label: `pair mismatch (${rowPair.base} vs ${marketPair.base})`, className: 'down', score: 0 };
+  if (rowPair.quote === marketPair.quote) return { label: 'aligned', className: 'up', score: 4 };
+  if (STABLE_QUOTES.has(rowPair.quote) && STABLE_QUOTES.has(marketPair.quote)) {
+    return { label: `stable proxy (${rowPair.quote} vs ${marketPair.quote})`, className: '', score: 3 };
+  }
+  return { label: `quote mismatch (${rowPair.quote} vs ${marketPair.quote})`, className: 'down', score: 2 };
 };
 
 const normalizeDepthSide = (levels, side) => {
@@ -135,6 +166,7 @@ export default function MarketDetailPage({ marketId, snapshot, historyByMarket, 
   const [showOrderBook3D, setShowOrderBook3D] = useState(false);
   const [depthSnapshots, setDepthSnapshots] = useState([]);
   const [activeSubtab, setActiveSubtab] = useState('overview');
+  const [showRuntimeQuotes, setShowRuntimeQuotes] = useState(false);
 
   useEffect(() => {
     setSocketEnabled(supportsSocketProviders);
@@ -161,6 +193,59 @@ export default function MarketDetailPage({ marketId, snapshot, historyByMarket, 
       enabled: socketLiveEnabled
     });
 
+  const marketPair = useMemo(() => splitSymbolPair(market?.symbol), [market?.symbol]);
+  const latestTickByProviderId = useMemo(() => {
+    const map = new Map();
+    for (const tick of recentTicks) {
+      const providerId = String(tick?.providerId || '');
+      if (!providerId || map.has(providerId)) continue;
+      map.set(providerId, tick);
+    }
+    return map;
+  }, [recentTicks]);
+
+  const socketPrimarySelection = useMemo(() => {
+    const candidates = providerStates
+      .map((provider) => {
+        const series = Array.isArray(seriesByProvider[provider.id]) ? seriesByProvider[provider.id] : [];
+        const latestPoint = series[series.length - 1] || null;
+        const latestTickAt = pickFirstFinite(provider?.lastTickAt, latestPoint?.t, 0);
+        const latestTick = latestTickByProviderId.get(provider.id) || null;
+        const symbol = latestTick?.symbol || depthByProvider[provider.id]?.symbol || null;
+        const pair = splitSymbolPair(symbol);
+        const basis = getPairBasis(marketPair, pair);
+        return {
+          provider,
+          series,
+          latestTickAt: Number.isFinite(latestTickAt) ? latestTickAt : 0,
+          hasSeries: series.length > 0,
+          basis,
+          symbol
+        };
+      })
+      .filter((candidate) => candidate.hasSeries || Number.isFinite(Number(candidate.provider?.price)));
+
+    if (candidates.length === 0) return null;
+
+    const alignedCandidates = candidates.filter((candidate) => candidate.basis.score >= 2);
+    const ranked = alignedCandidates.length > 0 ? alignedCandidates : candidates;
+    ranked.sort((a, b) => {
+      if (a.basis.score !== b.basis.score) return b.basis.score - a.basis.score;
+      if (a.provider.connected !== b.provider.connected) return a.provider.connected ? -1 : 1;
+      if (a.provider.local !== b.provider.local) return a.provider.local ? 1 : -1;
+      if (a.hasSeries !== b.hasSeries) return a.hasSeries ? -1 : 1;
+      if (a.series.length !== b.series.length) return b.series.length - a.series.length;
+      if (a.latestTickAt !== b.latestTickAt) return b.latestTickAt - a.latestTickAt;
+      return 0;
+    });
+
+    return ranked[0];
+  }, [depthByProvider, latestTickByProviderId, marketPair, providerStates, seriesByProvider]);
+
+  const resolvedPrimaryProvider = socketPrimarySelection?.provider || primaryProvider;
+  const resolvedPrimarySeries = socketPrimarySelection?.series || primarySeries;
+  const resolvedPrimaryDepth = resolvedPrimaryProvider ? depthByProvider[resolvedPrimaryProvider.id] || primaryDepth : primaryDepth;
+
   const {
     snapshot: tensorSnapshot,
     tensorSeries,
@@ -175,11 +260,11 @@ export default function MarketDetailPage({ marketId, snapshot, historyByMarket, 
   });
 
   const resolvedDepth = useMemo(() => {
-    const primaryResolved = normalizeDepthPayload(primaryDepth, primaryProvider?.name || primaryProvider?.id || null);
+    const primaryResolved = normalizeDepthPayload(resolvedPrimaryDepth, resolvedPrimaryProvider?.name || resolvedPrimaryProvider?.id || null);
     if (primaryResolved) {
       return {
         depth: primaryResolved,
-        providerName: primaryResolved.providerName || primaryProvider?.name || null,
+        providerName: primaryResolved.providerName || resolvedPrimaryProvider?.name || null,
         sourceLabel: ''
       };
     }
@@ -195,12 +280,12 @@ export default function MarketDetailPage({ marketId, snapshot, historyByMarket, 
       }
     }
 
-    const latestSeriesPoint = primarySeries[primarySeries.length - 1] || null;
+    const latestSeriesPoint = resolvedPrimarySeries[resolvedPrimarySeries.length - 1] || null;
     const runtimeProvider = (market?.providers || []).find((provider) => {
       const price = Number(provider?.price);
       return Number.isFinite(price) && price > 0;
     });
-    const midPrice = pickFirstFinite(primaryProvider?.price, latestSeriesPoint?.price, runtimeProvider?.price, market?.referencePrice);
+    const midPrice = pickFirstFinite(resolvedPrimaryProvider?.price, latestSeriesPoint?.price, runtimeProvider?.price, market?.referencePrice);
     if (!Number.isFinite(midPrice) || midPrice <= 0) {
       return {
         depth: null,
@@ -209,12 +294,12 @@ export default function MarketDetailPage({ marketId, snapshot, historyByMarket, 
       };
     }
 
-    const bid = pickFirstFinite(primaryProvider?.bid, runtimeProvider?.bid);
-    const ask = pickFirstFinite(primaryProvider?.ask, runtimeProvider?.ask);
+    const bid = pickFirstFinite(resolvedPrimaryProvider?.bid, runtimeProvider?.bid);
+    const ask = pickFirstFinite(resolvedPrimaryProvider?.ask, runtimeProvider?.ask);
     const liveSpreadBps =
       Number.isFinite(bid) && Number.isFinite(ask) && ask > bid ? ((ask - bid) / Math.max(midPrice, 1e-9)) * 10000 : null;
     const spreadBps = pickFirstFinite(liveSpreadBps, market?.spreadBps, 8);
-    const quoteVolume = pickFirstFinite(primaryProvider?.volume, runtimeProvider?.volume, market?.totalVolume, 100000);
+    const quoteVolume = pickFirstFinite(resolvedPrimaryProvider?.volume, runtimeProvider?.volume, market?.totalVolume, 100000);
     const baseSize = Math.max(quoteVolume / Math.max(midPrice, 1) / 1900, 0.01);
     const derivedDepth = buildDerivedDepth({
       midPrice,
@@ -222,7 +307,7 @@ export default function MarketDetailPage({ marketId, snapshot, historyByMarket, 
       baseSize,
       symbol: market?.symbol,
       assetClass: market?.assetClass,
-      timestamp: pickFirstFinite(primaryProvider?.lastTickAt, latestSeriesPoint?.t, runtimeProvider?.timestamp)
+      timestamp: pickFirstFinite(resolvedPrimaryProvider?.lastTickAt, latestSeriesPoint?.t, runtimeProvider?.timestamp)
     });
     const normalizedDerived = normalizeDepthPayload(derivedDepth, 'Derived Local Depth');
 
@@ -239,15 +324,15 @@ export default function MarketDetailPage({ marketId, snapshot, historyByMarket, 
     market?.spreadBps,
     market?.symbol,
     market?.totalVolume,
-    primaryDepth,
-    primaryProvider?.ask,
-    primaryProvider?.bid,
-    primaryProvider?.id,
-    primaryProvider?.lastTickAt,
-    primaryProvider?.name,
-    primaryProvider?.price,
-    primaryProvider?.volume,
-    primarySeries,
+    resolvedPrimaryDepth,
+    resolvedPrimaryProvider?.ask,
+    resolvedPrimaryProvider?.bid,
+    resolvedPrimaryProvider?.id,
+    resolvedPrimaryProvider?.lastTickAt,
+    resolvedPrimaryProvider?.name,
+    resolvedPrimaryProvider?.price,
+    resolvedPrimaryProvider?.volume,
+    resolvedPrimarySeries,
     providerStates
   ]);
 
@@ -255,12 +340,14 @@ export default function MarketDetailPage({ marketId, snapshot, historyByMarket, 
     setActiveSubtab('overview');
     setShowOrderBook3D(false);
     setDepthSnapshots([]);
+    setShowRuntimeQuotes(false);
   }, [market?.key]);
 
   useEffect(() => {
     if (!socketLiveEnabled) {
       setShowOrderBook3D(false);
       setDepthSnapshots([]);
+      setShowRuntimeQuotes(true);
     }
   }, [socketLiveEnabled]);
 
@@ -280,7 +367,7 @@ export default function MarketDetailPage({ marketId, snapshot, historyByMarket, 
 
     const timestamp = pickFirstFinite(activeDepth.timestamp, Date.now());
     const snapshotRow = {
-      providerId: String(activeDepth.providerId || primaryProvider?.id || ''),
+      providerId: String(activeDepth.providerId || resolvedPrimaryProvider?.id || ''),
       providerName: String(activeDepth.providerName || resolvedDepth.providerName || ''),
       timestamp,
       bids,
@@ -298,7 +385,7 @@ export default function MarketDetailPage({ marketId, snapshot, historyByMarket, 
       }
       return next;
     });
-  }, [primaryProvider?.id, resolvedDepth.depth, resolvedDepth.providerName, socketLiveEnabled]);
+  }, [resolvedPrimaryProvider?.id, resolvedDepth.depth, resolvedDepth.providerName, socketLiveEnabled]);
 
   if (!market) {
     return (
@@ -320,14 +407,33 @@ export default function MarketDetailPage({ marketId, snapshot, historyByMarket, 
 
   const runtimePriceSeries = history.map((point) => point.price);
   const runtimeSpreadSeries = history.map((point) => point.spread);
-  const socketPriceSeries = primarySeries.map((point) => point.price);
-  const socketSpreadSeries = primarySeries.map((point) => point.spread);
+  const socketPriceSeries = resolvedPrimarySeries.map((point) => point.price);
+  const socketSpreadSeries = resolvedPrimarySeries.map((point) => point.spread);
   const tensorPriceSeries = tensorSeries.map((point) => point.price);
 
-  const useSocketAsPrimary = socketLiveEnabled && socketPriceSeries.length > 1;
-  const priceSeries = useSocketAsPrimary ? socketPriceSeries : runtimePriceSeries;
-  const spreadSeries = useSocketAsPrimary ? socketSpreadSeries : runtimeSpreadSeries;
-  const sourceLabel = useSocketAsPrimary ? `${primaryProvider?.name || 'Socket'} feed` : 'Runtime feed';
+  const socketLatestPoint = resolvedPrimarySeries[resolvedPrimarySeries.length - 1] || null;
+  const socketLatestPrice = pickFirstFinite(resolvedPrimaryProvider?.price, socketLatestPoint?.price);
+  const runtimeLatestPrice = runtimePriceSeries[runtimePriceSeries.length - 1];
+  const socketLatestSpreadFromQuote =
+    Number.isFinite(Number(resolvedPrimaryProvider?.bid)) &&
+    Number.isFinite(Number(resolvedPrimaryProvider?.ask)) &&
+    Number(resolvedPrimaryProvider?.ask) > Number(resolvedPrimaryProvider?.bid) &&
+    Number.isFinite(Number(socketLatestPrice)) &&
+    Number(socketLatestPrice) > 0
+      ? ((Number(resolvedPrimaryProvider?.ask) - Number(resolvedPrimaryProvider?.bid)) / Number(socketLatestPrice)) * 10000
+      : null;
+  const socketLatestSpread = pickFirstFinite(socketLatestSpreadFromQuote, socketLatestPoint?.spread);
+  const runtimeLatestSpread = runtimeSpreadSeries[runtimeSpreadSeries.length - 1];
+  const selectedSocketBasis = socketPrimarySelection?.basis || { score: 0, label: 'unknown' };
+  const useSocketAsPrimary = socketLiveEnabled && selectedSocketBasis.score >= 2 && Number.isFinite(Number(socketLatestPrice));
+  const priceSeries = useSocketAsPrimary ? (socketPriceSeries.length > 0 ? socketPriceSeries : [socketLatestPrice]) : runtimePriceSeries;
+  const spreadSeries = useSocketAsPrimary ? (socketSpreadSeries.length > 0 ? socketSpreadSeries : Number.isFinite(Number(socketLatestSpread)) ? [socketLatestSpread] : []) : runtimeSpreadSeries;
+  const sourceLabel = useSocketAsPrimary
+    ? `${resolvedPrimaryProvider?.name || 'Socket'} socket${selectedSocketBasis.label ? ` (${selectedSocketBasis.label})` : ''}`
+    : 'Runtime snapshot';
+  const displayedReferencePrice = pickFirstFinite(useSocketAsPrimary ? socketLatestPrice : null, runtimeLatestPrice, market.referencePrice);
+  const displayedSpreadBps = pickFirstFinite(useSocketAsPrimary ? socketLatestSpread : null, runtimeLatestSpread, market.spreadBps);
+  const displayedVolume = pickFirstFinite(useSocketAsPrimary ? resolvedPrimaryProvider?.volume : null, market.totalVolume);
   const tensorActionClass = tensorStrategy.action === 'accumulate' ? 'up' : tensorStrategy.action === 'reduce' ? 'down' : '';
   const classicAnalysis = useMemo(() => {
     return buildClassicAnalysis(priceSeries, {
@@ -425,29 +531,55 @@ export default function MarketDetailPage({ marketId, snapshot, historyByMarket, 
     const runtimeRows = market.providers.map((provider) => ({
       id: `runtime:${provider.id}`,
       source: 'runtime',
+      sourceLabel: 'runtime snapshot',
       name: provider.name || provider.id,
+      symbol: market.symbol,
       price: provider.price,
       bid: provider.bid,
       ask: provider.ask,
       volume: provider.volume,
       timestamp: provider.timestamp
-    }));
+    })).map((row) => {
+      const pair = splitSymbolPair(row.symbol);
+      return {
+        ...row,
+        pairLabel: formatSymbolPair(pair, row.symbol),
+        basis: getPairBasis(marketPair, pair)
+      };
+    });
 
     const socketRows = providerStates
       .filter((provider) => provider.price !== null)
       .map((provider) => ({
         id: `socket:${provider.id}`,
         source: 'socket',
+        sourceLabel: 'frontend socket',
         name: provider.name || provider.id,
+        symbol: latestTickByProviderId.get(provider.id)?.symbol || market.symbol,
         price: provider.price,
         bid: provider.bid,
         ask: provider.ask,
         volume: provider.volume,
         timestamp: provider.lastTickAt
-      }));
+      }))
+      .map((row) => {
+        const pair = splitSymbolPair(row.symbol);
+        return {
+          ...row,
+          pairLabel: formatSymbolPair(pair, row.symbol),
+          basis: getPairBasis(marketPair, pair)
+        };
+      });
 
-    return [...runtimeRows, ...socketRows];
-  }, [market.providers, providerStates]);
+    return [...socketRows, ...runtimeRows];
+  }, [latestTickByProviderId, market.providers, market.symbol, marketPair, providerStates]);
+
+  const visibleQuoteRows = useMemo(() => {
+    const socketRows = quoteRows.filter((row) => row.source === 'socket');
+    if (!socketLiveEnabled) return quoteRows;
+    if (showRuntimeQuotes) return quoteRows;
+    return socketRows.length > 0 ? socketRows : quoteRows;
+  }, [quoteRows, showRuntimeQuotes, socketLiveEnabled]);
 
   const multimarketHref = useMemo(() => {
     const base = String(MULTIMARKET_URL || '').trim();
@@ -485,13 +617,13 @@ export default function MarketDetailPage({ marketId, snapshot, historyByMarket, 
             />
             <span>Frontend socket providers</span>
           </label>
-          <small>
-            {supportsSocketProviders
-              ? localFallbackActive
-                ? 'External sockets unavailable, using local synthetic fallback'
-                : 'Binance + Coinbase direct socket feed'
-              : 'Socket providers currently enabled for crypto markets'}
-          </small>
+              <small>
+                {supportsSocketProviders
+                  ? localFallbackActive
+                    ? 'External sockets unavailable, using local synthetic fallback'
+                    : `Frontend socket feed active | external ${externalConnectedCount}/${externalProviderCount} connected`
+                  : 'Socket providers currently enabled for crypto markets'}
+              </small>
         </div>
       </GlowCard>
 
@@ -516,7 +648,7 @@ export default function MarketDetailPage({ marketId, snapshot, historyByMarket, 
           <div className="detail-stat-grid">
             <GlowCard className="stat-card">
               <span>Reference</span>
-              <strong>{fmtNum(market.referencePrice, 4)}</strong>
+              <strong>{fmtNum(displayedReferencePrice, 4)}</strong>
             </GlowCard>
             <GlowCard className="stat-card">
               <span>Change</span>
@@ -524,11 +656,11 @@ export default function MarketDetailPage({ marketId, snapshot, historyByMarket, 
             </GlowCard>
             <GlowCard className="stat-card">
               <span>Spread</span>
-              <strong>{fmtNum(market.spreadBps, 2)} bps</strong>
+              <strong>{fmtNum(displayedSpreadBps, 2)} bps</strong>
             </GlowCard>
             <GlowCard className="stat-card">
               <span>Volume</span>
-              <strong>{fmtCompact(market.totalVolume)}</strong>
+              <strong>{fmtCompact(displayedVolume)}</strong>
             </GlowCard>
           </div>
 
@@ -725,6 +857,7 @@ export default function MarketDetailPage({ marketId, snapshot, historyByMarket, 
                 <p>
                   price {fmtNum(provider.price, 4)} | bid {fmtNum(provider.bid, 4)} | ask {fmtNum(provider.ask, 4)}
                 </p>
+                <small>symbol {latestTickByProviderId.get(provider.id)?.symbol || depthByProvider[provider.id]?.symbol || '-'}</small>
                 <Sparkline data={(seriesByProvider[provider.id] || []).map((point) => point.price)} width={160} height={42} />
                 <small>{provider.error || `last tick ${fmtTime(provider.lastTickAt)}`}</small>
               </article>
@@ -842,30 +975,48 @@ export default function MarketDetailPage({ marketId, snapshot, historyByMarket, 
           <GlowCard className="panel-card">
             <div className="section-head">
               <h2>Provider Quotes</h2>
-              <span>{quoteRows.length} rows</span>
+              <span>{visibleQuoteRows.length} rows</span>
             </div>
+            <p className="socket-status-copy">
+              With frontend sockets enabled, this table defaults to socket quotes to avoid runtime-vs-socket confusion. Toggle runtime rows only for diagnostics.
+            </p>
+            {socketLiveEnabled ? (
+              <div className="socket-toggle-row">
+                <label className="toggle-label">
+                  <input type="checkbox" checked={showRuntimeQuotes} onChange={(event) => setShowRuntimeQuotes(event.target.checked)} />
+                  <span>Include runtime snapshot rows</span>
+                </label>
+                <small>
+                  socket {quoteRows.filter((row) => row.source === 'socket').length} | runtime {quoteRows.filter((row) => row.source === 'runtime').length}
+                </small>
+              </div>
+            ) : null}
             <div className="table-wrap">
               <table>
                 <thead>
                   <tr>
                     <th>Source</th>
                     <th>Provider</th>
+                    <th>Pair</th>
                     <th>Price</th>
                     <th>Bid</th>
                     <th>Ask</th>
                     <th>Volume</th>
+                    <th>Basis</th>
                     <th>At</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {quoteRows.map((provider) => (
+                  {visibleQuoteRows.map((provider) => (
                     <tr key={provider.id}>
-                      <td>{provider.source}</td>
+                      <td>{provider.sourceLabel || provider.source}</td>
                       <td>{provider.name}</td>
+                      <td>{provider.pairLabel}</td>
                       <td>{fmtNum(provider.price, 4)}</td>
                       <td>{fmtNum(provider.bid, 4)}</td>
                       <td>{fmtNum(provider.ask, 4)}</td>
                       <td>{fmtCompact(provider.volume)}</td>
+                      <td className={provider.basis?.className || ''}>{provider.basis?.label || '-'}</td>
                       <td>{fmtTime(provider.timestamp)}</td>
                     </tr>
                   ))}

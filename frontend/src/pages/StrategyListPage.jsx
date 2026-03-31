@@ -1,8 +1,11 @@
 import { useEffect, useMemo, useState } from 'react';
+import WalletAccountSelectField from '../components/WalletAccountSelectField';
 import GlowCard from '../components/GlowCard';
 import { fmtInt, fmtNum, fmtTime } from '../lib/format';
-import { buildStrategyRows } from '../lib/strategyView';
+import { selectActiveWalletAccount } from '../lib/strategyLabSelectors';
+import { buildStrategyRows, toStrategyKey } from '../lib/strategyView';
 import { Link, navigate } from '../lib/router';
+import { useStrategyLabStore } from '../store/strategyLabStore';
 import { useStrategyToggleStore } from '../store/strategyToggleStore';
 
 const resolveEnabled = (strategy, enabledByKey) => {
@@ -17,6 +20,11 @@ export default function StrategyListPage({ snapshot }) {
   const enabledByKey = useStrategyToggleStore((state) => state.enabledByKey);
   const ensureStrategies = useStrategyToggleStore((state) => state.ensureStrategies);
   const setStrategyEnabled = useStrategyToggleStore((state) => state.setStrategyEnabled);
+  const strategyId = useStrategyLabStore((state) => state.strategyId);
+  const enabledStrategyIds = useStrategyLabStore((state) => state.enabledStrategyIds);
+  const walletAccounts = useStrategyLabStore((state) => state.walletAccounts);
+  const activeWalletAccountId = useStrategyLabStore((state) => state.activeWalletAccountId);
+  const setActiveWalletAccount = useStrategyLabStore((state) => state.setActiveWalletAccount);
 
   const strategies = useMemo(() => {
     return buildStrategyRows(snapshot);
@@ -45,6 +53,15 @@ export default function StrategyListPage({ snapshot }) {
       );
     });
   }, [hydratedStrategies, search]);
+
+  const activeWallet = useMemo(() => {
+    return selectActiveWalletAccount(walletAccounts, activeWalletAccountId);
+  }, [activeWalletAccountId, walletAccounts]);
+
+  const selectedRuntimeStrategy = useMemo(() => {
+    const key = toStrategyKey(strategyId);
+    return hydratedStrategies.find((strategy) => strategy.key === key) || null;
+  }, [hydratedStrategies, strategyId]);
 
   const openStrategy = (strategy) => {
     const strategyTarget = strategy?.id || strategy?.name || strategy?.key;
@@ -92,6 +109,37 @@ export default function StrategyListPage({ snapshot }) {
           placeholder="Search strategy name or id"
           aria-label="Search strategies"
         />
+      </GlowCard>
+
+      <GlowCard className="panel-card">
+        <div className="section-head">
+          <h2>Runtime Sync</h2>
+          <span>
+            enabled {fmtInt(enabledStrategyIds.length)} / {fmtInt(hydratedStrategies.length)}
+          </span>
+        </div>
+        <div className="strategy-control-grid">
+          <WalletAccountSelectField
+            label="Active Runtime Wallet"
+            accounts={walletAccounts}
+            value={activeWalletAccountId}
+            onChange={setActiveWalletAccount}
+            emptyLabel="No paper wallets"
+            idPrefix="strategy-list-wallet"
+          />
+        </div>
+        <p className="socket-status-copy">
+          active wallet {activeWallet?.name || '-'} ({activeWallet?.enabled ? 'enabled' : 'paused'}) | strategy focus {selectedRuntimeStrategy?.name || strategyId || '-'} (
+          {selectedRuntimeStrategy?.enabled === false ? 'disabled' : 'enabled'})
+        </p>
+        <div className="section-actions">
+          <Link to="/wallet" className="inline-link">
+            Open wallet runtime
+          </Link>
+          <Link to="/strategy" className="inline-link">
+            Open strategy lab
+          </Link>
+        </div>
       </GlowCard>
 
       <div className="strategy-grid">

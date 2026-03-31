@@ -1,17 +1,12 @@
 import GlowCard from '../components/GlowCard';
 import Sparkline from '../components/Sparkline';
-import { fmtDuration, fmtInt, fmtTime, severityClass } from '../lib/format';
+import { fmtInt, fmtTime, severityClass } from '../lib/format';
 import { getDisplaySignals } from '../lib/signalView';
 import { Link } from '../lib/router';
 
 export default function HomePage({
   snapshot,
-  connected,
-  transport,
-  localFallback,
   syncing,
-  lastSyncedAt,
-  error,
   onRefresh,
   onRestrategy,
   restrategyBusy,
@@ -56,13 +51,6 @@ export default function HomePage({
           </Link>
         </div>
 
-        <div className="hero-status-row">
-          <span className={connected ? 'status-pill online' : 'status-pill'}>{connected ? `Live ${transport}` : 'Disconnected'}</span>
-          {localFallback ? <span className="status-pill">Local fallback feed</span> : null}
-          <span>Last sync {fmtTime(lastSyncedAt)}</span>
-          <span>Uptime {fmtDuration(snapshot.telemetry.uptimeMs)}</span>
-        </div>
-        {error ? <p className="error-copy">{error}</p> : null}
       </GlowCard>
 
       <div className="stat-grid">

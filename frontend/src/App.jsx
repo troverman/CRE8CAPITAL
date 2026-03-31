@@ -24,6 +24,7 @@ import OtherPage from './pages/OtherPage';
 import ProbabilityLabPage from './pages/ProbabilityLabPage';
 import ProviderDetailPage from './pages/ProviderDetailPage';
 import ProviderListPage from './pages/ProviderListPage';
+import PositionListPage from './pages/PositionListPage';
 import StrategyLabPage from './pages/StrategyLabPage';
 import StrategyCreatePage from './pages/StrategyCreatePage';
 import StrategyDetailPage from './pages/StrategyDetailPage';
@@ -47,6 +48,7 @@ const parseRoute = (pathname) => {
   if (routePath === '/exchange') return { name: 'exchange' };
   if (routePath === '/total-market') return { name: 'total-market' };
   if (routePath === '/providers') return { name: 'providers' };
+  if (routePath === '/positions') return { name: 'positions' };
   if (routePath === '/signals') return { name: 'signals' };
   if (routePath === '/decisions') return { name: 'decisions' };
   if (routePath === '/probability') return { name: 'probability' };
@@ -101,6 +103,7 @@ const NotFoundPage = () => {
         <h1>Route not found</h1>
         <p>
           Try `/markets`, `/assets`, `/other`, `/backtest`, `/exchange`, `/total-market`, `/derivatives`, `/knowledge`, `/providers`, `/signals`, `/decisions`, `/probability`, `/strategies`, `/graph`,
+          `/positions`,
           `/strategy`, `/strategy/create`, `/account`,
           `/wallet`,
           `/signal/:id`, `/decision/:id`, `/strategy/:id`, `/wallet/:id`, or `/provider/:id`.
@@ -183,6 +186,8 @@ export default function App() {
       {route.name === 'total-market' ? <TotalMarketLabPage snapshot={snapshot} /> : null}
 
       {route.name === 'providers' ? <ProviderListPage snapshot={snapshot} /> : null}
+
+      {route.name === 'positions' ? <PositionListPage /> : null}
 
       {route.name === 'provider-detail' ? <ProviderDetailPage providerId={route.id} snapshot={snapshot} /> : null}
 

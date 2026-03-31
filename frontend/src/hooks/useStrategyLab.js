@@ -11,6 +11,7 @@ import {
 import { selectActiveWalletAccount } from '../lib/strategyLabSelectors';
 import useSocketProviders from './useSocketProviders';
 import { useStrategyLabStore } from '../store/strategyLabStore';
+import { useStrategyToggleStore } from '../store/strategyToggleStore';
 
 const MIN_INTERVAL_MS = 280;
 const MAX_INTERVAL_MS = 5000;
@@ -80,6 +81,8 @@ export default function useStrategyLab({ snapshot, historyByMarket }) {
   const stepRuntime = useStrategyLabStore((state) => state.stepRuntime);
   const resetRuntime = useStrategyLabStore((state) => state.resetRuntime);
   const setBacktest = useStrategyLabStore((state) => state.setBacktest);
+  const syncRuntimeFromToggleMap = useStrategyToggleStore((state) => state.syncRuntimeFromToggleMap);
+  const syncToggleFromRuntime = useStrategyToggleStore((state) => state.syncFromRuntimeEnabledIds);
 
   const markets = useMemo(() => rankMarkets(snapshot?.markets || []).slice(0, 180), [snapshot?.markets]);
   const selectedMarket = useMemo(() => {
@@ -277,6 +280,14 @@ export default function useStrategyLab({ snapshot, historyByMarket }) {
     if (backtest) return;
     runBacktestNow();
   }, [backtest, runBacktestNow]);
+
+  useEffect(() => {
+    syncRuntimeFromToggleMap();
+  }, [syncRuntimeFromToggleMap]);
+
+  useEffect(() => {
+    syncToggleFromRuntime(enabledStrategyIds);
+  }, [enabledStrategyIds, syncToggleFromRuntime]);
 
   const setRunning = useCallback(
     (nextRunning) => {
