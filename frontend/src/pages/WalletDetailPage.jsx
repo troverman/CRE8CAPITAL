@@ -2,6 +2,7 @@ import { useMemo } from 'react';
 import FlashList from '../components/FlashList';
 import GlowCard from '../components/GlowCard';
 import LineChart from '../components/LineChart';
+import RuntimeExecutionControls from '../components/RuntimeExecutionControls';
 import WalletAccountSelectField from '../components/WalletAccountSelectField';
 import { fmtInt, fmtNum, fmtTime } from '../lib/format';
 import { Link, navigate } from '../lib/router';
@@ -123,10 +124,7 @@ export default function WalletDetailPage({ walletId, snapshot }) {
           </div>
         </div>
         <p>Live account drilldown with execution feed, position updates, and linked signal/decision context.</p>
-        <p className="socket-status-copy">
-          engine mode {executionStrategyMode === 'selected-only' ? 'selected strategy only' : 'best enabled strategy'} | wallet scope{' '}
-          {executionWalletScope === 'active-only' ? 'active wallet only' : 'all enabled wallets'}
-        </p>
+        <RuntimeExecutionControls strategyMode={executionStrategyMode} walletScope={executionWalletScope} showControls={false} summaryPrefix="engine mode" summarySuffix="" />
         <div className="wallet-action-row">
           <div style={{ minWidth: 260 }}>
             <WalletAccountSelectField

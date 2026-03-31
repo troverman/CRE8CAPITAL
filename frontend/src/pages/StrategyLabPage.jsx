@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import FlashList from '../components/FlashList';
 import GlowCard from '../components/GlowCard';
 import LineChart from '../components/LineChart';
+import RuntimeExecutionControls from '../components/RuntimeExecutionControls';
 import WalletAccountSelectField from '../components/WalletAccountSelectField';
 import useStrategyLab from '../hooks/useStrategyLab';
 import { fmtInt, fmtNum, fmtPct, fmtTime } from '../lib/format';
@@ -669,40 +670,21 @@ export default function StrategyLabPage({ snapshot, historyByMarket }) {
               );
             })}
           </div>
-          <div className="strategy-control-grid">
-            <label className="control-field">
-              <span>Execution Strategy</span>
-              <select
-                value={executionStrategyMode}
-                onChange={(event) =>
-                  changeExecutionConfig({
-                    strategyMode: event.target.value
-                  })
-                }
-              >
-                <option value="best-enabled">Best Enabled Strategy</option>
-                <option value="selected-only">Selected Strategy Only</option>
-              </select>
-            </label>
-            <label className="control-field">
-              <span>Wallet Target</span>
-              <select
-                value={executionWalletScope}
-                onChange={(event) =>
-                  changeExecutionConfig({
-                    walletScope: event.target.value
-                  })
-                }
-              >
-                <option value="active-only">Active Wallet Only</option>
-                <option value="all-enabled">All Enabled Wallets</option>
-              </select>
-            </label>
-          </div>
-          <p className="socket-status-copy">
-            Runtime evaluates enabled strategies each tick. Execution mode: {executionStrategyMode === 'selected-only' ? 'selected strategy only' : 'best enabled strategy'} | wallet
-            scope: {executionWalletScope === 'active-only' ? 'active wallet only' : 'all enabled wallets'}.
-          </p>
+          <RuntimeExecutionControls
+            strategyMode={executionStrategyMode}
+            walletScope={executionWalletScope}
+            onStrategyModeChange={(strategyMode) =>
+              changeExecutionConfig({
+                strategyMode
+              })
+            }
+            onWalletScopeChange={(walletScope) =>
+              changeExecutionConfig({
+                walletScope
+              })
+            }
+            summaryPrefix="Runtime evaluates enabled strategies each tick. Engine mode"
+          />
 
           <div className="strategy-risk-grid">
             <label className="control-field">

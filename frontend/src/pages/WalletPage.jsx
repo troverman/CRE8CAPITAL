@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import FlashList from '../components/FlashList';
 import GlowCard from '../components/GlowCard';
 import LineChart from '../components/LineChart';
+import RuntimeExecutionControls from '../components/RuntimeExecutionControls';
 import { fmtCompact, fmtInt, fmtNum, fmtPct, fmtTime } from '../lib/format';
 import { countEnabledWalletAccounts, filterRowsByAccountId, selectActiveWalletAccount } from '../lib/strategyLabSelectors';
 import { createWalletState, executeWalletAction, markWallet } from '../lib/strategyEngine';
@@ -1017,40 +1018,21 @@ export default function WalletPage({ snapshot }) {
           Active wallet {activePaperAccount?.name || '-'} ({activePaperAccount?.enabled ? 'enabled' : 'paused'}) | strategy focus{' '}
           {selectedStrategyStatus?.name || strategyId || '-'} ({selectedStrategyStatus?.enabled === false ? 'disabled' : 'enabled'})
         </p>
-        <div className="strategy-control-grid">
-          <label className="control-field">
-            <span>Execution Strategy</span>
-            <select
-              value={executionStrategyMode}
-              onChange={(event) =>
-                setExecutionConfig({
-                  strategyMode: event.target.value
-                })
-              }
-            >
-              <option value="best-enabled">Best Enabled Strategy</option>
-              <option value="selected-only">Selected Strategy Only</option>
-            </select>
-          </label>
-          <label className="control-field">
-            <span>Wallet Target</span>
-            <select
-              value={executionWalletScope}
-              onChange={(event) =>
-                setExecutionConfig({
-                  walletScope: event.target.value
-                })
-              }
-            >
-              <option value="active-only">Active Wallet Only</option>
-              <option value="all-enabled">All Enabled Wallets</option>
-            </select>
-          </label>
-        </div>
-        <p className="socket-status-copy">
-          Engine mode: {executionStrategyMode === 'selected-only' ? 'selected strategy only' : 'best enabled strategy'} | wallet scope:{' '}
-          {executionWalletScope === 'active-only' ? 'active wallet only' : 'all enabled wallets'}.
-        </p>
+        <RuntimeExecutionControls
+          strategyMode={executionStrategyMode}
+          walletScope={executionWalletScope}
+          onStrategyModeChange={(strategyMode) =>
+            setExecutionConfig({
+              strategyMode
+            })
+          }
+          onWalletScopeChange={(walletScope) =>
+            setExecutionConfig({
+              walletScope
+            })
+          }
+          summaryPrefix="Engine mode"
+        />
         <div className="strategy-lab-tab-row" role="tablist" aria-label="Runtime sync views">
           {RUNTIME_SYNC_TABS.map((tab) => (
             <button

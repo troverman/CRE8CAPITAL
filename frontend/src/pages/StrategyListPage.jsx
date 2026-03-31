@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import WalletAccountSelectField from '../components/WalletAccountSelectField';
 import GlowCard from '../components/GlowCard';
+import RuntimeExecutionControls from '../components/RuntimeExecutionControls';
 import { fmtInt, fmtNum, fmtTime } from '../lib/format';
 import { selectActiveWalletAccount } from '../lib/strategyLabSelectors';
 import { buildStrategyRows, toStrategyKey } from '../lib/strategyView';
@@ -134,10 +135,7 @@ export default function StrategyListPage({ snapshot }) {
           active wallet {activeWallet?.name || '-'} ({activeWallet?.enabled ? 'enabled' : 'paused'}) | strategy focus {selectedRuntimeStrategy?.name || strategyId || '-'} (
           {selectedRuntimeStrategy?.enabled === false ? 'disabled' : 'enabled'})
         </p>
-        <p className="socket-status-copy">
-          engine mode {executionStrategyMode === 'selected-only' ? 'selected strategy only' : 'best enabled strategy'} | wallet scope{' '}
-          {executionWalletScope === 'active-only' ? 'active wallet only' : 'all enabled wallets'}
-        </p>
+        <RuntimeExecutionControls strategyMode={executionStrategyMode} walletScope={executionWalletScope} showControls={false} summaryPrefix="engine mode" summarySuffix="" />
         <div className="section-actions">
           <Link to="/wallet" className="inline-link">
             Open wallet runtime
