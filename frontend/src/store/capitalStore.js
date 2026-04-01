@@ -116,6 +116,34 @@ export const useCapitalStore = create((set, get) => ({
     }
   })),
 
+  seedLocalHistory: (markets) => set((state) => {
+    const nextTicks = { ...state.series.marketTicksById };
+    for (const market of Array.isArray(markets) ? markets : []) {
+      if (!market.key) continue;
+      const base = Math.max(toNum(market.referencePrice, toNum(market.price, 100)), 0.00001);
+      const ticks = [];
+      const now = Date.now();
+      for (let i = 30; i >= 0; i--) {
+        const drift = (Math.random() - 0.5) * 0.008;
+        const p = base * (1 + drift * (30 - i) / 10);
+        ticks.push({
+          id: `seed:${market.key}:${now - i * 3000}`,
+          t: now - i * 3000,
+          price: p,
+          bid: p * 0.999,
+          ask: p * 1.001,
+          spread: toNum(market.spreadBps, 0),
+          volume: Math.random() * 1000,
+          providerId: 'synthetic.seed',
+          providerName: 'Synthetic Seed',
+          source: 'synthetic-seed'
+        });
+      }
+      nextTicks[market.key] = ticks;
+    }
+    return { ...state, series: { ...state.series, marketTicksById: nextTicks } };
+  }),
+
   setActiveRefs: ({ marketId, walletId } = {}) =>
     set((state) => ({
       ...state,

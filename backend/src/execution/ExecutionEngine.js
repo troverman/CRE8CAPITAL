@@ -246,15 +246,15 @@ class ExecutionEngine {
 			const newAvg = newQty > 0
 				? ((prevQty * prevAvg) + (trade.quantity * trade.price)) / newQty
 				: trade.price;
-			this.persistence.upsertPosition(trade.symbol, 'long', newQty, newAvg);
+			this.persistence.upsertPosition(trade.symbol, 'long', newQty, newAvg, trade.strategyId);
 		} else if (trade.side === 'sell') {
 			const prevQty = existing?.quantity || 0;
 			const newQty = Math.max(0, prevQty - trade.quantity);
 			const avgEntry = existing?.avgEntryPrice || trade.price;
 			if (newQty <= 0.00001) {
-				this.persistence.upsertPosition(trade.symbol, 'flat', 0, 0);
+				this.persistence.upsertPosition(trade.symbol, 'flat', 0, 0, trade.strategyId);
 			} else {
-				this.persistence.upsertPosition(trade.symbol, 'long', newQty, avgEntry);
+				this.persistence.upsertPosition(trade.symbol, 'long', newQty, avgEntry, trade.strategyId);
 			}
 		}
 	}

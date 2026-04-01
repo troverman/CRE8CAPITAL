@@ -257,8 +257,13 @@ export default function WalletPage({ snapshot }) {
   const [serverWallet, setServerWallet] = useState(null);
   const [serverPositions, setServerPositions] = useState([]);
   const [serverTrades, setServerTrades] = useState([]);
+  const [offline, setOffline] = useState(false);
 
   useEffect(() => {
+    let retryDelay = 5000;
+    let timer;
+    let alive = true;
+
     const load = async () => {
       try {
         const [w, p, t] = await Promise.all([
@@ -266,14 +271,22 @@ export default function WalletPage({ snapshot }) {
           fetchPositions(),
           fetchTrades()
         ]);
+        if (!alive) return;
         setServerWallet(w);
         setServerPositions(p.items || []);
         setServerTrades(t.items || []);
-      } catch (_) {}
+        setOffline(false);
+        retryDelay = 5000;
+        timer = setTimeout(load, 5000);
+      } catch (_) {
+        if (!alive) return;
+        setOffline(true);
+        retryDelay = Math.min(retryDelay * 1.5, 30000);
+        timer = setTimeout(load, retryDelay);
+      }
     };
     load();
-    const timer = setInterval(load, 5000);
-    return () => clearInterval(timer);
+    return () => { alive = false; clearTimeout(timer); };
   }, []);
 
   const rankedMarkets = useMemo(() => {
@@ -938,6 +951,11 @@ export default function WalletPage({ snapshot }) {
 
   return (
     <section className="page-grid">
+      {offline && (
+        <div style={{background: '#1c1917', border: '1px solid #78350f', borderRadius: 8, padding: '8px 16px', marginBottom: 12, color: '#fbbf24', fontSize: 13}}>
+          Backend offline — showing cached data. Retrying...
+        </div>
+      )}
       <GlowCard className="detail-card">
         <div className="section-head">
           <h1>Wallet Lab</h1>
@@ -965,9 +983,10 @@ export default function WalletPage({ snapshot }) {
 
       {serverWallet ? (
         <GlowCard className="panel-card">
-          <div className="section-head">
-            <h2>Backend Wallet</h2>
-            <span>server state</span>
+          <div className="section-label" style={{display:'flex', alignItems:'center', gap: 8, marginBottom: 12}}>
+            <span style={{background:'#065f46', color:'#34d399', padding:'2px 8px', borderRadius:4, fontSize:11, fontWeight:600}}>LIVE</span>
+            <h2 style={{margin:0}}>Server Wallet</h2>
+            <span style={{color:'#6b7280', fontSize:12}}>Real execution from backend runtime</span>
           </div>
           <div className="detail-stat-grid">
             <GlowCard className="stat-card">
@@ -1115,8 +1134,12 @@ export default function WalletPage({ snapshot }) {
       </GlowCard>
 
       <GlowCard className="panel-card">
+        <div className="section-label" style={{display:'flex', alignItems:'center', gap: 8, marginBottom: 12}}>
+          <span style={{background:'#78350f', color:'#fbbf24', padding:'2px 8px', borderRadius:4, fontSize:11, fontWeight:600}}>PAPER</span>
+          <h2 style={{margin:0}}>Paper Accounts</h2>
+          <span style={{color:'#6b7280', fontSize:12}}>Simulation wallets for Strategy Lab</span>
+        </div>
         <div className="section-head">
-          <h2>Paper Accounts</h2>
           <span>
             {fmtInt(enabledPaperCount)} enabled / {fmtInt(paperAccounts.length)} total
           </span>
@@ -1225,8 +1248,12 @@ export default function WalletPage({ snapshot }) {
       </GlowCard>
 
       <GlowCard className="panel-card wallet-control-card">
+        <div className="section-label" style={{display:'flex', alignItems:'center', gap: 8, marginBottom: 12}}>
+          <span style={{background:'#78350f', color:'#fbbf24', padding:'2px 8px', borderRadius:4, fontSize:11, fontWeight:600}}>PAPER</span>
+          <h2 style={{margin:0}}>Position Creator (Local Sandbox)</h2>
+          <span style={{color:'#6b7280', fontSize:12}}>Paper trading from Strategy Lab</span>
+        </div>
         <div className="section-head">
-          <h2>Position Creator (Local Sandbox)</h2>
           <span>{selectedMarket ? selectedMarket.symbol : 'no market selected'}</span>
         </div>
         <div className="wallet-control-grid">

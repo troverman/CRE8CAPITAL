@@ -83,7 +83,24 @@ export default class LocalSyntheticProvider extends Provider {
     return rows;
   }
 
+  disconnect() {
+    if (this._tickInterval) clearInterval(this._tickInterval);
+    if (this._depthInterval) clearInterval(this._depthInterval);
+    this._tickInterval = null;
+    this._depthInterval = null;
+  }
+
   connect({ market, onTick, onDepth, onStatus }) {
+    // Clear previous connection if any
+    if (this._tickInterval) {
+      clearInterval(this._tickInterval);
+      this._tickInterval = null;
+    }
+    if (this._depthInterval) {
+      clearInterval(this._depthInterval);
+      this._depthInterval = null;
+    }
+
     const symbol = String(market?.symbol || 'SIM');
     const assetClass = String(market?.assetClass || 'unknown');
     const venue = 'LOCAL';
@@ -148,9 +165,15 @@ export default class LocalSyntheticProvider extends Provider {
       });
     }, 1100);
 
+    // Store interval ref for leak prevention
+    this._tickInterval = tickInterval;
+
     return {
       disconnect: () => {
         clearInterval(tickInterval);
+        if (this._tickInterval === tickInterval) {
+          this._tickInterval = null;
+        }
         onStatus?.({
           id: this.id,
           name: this.name,

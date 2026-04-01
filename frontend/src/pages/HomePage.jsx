@@ -18,8 +18,13 @@ export default function HomePage({
   const [wallet, setWallet] = useState(null);
   const [unreadAlerts, setUnreadAlerts] = useState(0);
   const [executionStats, setExecutionStats] = useState(null);
+  const [offline, setOffline] = useState(false);
 
   useEffect(() => {
+    let retryDelay = 10000;
+    let timer;
+    let alive = true;
+
     const load = async () => {
       try {
         const [w, a, e] = await Promise.all([
@@ -27,14 +32,22 @@ export default function HomePage({
           fetchAlerts(1),
           fetchExecution()
         ]);
+        if (!alive) return;
         setWallet(w);
         setUnreadAlerts(a.unreadCount || 0);
         setExecutionStats(e.stats || null);
-      } catch (_) { /* backend may be offline */ }
+        setOffline(false);
+        retryDelay = 10000;
+        timer = setTimeout(load, 10000);
+      } catch (_) {
+        if (!alive) return;
+        setOffline(true);
+        retryDelay = Math.min(retryDelay * 1.5, 30000);
+        timer = setTimeout(load, retryDelay);
+      }
     };
     load();
-    const timer = setInterval(load, 10000);
-    return () => clearInterval(timer);
+    return () => { alive = false; clearTimeout(timer); };
   }, []);
   const topMarkets = snapshot.markets.slice(0, 6);
   const displaySignals = (() => {
@@ -54,6 +67,11 @@ export default function HomePage({
 
   return (
     <section className="page-grid">
+      {offline && (
+        <div style={{background: '#1c1917', border: '1px solid #78350f', borderRadius: 8, padding: '8px 16px', marginBottom: 12, color: '#fbbf24', fontSize: 13}}>
+          Backend offline — showing cached data. Retrying...
+        </div>
+      )}
       <GlowCard className="hero-card hero-card-compact">
         <p className="hero-eyebrow">capital.cre8.xyz</p>
         <h1>MultiMarket Strategy Layer</h1>
@@ -139,7 +157,7 @@ export default function HomePage({
             <Link key={market.key} to={`/market/${encodeURIComponent(market.key)}`} className={`preview-row ${index % 2 === 1 ? 'preview-row-alt' : ''}`}>
               <div>
                 <strong>{market.symbol}</strong>
-                <p>{market.assetClass}</p>
+                <p>{market.assetClass} · {market.providerQuotes?.length || market.providerCount || 0} provider{(market.providerQuotes?.length || market.providerCount || 0) === 1 ? '' : 's'}</p>
               </div>
               <Sparkline data={(historyByMarket[market.key] || []).map((point) => point.price)} />
             </Link>

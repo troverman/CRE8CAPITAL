@@ -31,21 +31,34 @@ const rowKey = (row) => `${String(row?.accountId || '')}|${String(row?.marketKey
 export default function PositionListPage({ snapshot }) {
   const [search, setSearch] = useState('');
   const [serverPositions, setServerPositions] = useState([]);
+  const [offline, setOffline] = useState(false);
   const walletAccounts = useStrategyLabStore((state) => state.walletAccounts);
   const activeWalletAccountId = useStrategyLabStore((state) => state.activeWalletAccountId);
   const positionEvents = useExecutionFeedStore((state) => state.positionEvents);
 
   // Fetch real positions from API
   useEffect(() => {
+    let retryDelay = 5000;
+    let timer;
+    let alive = true;
+
     const load = async () => {
       try {
         const data = await fetchPositions();
+        if (!alive) return;
         setServerPositions(data.items || []);
-      } catch (_) {}
+        setOffline(false);
+        retryDelay = 5000;
+        timer = setTimeout(load, 5000);
+      } catch (_) {
+        if (!alive) return;
+        setOffline(true);
+        retryDelay = Math.min(retryDelay * 1.5, 30000);
+        timer = setTimeout(load, retryDelay);
+      }
     };
     load();
-    const timer = setInterval(load, 5000);
-    return () => clearInterval(timer);
+    return () => { alive = false; clearTimeout(timer); };
   }, []);
 
   const latestByPosition = useMemo(() => {
@@ -125,6 +138,11 @@ export default function PositionListPage({ snapshot }) {
 
   return (
     <section className="page-grid">
+      {offline && (
+        <div style={{background: '#1c1917', border: '1px solid #78350f', borderRadius: 8, padding: '8px 16px', marginBottom: 12, color: '#fbbf24', fontSize: 13}}>
+          Backend offline — showing cached data. Retrying...
+        </div>
+      )}
       <GlowCard className="list-header-card">
         <div className="section-head">
           <h1>Positions</h1>
@@ -168,8 +186,12 @@ export default function PositionListPage({ snapshot }) {
 
       {serverPositions.length > 0 ? (
         <GlowCard className="panel-card">
+          <div className="section-label" style={{display:'flex', alignItems:'center', gap: 8, marginBottom: 12}}>
+            <span style={{background:'#065f46', color:'#34d399', padding:'2px 8px', borderRadius:4, fontSize:11, fontWeight:600}}>LIVE</span>
+            <h2 style={{margin:0}}>Server Positions</h2>
+            <span style={{color:'#6b7280', fontSize:12}}>Real execution from backend runtime</span>
+          </div>
           <div className="section-head">
-            <h2>Server Positions</h2>
             <span>{fmtInt(serverPositions.length)} from backend</span>
           </div>
           <FlashList
@@ -196,8 +218,12 @@ export default function PositionListPage({ snapshot }) {
       ) : null}
 
       <GlowCard className="panel-card">
+        <div className="section-label" style={{display:'flex', alignItems:'center', gap: 8, marginBottom: 12}}>
+          <span style={{background:'#78350f', color:'#fbbf24', padding:'2px 8px', borderRadius:4, fontSize:11, fontWeight:600}}>PAPER</span>
+          <h2 style={{margin:0}}>Simulation Positions</h2>
+          <span style={{color:'#6b7280', fontSize:12}}>Paper trading from Strategy Lab</span>
+        </div>
         <div className="section-head">
-          <h2>Open Position Book</h2>
           <span>latest snapshot per account/market</span>
         </div>
         {filteredPositions.length === 0 ? (
@@ -221,6 +247,7 @@ export default function PositionListPage({ snapshot }) {
                     <strong className={row.units >= 0 ? 'up' : 'down'}>
                       {row.symbol} ({row.assetClass}) | {row.direction} {fmtNum(row.units, 4)}
                     </strong>
+                    <span style={{fontSize:11, color:'#9ca3af', marginLeft:6}}>{row.strategyId !== '-' ? row.strategyId : ''}</span>
                     <span className="position-notional">{fmtNum(row.positionNotional, 2)}</span>
                   </div>
                   <div className="position-bar-track">

@@ -1,3 +1,4 @@
+// This store manages SIMULATED paper trading state — not real server execution
 import { create } from 'zustand';
 import { createWalletState, executeWalletAction, evaluateStrategy, markWallet, STRATEGY_OPTIONS } from '../lib/strategyEngine';
 import { useExecutionFeedStore } from './executionFeedStore';

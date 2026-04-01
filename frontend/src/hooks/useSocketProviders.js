@@ -175,40 +175,46 @@ export default function useSocketProviders({ market, enabled }) {
     let alive = true;
     const connections = [];
 
-    for (const provider of localProviders) {
-      pushStatus({
-        id: provider.id,
-        name: provider.name,
-        connected: false,
-        error: ''
-      });
+    // Wait one tick for worker reset to propagate before connecting local providers
+    const delayTimer = setTimeout(() => {
+      if (!alive) return;
 
-      const connection = provider.connect({
-        market,
-        onTick: (tick) => {
-          if (!alive) return;
-          if (tick.symbol && currentMarketKeyRef.current && !tick.symbol.includes(currentMarketKeyRef.current.split(':')?.[1])) return;
-          pushTick(tick);
-        },
-        onDepth: (depth) => {
-          if (!alive) return;
-          pushDepth(depth);
-        },
-        onStatus: (status) => {
-          if (!alive) return;
-          pushStatus(status);
-        }
-      });
-
-      if (connection && typeof connection.disconnect === 'function') {
-        connections.push({
-          disconnect: connection.disconnect
+      for (const provider of localProviders) {
+        pushStatus({
+          id: provider.id,
+          name: provider.name,
+          connected: false,
+          error: ''
         });
+
+        const connection = provider.connect({
+          market,
+          onTick: (tick) => {
+            if (!alive) return;
+            if (tick.symbol && currentMarketKeyRef.current && !tick.symbol.includes(currentMarketKeyRef.current.split(':')?.[1])) return;
+            pushTick(tick);
+          },
+          onDepth: (depth) => {
+            if (!alive) return;
+            pushDepth(depth);
+          },
+          onStatus: (status) => {
+            if (!alive) return;
+            pushStatus(status);
+          }
+        });
+
+        if (connection && typeof connection.disconnect === 'function') {
+          connections.push({
+            disconnect: connection.disconnect
+          });
+        }
       }
-    }
+    }, 50);
 
     return () => {
       alive = false;
+      clearTimeout(delayTimer);
       for (const connection of connections) {
         connection.disconnect();
       }

@@ -76,8 +76,13 @@ export default function RuntimePage({ snapshot }) {
   const [recentAlerts, setRecentAlerts] = useState([]);
   const [riskForm, setRiskForm] = useState({ stopLossPct: '', takeProfitPct: '', maxDailyLossPct: '', maxPositionPct: '', maxOpenPositions: '' });
   const [riskMessage, setRiskMessage] = useState('');
+  const [offline, setOffline] = useState(false);
 
   useEffect(() => {
+    let retryDelay = 5000;
+    let timer;
+    let alive = true;
+
     const load = async () => {
       try {
         const [exec, risk, alerts] = await Promise.all([
@@ -85,6 +90,7 @@ export default function RuntimePage({ snapshot }) {
           fetchRisk(),
           fetchAlerts(10)
         ]);
+        if (!alive) return;
         setExecutionStats(exec.stats || null);
         setRiskStatus(risk);
         setRecentAlerts(alerts.items || []);
@@ -97,11 +103,18 @@ export default function RuntimePage({ snapshot }) {
             maxOpenPositions: String(toNum(risk.maxOpenPositions, 10))
           });
         }
-      } catch (_) {}
+        setOffline(false);
+        retryDelay = 5000;
+        timer = setTimeout(load, 5000);
+      } catch (_) {
+        if (!alive) return;
+        setOffline(true);
+        retryDelay = Math.min(retryDelay * 1.5, 30000);
+        timer = setTimeout(load, retryDelay);
+      }
     };
     load();
-    const timer = setInterval(load, 5000);
-    return () => clearInterval(timer);
+    return () => { alive = false; clearTimeout(timer); };
   }, []);
 
   const activeWallet = useMemo(() => {
@@ -344,6 +357,11 @@ export default function RuntimePage({ snapshot }) {
 
   return (
     <section className="page-grid">
+      {offline && (
+        <div style={{background: '#1c1917', border: '1px solid #78350f', borderRadius: 8, padding: '8px 16px', marginBottom: 12, color: '#fbbf24', fontSize: 13}}>
+          Backend offline — showing cached data. Retrying...
+        </div>
+      )}
       <GlowCard className="detail-card">
         <div className="section-head">
           <h1>Runtime Monitor</h1>

@@ -7,6 +7,8 @@ const log = require('./logger');
 
 class Persistence {
   constructor() {
+    // Add strategyId column to position table if it doesn't exist
+    try { db.exec('ALTER TABLE position ADD COLUMN strategyId TEXT'); } catch(e) { /* column already exists */ }
     log.info('Persistence', 'SQLite persistence layer initialized');
   }
 
@@ -33,9 +35,9 @@ class Persistence {
     return db.prepare('SELECT * FROM position WHERE quantity > 0.00001 ORDER BY symbol').all();
   }
 
-  upsertPosition(symbol, side, quantity, avgEntryPrice) {
-    db.prepare("INSERT INTO position (symbol, side, quantity, avgEntryPrice, updatedAt) VALUES (?, ?, ?, ?, datetime('now')) ON CONFLICT(symbol) DO UPDATE SET side = excluded.side, quantity = excluded.quantity, avgEntryPrice = excluded.avgEntryPrice, updatedAt = datetime('now')")
-      .run(symbol, side, quantity, avgEntryPrice);
+  upsertPosition(symbol, side, quantity, avgEntryPrice, strategyId) {
+    db.prepare("INSERT INTO position (symbol, side, quantity, avgEntryPrice, strategyId, updatedAt) VALUES (?, ?, ?, ?, ?, datetime('now')) ON CONFLICT(symbol) DO UPDATE SET side = excluded.side, quantity = excluded.quantity, avgEntryPrice = excluded.avgEntryPrice, strategyId = COALESCE(excluded.strategyId, strategyId), updatedAt = datetime('now')")
+      .run(symbol, side, quantity, avgEntryPrice, strategyId || null);
   }
 
   // --- Trades ---

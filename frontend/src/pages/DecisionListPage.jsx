@@ -1,18 +1,24 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import FlashList from '../components/FlashList';
 import GlowCard from '../components/GlowCard';
 import { buildDecisionWalletLinkIndex } from '../lib/decisionWalletLink';
 import { buildDecisionRows } from '../lib/decisionView';
 import { fmtInt, fmtNum, fmtTime } from '../lib/format';
+import { fetchTrades } from '../lib/capitalApi';
 import { Link } from '../lib/router';
 import { useExecutionFeedStore } from '../store/executionFeedStore';
 import { useStrategyLabStore } from '../store/strategyLabStore';
 
 export default function DecisionListPage({ snapshot }) {
   const [search, setSearch] = useState('');
+  const [serverTrades, setServerTrades] = useState([]);
   const walletAccounts = useStrategyLabStore((state) => state.walletAccounts);
   const runtimeDecisionEvents = useStrategyLabStore((state) => state.eventLog);
   const txEvents = useExecutionFeedStore((state) => state.txEvents);
+
+  useEffect(() => {
+    fetchTrades().then(data => setServerTrades(Array.isArray(data?.items) ? data.items : Array.isArray(data) ? data : [])).catch(() => {});
+  }, []);
 
   const marketKeyByIdentity = useMemo(() => {
     const map = new Map();
@@ -91,6 +97,7 @@ export default function DecisionListPage({ snapshot }) {
           renderItem={(decision, index) => {
             const marketKey = marketKeyByIdentity.get(`${String(decision.symbol || '').toUpperCase()}|${String(decision.assetClass || '').toLowerCase()}`);
             const walletLink = walletLinkByDecisionId.get(String(decision.id || '')) || null;
+            const wasExecuted = serverTrades.some(t => t.decisionId === decision.id);
             return (
               <article className="decision-feed-row">
                 <div className="decision-feed-head">
@@ -100,6 +107,9 @@ export default function DecisionListPage({ snapshot }) {
                     </Link>
                   </strong>
                   <span className={`tensor-chip ${decision.action}`}>{decision.action}</span>
+                  <span style={{fontSize:11, padding:'1px 6px', borderRadius:3, background: wasExecuted ? '#065f4622' : '#1f293722', color: wasExecuted ? '#34d399' : '#6b7280'}}>
+                    {wasExecuted ? 'Executed' : 'Not Executed'}
+                  </span>
                 </div>
                 <p>{decision.reason}</p>
                 <div className="decision-feed-links">

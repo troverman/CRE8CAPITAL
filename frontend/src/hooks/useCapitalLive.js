@@ -15,6 +15,7 @@ const CONNECTION_STATE = {
 
 const initialSnapshot = {
   running: false,
+  now: Date.now(),
   telemetry: {},
   controller: {},
   providers: [],
@@ -100,9 +101,10 @@ const mergeSnapshotWithHistory = (previousSnapshot, incomingSnapshot) => {
   const signalTotal = signals.length;
   const decisionTotal = decisions.length;
 
-  return {
+  const merged = {
     ...previous,
     ...incoming,
+    now: Date.now(),
     signals,
     decisions,
     feed,
@@ -121,6 +123,7 @@ const mergeSnapshotWithHistory = (previousSnapshot, incomingSnapshot) => {
       decisionsGenerated: Math.max(toNum(incoming?.telemetry?.decisionsGenerated, 0), decisionTotal)
     }
   };
+  return merged;
 };
 
 export default function useCapitalLive() {
@@ -194,7 +197,12 @@ export default function useCapitalLive() {
       setConnectionState(CONNECTION_STATE.FALLBACK_LOCAL);
       // Clear socket-sourced ticks to prevent mixing real + synthetic
       useCapitalStore.getState().clearSocketSeries?.();
-      setSnapshot((previous) => mergeSnapshotWithHistory(previous, buildLocalFallbackSnapshot(previous)));
+      setSnapshot((previous) => {
+        const fallback = buildLocalFallbackSnapshot(previous);
+        // Seed synthetic history so sparklines have data immediately
+        useCapitalStore.getState().seedLocalHistory?.(fallback.markets || []);
+        return mergeSnapshotWithHistory(previous, fallback);
+      });
       setError(`Runtime unavailable (${loadError.message || 'snapshot fetch failed'}). Using local fallback feed.`);
       setLastSyncedAt(Date.now());
     } finally {

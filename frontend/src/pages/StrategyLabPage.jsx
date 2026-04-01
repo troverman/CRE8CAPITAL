@@ -596,6 +596,11 @@ export default function StrategyLabPage({ snapshot, historyByMarket }) {
 
   return (
     <section className="page-grid">
+      {selectedMarket?._source === 'synthetic' && (
+        <div style={{background: '#1c1917', border: '1px solid #78350f', borderRadius: 8, padding: '8px 16px', marginBottom: 12, color: '#fbbf24', fontSize: 13}}>
+          Running on synthetic data — backend offline
+        </div>
+      )}
       <GlowCard className="detail-card">
         <div className="section-head">
           <h1>Strategy Lab</h1>

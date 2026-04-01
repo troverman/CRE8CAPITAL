@@ -429,6 +429,22 @@ const api = async (req, res) => {
 		}
 	}
 
+	// Decision -> execution audit trace
+	const decisionTraceMatch = req.method === 'GET' && url.pathname.match(/^\/api\/decisions\/([^/]+)\/trace$/);
+	if (decisionTraceMatch) {
+		const decisionId = decodeURIComponent(decisionTraceMatch[1]);
+		const decision = db.prepare('SELECT * FROM decision_log WHERE decisionId = ?').get(decisionId);
+		if (!decision) return sendJson(res, 404, { error: 'Decision not found' });
+
+		const trades = db.prepare('SELECT * FROM trade WHERE decisionId = ?').all(decisionId);
+		const positions = trades.length > 0
+			? db.prepare(`SELECT * FROM position WHERE symbol IN (${trades.map(() => '?').join(',')})`).all(...trades.map(t => t.symbol))
+			: [];
+		const wallet = db.prepare('SELECT * FROM wallet WHERE id = 1').get();
+
+		return sendJson(res, 200, { decision, trades, positions, wallet });
+	}
+
 	const strategyDeleteMatch = req.method === 'DELETE' && url.pathname.match(/^\/api\/strategies\/(.+)$/);
 	if (strategyDeleteMatch) {
 		const strategyId = decodeURIComponent(strategyDeleteMatch[1]);
@@ -473,6 +489,7 @@ const api = async (req, res) => {
 			'/api/signals',
 			'/api/strategies',
 			'/api/decisions',
+			'/api/decisions/:id/trace',
 			'/api/feed',
 			'/api/controller',
 			'/api/trades',

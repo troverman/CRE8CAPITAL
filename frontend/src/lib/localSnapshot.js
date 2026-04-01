@@ -636,7 +636,8 @@ export const buildLocalFallbackSnapshot = (previousSnapshot) => {
       enabled: true
     })),
     strategySummary: {
-      totalDecisions: nextDecisionTotal
+      totalDecisions: nextDecisionTotal,
+      activeStrategies: STRATEGY_OPTIONS.length
     },
     positions: [],
     decisions,
