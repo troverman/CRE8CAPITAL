@@ -3,6 +3,9 @@ import { createWalletState, executeWalletAction, evaluateStrategy, markWallet, S
 import { useExecutionFeedStore } from './executionFeedStore';
 import { useCapitalStore } from './capitalStore';
 
+// NOTE: Wallet sync to capitalStore is handled by useStoreSync() subscriber.
+// Do NOT call syncWalletAccountsToCapital directly from store actions.
+
 const MAX_RUNTIME_POINTS = 480;
 const MAX_EQUITY_POINTS = 480;
 const MAX_EVENTS = 280;
@@ -138,22 +141,7 @@ const createDefaultWalletAccounts = () => {
 const defaultEnabledStrategies = sanitizeEnabledStrategyIds([DEFAULT_PRIMARY_STRATEGY_ID], DEFAULT_PRIMARY_STRATEGY_ID);
 const defaultSignalActionMap = buildSignalActionMap(defaultEnabledStrategies);
 
-const syncWalletAccountsToCapital = ({ walletAccounts = [], activeWalletAccountId = '', marketKey = '' } = {}) => {
-  useCapitalStore.getState().upsertWalletAccounts({
-    walletAccounts,
-    activeWalletId: activeWalletAccountId
-  });
-  if (marketKey) {
-    useCapitalStore.getState().setActiveRefs({
-      marketId: marketKey,
-      walletId: activeWalletAccountId || ''
-    });
-  } else if (activeWalletAccountId) {
-    useCapitalStore.getState().setActiveRefs({
-      walletId: activeWalletAccountId
-    });
-  }
-};
+// syncWalletAccountsToCapital removed — wallet sync is handled by useStoreSync() subscriber in lib/storeSync.js
 
 const baseState = {
   running: true,
@@ -211,12 +199,6 @@ export const useStrategyLabStore = create((set) => ({
             }))
           : state.walletAccounts
     }));
-    const nextState = useStrategyLabStore.getState();
-    syncWalletAccountsToCapital({
-      walletAccounts: nextState.walletAccounts,
-      activeWalletAccountId: nextState.activeWalletAccountId,
-      marketKey: nextState.marketKey
-    });
   },
   hardReset: () => {
     set({
@@ -227,12 +209,6 @@ export const useStrategyLabStore = create((set) => ({
       enabledStrategyIds: defaultEnabledStrategies,
       lastSignalActionByStrategy: defaultSignalActionMap,
       lastSignalAction: defaultSignalActionMap[baseState.strategyId] || 'hold'
-    });
-    const nextState = useStrategyLabStore.getState();
-    syncWalletAccountsToCapital({
-      walletAccounts: nextState.walletAccounts,
-      activeWalletAccountId: nextState.activeWalletAccountId,
-      marketKey: nextState.marketKey
     });
   },
   resetRuntime: ({ price, preserveBacktest = true } = {}) => {
@@ -256,12 +232,6 @@ export const useStrategyLabStore = create((set) => ({
         stepSequence: 0,
         backtest: preserveBacktest ? state.backtest : null
       };
-    });
-    const nextState = useStrategyLabStore.getState();
-    syncWalletAccountsToCapital({
-      walletAccounts: nextState.walletAccounts,
-      activeWalletAccountId: nextState.activeWalletAccountId,
-      marketKey: nextState.marketKey
     });
   },
   clearBacktest: () =>
@@ -295,12 +265,6 @@ export const useStrategyLabStore = create((set) => ({
         wallet: activeWallet.wallet
       };
     });
-    const nextState = useStrategyLabStore.getState();
-    syncWalletAccountsToCapital({
-      walletAccounts: nextState.walletAccounts,
-      activeWalletAccountId: nextState.activeWalletAccountId,
-      marketKey: nextState.marketKey
-    });
   },
   updateWalletAccount: (accountId, patch = {}) => {
     set((state) => {
@@ -323,12 +287,6 @@ export const useStrategyLabStore = create((set) => ({
           };
         })
       };
-    });
-    const nextState = useStrategyLabStore.getState();
-    syncWalletAccountsToCapital({
-      walletAccounts: nextState.walletAccounts,
-      activeWalletAccountId: nextState.activeWalletAccountId,
-      marketKey: nextState.marketKey
     });
   },
   removeWalletAccount: (accountId) => {
@@ -356,12 +314,6 @@ export const useStrategyLabStore = create((set) => ({
         wallet: activeWallet.wallet
       };
     });
-    const nextState = useStrategyLabStore.getState();
-    syncWalletAccountsToCapital({
-      walletAccounts: nextState.walletAccounts,
-      activeWalletAccountId: nextState.activeWalletAccountId,
-      marketKey: nextState.marketKey
-    });
   },
   clearWalletAccounts: () => {
     set((state) => ({
@@ -370,12 +322,6 @@ export const useStrategyLabStore = create((set) => ({
       activeWalletAccountId: '',
       wallet: createWalletState()
     }));
-    const nextState = useStrategyLabStore.getState();
-    syncWalletAccountsToCapital({
-      walletAccounts: nextState.walletAccounts,
-      activeWalletAccountId: nextState.activeWalletAccountId,
-      marketKey: nextState.marketKey
-    });
   },
   setExecutionConfig: ({ strategyMode, walletScope } = {}) =>
     set((state) => ({
@@ -457,12 +403,6 @@ export const useStrategyLabStore = create((set) => ({
         activeWalletAccountId: id,
         wallet: activeWallet.wallet
       };
-    });
-    const nextState = useStrategyLabStore.getState();
-    syncWalletAccountsToCapital({
-      walletAccounts: nextState.walletAccounts,
-      activeWalletAccountId: nextState.activeWalletAccountId,
-      marketKey: nextState.marketKey
     });
   },
   stepRuntime: ({ point, sourceLabel = '', forceEvent = false, signalRows = [], selectedMarket = null }) =>
@@ -721,11 +661,6 @@ export const useStrategyLabStore = create((set) => ({
 
       const nextState = useStrategyLabStore.getState();
       const activeMarketId = selectedMarket?.key || nextState.marketKey || '';
-      syncWalletAccountsToCapital({
-        walletAccounts: nextState.walletAccounts,
-        activeWalletAccountId: nextState.activeWalletAccountId,
-        marketKey: activeMarketId
-      });
       if (activeMarketId) {
         const tensorPoint = {
           t: toTs(point?.t || Date.now()),
@@ -781,8 +716,4 @@ export const useStrategyLabStore = create((set) => ({
     }
 }));
 
-syncWalletAccountsToCapital({
-  walletAccounts: baseState.walletAccounts,
-  activeWalletAccountId: baseState.activeWalletAccountId,
-  marketKey: baseState.marketKey
-});
+// Initial wallet sync is handled by useStoreSync() subscriber in lib/storeSync.js

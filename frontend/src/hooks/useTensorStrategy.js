@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { MAX_TENSOR_SERIES } from '../lib/constants';
 
-const MAX_SERIES_POINTS = 320;
+const MAX_SERIES_POINTS = MAX_TENSOR_SERIES;
 const MAX_EVENTS = 72;
 const ACTION_COOLDOWN_MS = 12000;
 const MAX_POSITION_UNITS = 12;

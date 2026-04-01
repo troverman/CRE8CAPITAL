@@ -4,6 +4,7 @@ import { toStrategyKey } from '../lib/strategyView';
 import { useStrategyLabStore } from './strategyLabStore';
 
 const STORAGE_KEY = 'cre8capital.strategy-toggle.v2';
+const STORAGE_VERSION = 2;
 const RUNTIME_STRATEGY_IDS = STRATEGY_OPTIONS.map((strategy) => String(strategy?.id || '')).filter((id) => Boolean(id));
 const RUNTIME_STRATEGY_KEYS = RUNTIME_STRATEGY_IDS.map((id) => toStrategyKey(id));
 const STRATEGY_ID_BY_KEY = new Map(RUNTIME_STRATEGY_IDS.map((id) => [toStrategyKey(id), id]));
@@ -15,8 +16,15 @@ const readStoredMap = () => {
     if (!raw) return {};
     const parsed = JSON.parse(raw);
     if (!parsed || typeof parsed !== 'object') return {};
+    // Version check: discard stale data when strategy list changes
+    if (parsed._version !== STORAGE_VERSION) {
+      window.localStorage.removeItem(STORAGE_KEY);
+      return {};
+    }
+    const source = parsed.map && typeof parsed.map === 'object' ? parsed.map : parsed;
     const next = {};
-    for (const [key, value] of Object.entries(parsed)) {
+    for (const [key, value] of Object.entries(source)) {
+      if (key.startsWith('_')) continue;
       const normalized = toStrategyKey(key);
       if (!normalized) continue;
       next[normalized] = Boolean(value);
@@ -30,7 +38,11 @@ const readStoredMap = () => {
 const writeStoredMap = (map) => {
   if (typeof window === 'undefined') return;
   try {
-    window.localStorage.setItem(STORAGE_KEY, JSON.stringify(map));
+    window.localStorage.setItem(STORAGE_KEY, JSON.stringify({
+      _version: STORAGE_VERSION,
+      map,
+      _updatedAt: Date.now()
+    }));
   } catch (error) {
     // noop
   }

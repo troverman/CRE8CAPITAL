@@ -119,7 +119,17 @@ export const useExecutionFeedStore = create((set) => ({
     if (!wallet) return;
 
     const context = buildContext(payload);
-    const pointPrice = toNum(payload?.point?.price, wallet.markPrice || 0);
+    // Enrich with latest market price from capitalStore to avoid stale point.price
+    const markets = useCapitalStore.getState().entities?.marketsById || {};
+    const marketSymbol = context.symbol || '';
+    const matchedMarket = marketSymbol
+      ? Object.values(markets).find((m) => m.symbol === marketSymbol)
+      : null;
+    const latestPrice = matchedMarket?.referencePrice || null;
+    const pointPrice = toNum(
+      latestPrice || payload?.point?.price,
+      wallet.markPrice || 0
+    );
     const timestamp = Math.max(0, Math.round(toNum(payload?.timestamp, payload?.point?.t || Date.now())));
     const walletSnapshot = buildWalletSnapshot(wallet, pointPrice);
     const actionRaw = String(payload?.action || payload?.signal?.action || 'hold').toLowerCase();

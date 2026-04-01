@@ -107,6 +107,15 @@ export const useCapitalStore = create((set, get) => ({
 
   hardResetCapitalState: () => set(() => ({ ...stateTemplate })),
 
+  clearSocketSeries: () => set((state) => ({
+    ...state,
+    series: {
+      ...state.series,
+      marketTicksById: {},
+      marketDepthById: {},
+    }
+  })),
+
   setActiveRefs: ({ marketId, walletId } = {}) =>
     set((state) => ({
       ...state,

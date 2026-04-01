@@ -138,12 +138,16 @@ const sanitizeDepthSide = (levels, side) => {
   return mapped;
 };
 
+let lastApplyTime = 0;
+const MIN_APPLY_INTERVAL = 100;
+
 export const useSocketFeedStore = create((set) => ({
   ...baseState,
   resetForMarket: (marketKey) => {
     useCapitalStore.getState().setActiveRefs({
       marketId: marketKey || ''
     });
+    lastApplyTime = 0;
     set({
       ...baseState,
       marketKey: marketKey || null
@@ -151,6 +155,9 @@ export const useSocketFeedStore = create((set) => ({
   },
   applyWorkerSnapshot: (payload) => {
     if (!payload || typeof payload !== 'object') return;
+    const now = Date.now();
+    if (now - lastApplyTime < MIN_APPLY_INTERVAL) return;
+    lastApplyTime = now;
     useCapitalStore.getState().ingestSocketSnapshot(payload);
     set((state) => ({
       marketKey: payload.marketKey ?? state.marketKey,

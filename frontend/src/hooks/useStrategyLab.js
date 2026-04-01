@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   buildScenarioSeries,
   runBacktest,
@@ -8,6 +8,7 @@ import {
   STRATEGY_OPTIONS,
   toNum
 } from '../lib/strategyEngine';
+import { MAX_LIVE_HISTORY, MAX_TENSOR_SERIES } from '../lib/constants';
 import { selectActiveWalletAccount } from '../lib/strategyLabSelectors';
 import useSocketProviders from './useSocketProviders';
 import { useStrategyLabStore } from '../store/strategyLabStore';
@@ -106,7 +107,7 @@ export default function useStrategyLab({ snapshot, historyByMarket }) {
   const liveHistorySeries = useMemo(() => {
     if (!selectedMarket?.key) return [];
     const raw = historyByMarket?.[selectedMarket.key] || [];
-    return sanitizeSeries(raw).slice(-360);
+    return sanitizeSeries(raw).slice(-MAX_LIVE_HISTORY);
   }, [historyByMarket, selectedMarket?.key]);
 
   const basePrice = Math.max(
@@ -118,7 +119,7 @@ export default function useStrategyLab({ snapshot, historyByMarket }) {
     return buildScenarioSeries({
       scenarioId,
       basePrice,
-      length: 360,
+      length: MAX_LIVE_HISTORY,
       now: Date.now(),
       symbol: selectedMarket?.symbol || 'SIM'
     });
@@ -242,8 +243,8 @@ export default function useStrategyLab({ snapshot, historyByMarket }) {
   }, [intervalMs, running, stepOnce]);
 
   const runBacktestNow = useCallback(() => {
-    const historySeries = liveHistorySeries.slice(-320);
-    const fallbackSeries = scenarioSeries.slice(-320);
+    const historySeries = liveHistorySeries.slice(-MAX_TENSOR_SERIES);
+    const fallbackSeries = scenarioSeries.slice(-MAX_TENSOR_SERIES);
     const dataSeries = sourceId === 'market-feed' && historySeries.length >= MIN_BACKTEST_POINTS ? historySeries : fallbackSeries;
     const result = runBacktest({
       series: dataSeries,
@@ -279,10 +280,20 @@ export default function useStrategyLab({ snapshot, historyByMarket }) {
     selectedMarket?.symbol
   ]);
 
+  // Explicit backtest trigger key — replaces the old effect that checked
+  // `if (backtest) return; runBacktestNow()` which created an infinite loop
+  // when resetRuntime nulled out backtest (Effect A) causing Effect B to re-run.
+  const [backtestKey, setBacktestKey] = useState(0);
+
   useEffect(() => {
-    if (backtest) return;
+    setBacktestKey((k) => k + 1);
+  }, [selectedMarket?.key, sourceId, strategyId]);
+
+  useEffect(() => {
+    if (backtestKey === 0) return; // Skip initial mount
+    if (!liveHistorySeries || liveHistorySeries.length < 2) return;
     runBacktestNow();
-  }, [backtest, runBacktestNow]);
+  }, [backtestKey]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     syncRuntimeFromToggleMap();

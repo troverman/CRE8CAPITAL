@@ -15,6 +15,8 @@ export default function useSocketProviders({ market, enabled }) {
   const [localFallbackActive, setLocalFallbackActive] = useState(false);
 
   const marketKey = market?.key || null;
+  const currentMarketKeyRef = useRef(marketKey);
+  currentMarketKeyRef.current = marketKey;
 
   useEffect(() => {
     resetForMarket(marketKey);
@@ -110,6 +112,7 @@ export default function useSocketProviders({ market, enabled }) {
         market,
         onTick: (tick) => {
           if (!alive) return;
+          if (tick.symbol && currentMarketKeyRef.current && !tick.symbol.includes(currentMarketKeyRef.current.split(':')?.[1])) return;
           pushTick(tick);
         },
         onDepth: (depth) => {
@@ -184,6 +187,7 @@ export default function useSocketProviders({ market, enabled }) {
         market,
         onTick: (tick) => {
           if (!alive) return;
+          if (tick.symbol && currentMarketKeyRef.current && !tick.symbol.includes(currentMarketKeyRef.current.split(':')?.[1])) return;
           pushTick(tick);
         },
         onDepth: (depth) => {

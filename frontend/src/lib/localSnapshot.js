@@ -534,7 +534,9 @@ export const buildLocalFallbackSnapshot = (previousSnapshot) => {
       gamma,
       vega,
       theta,
-      updatedAt: now
+      updatedAt: now,
+      _source: 'synthetic',
+      _generatedAt: now
     };
   });
 

@@ -6,6 +6,7 @@ import useCapitalLive from './hooks/useCapitalLive';
 import useMarketHistory from './hooks/useMarketHistory';
 import { fmtTime } from './lib/format';
 import { usePathname } from './lib/router';
+import { useStoreSync } from './lib/storeSync';
 import AssetDetailPage from './pages/AssetDetailPage';
 import AssetListPage from './pages/AssetListPage';
 import AccountPage from './pages/AccountPage';
@@ -117,6 +118,7 @@ const NotFoundPage = () => {
 };
 
 export default function App() {
+  useStoreSync(); // Cross-store subscriptions (wallet sync strategyLab → capital)
   const pathname = usePathname();
   const route = useMemo(() => parseRoute(pathname), [pathname]);
 

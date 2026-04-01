@@ -2,6 +2,16 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { getSnapshotUrl, getStreamUrl, getWsUrl, restrategyUrl } from '../lib/capitalApi';
 import { buildLocalFallbackSnapshot } from '../lib/localSnapshot';
 import { useCapitalStore } from '../store/capitalStore';
+import { MAX_SIGNAL_HISTORY, MAX_DECISION_HISTORY, MAX_FEED_HISTORY } from '../lib/constants';
+
+const CONNECTION_STATE = {
+  BOOTING: 'booting',
+  CONNECTED_WS: 'connected_ws',
+  CONNECTED_SSE: 'connected_sse',
+  CONNECTED_POLLING: 'connected_polling',
+  FALLBACK_LOCAL: 'fallback_local',
+  DISCONNECTED: 'disconnected',
+};
 
 const initialSnapshot = {
   running: false,
@@ -34,9 +44,9 @@ const liveLimits = {
   feedLimit: 180
 };
 
-const SIGNAL_HISTORY_MAX = 960;
-const DECISION_HISTORY_MAX = 960;
-const FEED_HISTORY_MAX = 420;
+const SIGNAL_HISTORY_MAX = MAX_SIGNAL_HISTORY;
+const DECISION_HISTORY_MAX = MAX_DECISION_HISTORY;
+const FEED_HISTORY_MAX = MAX_FEED_HISTORY;
 const FIVE_MINUTES_MS = 5 * 60 * 1000;
 
 const toNum = (value, fallback = 0) => {
@@ -87,21 +97,8 @@ const mergeSnapshotWithHistory = (previousSnapshot, incomingSnapshot) => {
   const now = Date.now();
   const signalsFiveMinutes = signals.filter((row) => rowTimestamp(row) >= now - FIVE_MINUTES_MS).length;
 
-  const signalTotal = Math.max(
-    toNum(incoming?.signalSummary?.total, 0),
-    toNum(incoming?.telemetry?.signalsGenerated, 0),
-    toNum(previous?.signalSummary?.total, 0),
-    toNum(previous?.telemetry?.signalsGenerated, 0),
-    signals.length
-  );
-
-  const decisionTotal = Math.max(
-    toNum(incoming?.strategySummary?.totalDecisions, 0),
-    toNum(incoming?.telemetry?.decisionsGenerated, 0),
-    toNum(previous?.strategySummary?.totalDecisions, 0),
-    toNum(previous?.telemetry?.decisionsGenerated, 0),
-    decisions.length
-  );
+  const signalTotal = signals.length;
+  const decisionTotal = decisions.length;
 
   return {
     ...previous,
@@ -128,21 +125,25 @@ const mergeSnapshotWithHistory = (previousSnapshot, incomingSnapshot) => {
 
 export default function useCapitalLive() {
   const [snapshot, setSnapshot] = useState(initialSnapshot);
-  const [connected, setConnected] = useState(false);
-  const [localFallback, setLocalFallback] = useState(false);
+  const [connectionState, setConnectionState] = useState(CONNECTION_STATE.BOOTING);
   const [loading, setLoading] = useState(true);
   const [syncing, setSyncing] = useState(false);
-  const [transport, setTransport] = useState('boot');
   const [lastSyncedAt, setLastSyncedAt] = useState(null);
   const [error, setError] = useState('');
   const [restrategyBusy, setRestrategyBusy] = useState(false);
   const [actionMessage, setActionMessage] = useState('');
+
+  // Derived booleans for backward compatibility
+  const connected = connectionState.startsWith('connected');
+  const localFallback = connectionState === CONNECTION_STATE.FALLBACK_LOCAL;
+  const transport = connectionState === CONNECTION_STATE.BOOTING ? 'boot' : connectionState.replace('connected_', '').replace('fallback_', '');
 
   const requestRef = useRef({ id: 0, controller: null });
   const wsRef = useRef(null);
   const streamRef = useRef(null);
   const pollTimerRef = useRef(null);
   const mountedRef = useRef(false);
+  const restrategyAbortRef = useRef(null);
 
   const stopPolling = useCallback(() => {
     if (pollTimerRef.current) {
@@ -184,16 +185,15 @@ export default function useCapitalLive() {
 
       if (!mountedRef.current || requestId !== requestRef.current.id) return;
       setSnapshot((previous) => mergeSnapshotWithHistory(previous, payload));
-      setConnected(true);
-      setLocalFallback(false);
+      setConnectionState((prev) => prev.startsWith('connected') ? prev : CONNECTION_STATE.CONNECTED_POLLING);
       setError('');
       setLastSyncedAt(Date.now());
     } catch (loadError) {
       if (loadError.name === 'AbortError') return;
       if (!mountedRef.current || requestId !== requestRef.current.id) return;
-      setConnected(false);
-      setLocalFallback(true);
-      setTransport('local');
+      setConnectionState(CONNECTION_STATE.FALLBACK_LOCAL);
+      // Clear socket-sourced ticks to prevent mixing real + synthetic
+      useCapitalStore.getState().clearSocketSeries?.();
       setSnapshot((previous) => mergeSnapshotWithHistory(previous, buildLocalFallbackSnapshot(previous)));
       setError(`Runtime unavailable (${loadError.message || 'snapshot fetch failed'}). Using local fallback feed.`);
       setLastSyncedAt(Date.now());
@@ -206,7 +206,7 @@ export default function useCapitalLive() {
 
   const startPolling = useCallback(() => {
     stopPolling();
-    setTransport('polling');
+    setConnectionState(CONNECTION_STATE.CONNECTED_POLLING);
     pollTimerRef.current = setInterval(() => {
       loadSnapshot();
     }, 3000);
@@ -220,14 +220,13 @@ export default function useCapitalLive() {
 
     const eventSource = new EventSource(getStreamUrl(liveLimits));
     streamRef.current = eventSource;
-    setTransport('stream');
+    setConnectionState(CONNECTION_STATE.CONNECTED_SSE);
 
     const onSnapshot = (event) => {
       const payload = parseEventData(event.data);
       if (!payload || !mountedRef.current) return;
       setSnapshot((previous) => mergeSnapshotWithHistory(previous, payload));
-      setConnected(true);
-      setLocalFallback(false);
+      setConnectionState(CONNECTION_STATE.CONNECTED_SSE);
       setError('');
       setLastSyncedAt(Date.now());
       setLoading(false);
@@ -237,7 +236,7 @@ export default function useCapitalLive() {
     eventSource.onerror = () => {
       if (!mountedRef.current) return;
       closeStream();
-      setConnected(false);
+      setConnectionState(CONNECTION_STATE.DISCONNECTED);
       setError('Live stream disconnected. Falling back to polling.');
       startPolling();
     };
@@ -252,7 +251,7 @@ export default function useCapitalLive() {
     try {
       const ws = new WebSocket(getWsUrl());
       wsRef.current = ws;
-      setTransport('websocket');
+      setConnectionState(CONNECTION_STATE.CONNECTED_WS);
       let didFallback = false;
 
       const fallbackToSSE = (reason) => {
@@ -265,7 +264,7 @@ export default function useCapitalLive() {
 
       ws.onopen = () => {
         if (!mountedRef.current) return;
-        setConnected(true);
+        setConnectionState(CONNECTION_STATE.CONNECTED_WS);
         setError('');
         setLoading(false);
       };
@@ -277,8 +276,7 @@ export default function useCapitalLive() {
 
         if (msg.type === 'snapshot' && msg.data) {
           setSnapshot((previous) => mergeSnapshotWithHistory(previous, msg.data));
-          setConnected(true);
-          setLocalFallback(false);
+          setConnectionState(CONNECTION_STATE.CONNECTED_WS);
           setError('');
           setLastSyncedAt(Date.now());
           setLoading(false);
@@ -315,17 +313,24 @@ export default function useCapitalLive() {
       if (requestRef.current.controller) {
         requestRef.current.controller.abort();
       }
+      if (restrategyAbortRef.current) {
+        restrategyAbortRef.current.abort();
+      }
     };
   }, [closeWs, closeStream, loadSnapshot, setupWebSocket, stopPolling]);
 
   const triggerRestrategy = useCallback(
     async (reason) => {
+      if (restrategyAbortRef.current) restrategyAbortRef.current.abort();
+      const controller = new AbortController();
+      restrategyAbortRef.current = controller;
       setRestrategyBusy(true);
       setActionMessage('');
       try {
         const response = await fetch(restrategyUrl, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
+          signal: controller.signal,
           body: JSON.stringify({
             reason: reason || 'manual rebalance check',
             source: 'capital-dashboard'
@@ -336,9 +341,10 @@ export default function useCapitalLive() {
         const payload = await response.json();
         setActionMessage(`Restrategy queued at ${new Date(payload.request?.requestedAt || Date.now()).toLocaleTimeString()}`);
       } catch (triggerError) {
+        if (triggerError.name === 'AbortError') return;
         setActionMessage(`Restrategy failed: ${triggerError.message}`);
       } finally {
-        setRestrategyBusy(false);
+        if (!controller.signal.aborted) setRestrategyBusy(false);
       }
     },
     []
@@ -348,7 +354,11 @@ export default function useCapitalLive() {
     const markets = Array.isArray(snapshot?.markets) ? snapshot.markets : [];
     const providers = Array.isArray(snapshot?.providers) ? snapshot.providers : [];
     if (markets.length > 0) {
-      useCapitalStore.getState().upsertMarkets(markets);
+      // Mark real backend data so components can distinguish from synthetic
+      const marked = markets.map((m) =>
+        m._source ? m : { ...m, _source: 'backend' }
+      );
+      useCapitalStore.getState().upsertMarkets(marked);
     }
     if (providers.length > 0) {
       useCapitalStore.getState().upsertProviders(providers);

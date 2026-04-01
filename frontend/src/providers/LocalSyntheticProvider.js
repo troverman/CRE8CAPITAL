@@ -1,5 +1,7 @@
 import Provider from './Provider';
 
+const PRICE_FLOOR = 0.00001;
+
 const toNum = (value, fallback) => {
   const num = Number(value);
   return Number.isFinite(num) ? num : fallback;
@@ -25,8 +27,8 @@ const buildSyntheticDepth = ({ midPrice, spreadBps, levels = 18 }) => {
   for (let i = 1; i <= levels; i += 1) {
     const step = baseStep * i * randomBetween(0.86, 1.28);
     const size = randomBetween(0.45, 5.2) * Math.max(1, midPrice * 0.002);
-    const bidPrice = Math.max(midPrice - step, 0.0000001);
-    const askPrice = Math.max(midPrice + step, 0.0000001);
+    const bidPrice = Math.max(midPrice - step, PRICE_FLOOR);
+    const askPrice = Math.max(midPrice + step, PRICE_FLOOR);
 
     bids.push({ price: bidPrice, size });
     asks.push({ price: askPrice, size: size * randomBetween(0.86, 1.22) });
@@ -53,7 +55,7 @@ export default class LocalSyntheticProvider extends Provider {
     const config = HISTORY_WINDOWS[window] || HISTORY_WINDOWS['1h'];
     const now = Date.now();
     const symbol = String(market?.symbol || 'SIM');
-    const basePrice = Math.max(toNum(market?.referencePrice, 100), 0.00001);
+    const basePrice = Math.max(toNum(market?.referencePrice, 100), PRICE_FLOOR);
     const baseSpreadBps = Math.max(toNum(market?.spreadBps, 8), 0.5);
     const volumeAnchor = Math.max(toNum(market?.totalVolume, 100000), 1);
     const trendBias = Math.max(Math.min(toNum(market?.changePct, 0) / 100, 0.006), -0.006);
@@ -63,7 +65,7 @@ export default class LocalSyntheticProvider extends Provider {
 
     for (let index = 0; index < config.points; index += 1) {
       const drift = randomBetween(-0.0018, 0.0018) + trendBias * 0.12;
-      cursorPrice = Math.max(cursorPrice * (1 + drift), 0.000001);
+      cursorPrice = Math.max(cursorPrice * (1 + drift), PRICE_FLOOR);
       const spread = Math.max(baseSpreadBps + randomBetween(-1.2, 1.2), 0.35);
       const t = now - (config.points - 1 - index) * config.stepMs;
       rows.push({
@@ -86,7 +88,8 @@ export default class LocalSyntheticProvider extends Provider {
     const assetClass = String(market?.assetClass || 'unknown');
     const venue = 'LOCAL';
 
-    let anchorPrice = Math.max(toNum(market?.referencePrice, 100), 0.00001);
+    const seedReferencePrice = Math.max(toNum(market?.referencePrice, 100), PRICE_FLOOR);
+    let anchorPrice = seedReferencePrice;
     let anchorSpreadBps = Math.max(toNum(market?.spreadBps, 8), 0.5);
 
     onStatus?.({
@@ -98,7 +101,11 @@ export default class LocalSyntheticProvider extends Provider {
 
     const tickInterval = setInterval(() => {
       const drift = randomBetween(-0.0035, 0.0035);
-      anchorPrice = Math.max(anchorPrice * (1 + drift), 0.00001);
+      const driftedPrice = anchorPrice * (1 + drift);
+      anchorPrice = Math.max(
+        Math.min(driftedPrice, seedReferencePrice * 1.5),
+        Math.max(seedReferencePrice * 0.5, PRICE_FLOOR)
+      );
 
       const spreadShock = randomBetween(-0.7, 0.7);
       anchorSpreadBps = Math.max(anchorSpreadBps + spreadShock, 0.35);
