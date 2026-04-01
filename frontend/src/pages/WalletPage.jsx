@@ -12,6 +12,8 @@ import { countEnabledWalletAccounts, selectActiveWalletAccount } from '../lib/st
 import { createWalletState, executeWalletAction, markWallet } from '../lib/strategyEngine';
 import { buildStrategyRows, toStrategyKey } from '../lib/strategyView';
 import { Link } from '../lib/router';
+import { useCapitalStore } from '../store/capitalStore';
+import { useExecutionFeedStore } from '../store/executionFeedStore';
 import { useStrategyLabStore } from '../store/strategyLabStore';
 import { useStrategyToggleStore } from '../store/strategyToggleStore';
 
@@ -253,6 +255,18 @@ export default function WalletPage({ snapshot }) {
   const ensureStrategies = useStrategyToggleStore((state) => state.ensureStrategies);
   const setStrategyEnabled = useStrategyToggleStore((state) => state.setStrategyEnabled);
 
+  // Local paper trading state (always available in demo mode)
+  const simulatedWallet = useStrategyLabStore((state) => state.wallet);
+  const simulatedEquity = useStrategyLabStore((state) => state.runtimeEquity);
+  const simulatedTrades = useStrategyLabStore((state) => state.tradeLog);
+
+  // Capital store (synced from execution feed)
+  const walletsById = useCapitalStore((state) => state.entities?.walletsById || {});
+
+  // Execution feed (position events)
+  const positionEvents = useExecutionFeedStore((state) => state.positionEvents);
+  const txEvents = useExecutionFeedStore((state) => state.txEvents);
+
   // Server-side wallet, positions, and trades
   const [serverWallet, setServerWallet] = useState(null);
   const [serverPositions, setServerPositions] = useState([]);
@@ -334,6 +348,120 @@ export default function WalletPage({ snapshot }) {
   const runtimeEquity = toNum(activeRuntimeWallet?.equity, 0);
   const runtimeRealizedPnl = toNum(activeRuntimeWallet?.realizedPnl, 0);
   const runtimeUnrealizedPnl = toNum(activeRuntimeWallet?.unrealizedPnl, 0);
+
+  // Unified wallet: prefer server data, fall back to simulation
+  const activeWallet = useMemo(() => {
+    if (serverWallet) return serverWallet;
+    // Show simulation wallet whenever it exists (Strategy Lab runs by default)
+    if (simulatedWallet && toNum(simulatedWallet.equity, 0) > 0) {
+      return {
+        equity: toNum(simulatedWallet.equity, 0),
+        cash: toNum(simulatedWallet.cash, 0),
+        totalPnl: toNum(simulatedWallet.realizedPnl, 0),
+        unrealizedPnl: toNum(simulatedWallet.unrealizedPnl, 0),
+        tradeCount: toNum(simulatedWallet.tradeCount, 0),
+        winCount: toNum(simulatedWallet.winCount, 0),
+        lossCount: toNum(simulatedWallet.lossCount, 0),
+        source: 'simulation'
+      };
+    }
+    // Check capitalStore wallets
+    const walletIds = Object.keys(walletsById);
+    if (walletIds.length > 0) {
+      const firstWallet = walletsById[walletIds[0]];
+      return {
+        equity: toNum(firstWallet.equity, 0),
+        cash: toNum(firstWallet.cash, 0),
+        totalPnl: toNum(firstWallet.realizedPnl, 0),
+        unrealizedPnl: toNum(firstWallet.unrealizedPnl, 0),
+        tradeCount: 0,
+        winCount: 0,
+        source: 'capital-store'
+      };
+    }
+    return null;
+  }, [serverWallet, simulatedWallet, walletsById]);
+
+  const walletSource = serverWallet ? 'live' : activeWallet ? (activeWallet.source || 'simulation') : 'none';
+
+  // Unified trades: prefer server, fall back to simulation + execution feed
+  const activeTrades = useMemo(() => {
+    if (serverTrades.length > 0) return serverTrades;
+    // Merge simulation tradeLog with execution feed txEvents
+    if ((simulatedTrades && simulatedTrades.length > 0) || txEvents.length > 0) {
+      const combined = [];
+      // Add simulation trades
+      if (simulatedTrades) {
+        for (const trade of simulatedTrades) {
+          combined.push({
+            ...trade,
+            id: trade.id || `sim:${trade.timestamp}`,
+            source: 'simulation'
+          });
+        }
+      }
+      // Add execution feed tx events (dedup by timestamp+account)
+      const simIds = new Set(combined.map(t => t.id));
+      for (const tx of txEvents) {
+        if (!simIds.has(tx.id)) {
+          combined.push({
+            id: tx.id,
+            timestamp: tx.timestamp,
+            symbol: tx.symbol || '',
+            assetClass: tx.assetClass || '',
+            action: tx.action,
+            unitsDelta: tx.unitsDelta,
+            unitsAfter: tx.unitsAfter,
+            fillPrice: tx.fillPrice,
+            markPrice: tx.markPrice,
+            spreadBps: tx.spreadBps,
+            realizedDelta: tx.realizedDelta,
+            score: tx.score,
+            reason: tx.reason,
+            source: 'execution-feed'
+          });
+        }
+      }
+      return combined.sort((a, b) => toNum(b.timestamp, 0) - toNum(a.timestamp, 0)).slice(0, MAX_TRADES);
+    }
+    return [];
+  }, [serverTrades, simulatedTrades, txEvents]);
+
+  // Unified positions from execution feed (same pattern as PositionListPage)
+  const activePositions = useMemo(() => {
+    if (serverPositions.length > 0) return serverPositions;
+    const map = new Map();
+    for (const event of positionEvents) {
+      const key = `${event.accountId}|${event.symbol || event.marketKey}`;
+      if (!key) continue;
+      if (!map.has(key) || event.timestamp > map.get(key).timestamp) {
+        map.set(key, event);
+      }
+    }
+    return [...map.values()]
+      .filter((e) => Math.abs(toNum(e?.wallet?.units, 0)) > 1e-9)
+      .map((e) => ({
+        symbol: String(e.symbol || e.marketKey || '-').toUpperCase(),
+        assetClass: String(e.assetClass || 'unknown'),
+        side: toNum(e.wallet?.units, 0) > 0 ? 'long' : 'short',
+        units: toNum(e.wallet?.units, 0),
+        quantity: Math.abs(toNum(e.wallet?.units, 0)),
+        avgEntryPrice: toNum(e.wallet?.avgEntry, 0),
+        markPrice: toNum(e.wallet?.markPrice, 0) || (toNum(e.wallet?.equity, 0) / Math.max(Math.abs(toNum(e.wallet?.units, 1)), 1e-9)),
+        unrealizedPnl: toNum(e.wallet?.unrealizedPnl, 0),
+        strategyId: e.strategyId || '',
+        accountId: e.accountId || '',
+        accountName: e.accountName || '',
+        timestamp: e.timestamp,
+        source: 'execution-feed'
+      }));
+  }, [serverPositions, positionEvents]);
+
+  // Equity curve: prefer simulation runtime equity (always available in demo mode)
+  const activeEquityCurve = useMemo(() => {
+    if (simulatedEquity && simulatedEquity.length > 0) return simulatedEquity;
+    return [];
+  }, [simulatedEquity]);
 
   const [walletLab, setWalletLab] = useState(createDefaultWalletLab);
   const [message, setMessage] = useState('');
@@ -973,71 +1101,89 @@ export default function WalletPage({ snapshot }) {
         </p>
       </GlowCard>
 
-      <WalletSummary
-        equity={runtimeEquity}
-        totalPnl={runtimeRealizedPnl}
-        unrealizedPnl={runtimeUnrealizedPnl}
-        openNotional={openNotional}
-        startCash={toNum(activePaperAccount?.startCash, DEFAULT_START_CASH)}
-      />
-
-      {serverWallet ? (
+      {activeWallet ? (
         <GlowCard className="panel-card">
           <div className="section-label" style={{display:'flex', alignItems:'center', gap: 8, marginBottom: 12}}>
-            <span style={{background:'#065f46', color:'#34d399', padding:'2px 8px', borderRadius:4, fontSize:11, fontWeight:600}}>LIVE</span>
-            <h2 style={{margin:0}}>Server Wallet</h2>
-            <span style={{color:'#6b7280', fontSize:12}}>Real execution from backend runtime</span>
+            {walletSource === 'live' ? (
+              <span style={{background:'#065f46', color:'#34d399', padding:'2px 8px', borderRadius:4, fontSize:11, fontWeight:600}}>LIVE</span>
+            ) : (
+              <span style={{background:'#78350f', color:'#fbbf24', padding:'2px 8px', borderRadius:4, fontSize:11, fontWeight:600}}>PAPER</span>
+            )}
+            <h2 style={{margin:0}}>{walletSource === 'live' ? 'Server Wallet' : 'Simulation Wallet'}</h2>
+            <span style={{color:'#6b7280', fontSize:12}}>
+              {walletSource === 'live' ? 'Real execution from backend runtime' : 'Paper trading from Strategy Lab'}
+            </span>
           </div>
-          <div className="detail-stat-grid">
-            <GlowCard className="stat-card">
-              <span>Cash</span>
-              <strong>{fmtNum(serverWallet.cash, 2)}</strong>
-            </GlowCard>
-            <GlowCard className="stat-card">
-              <span>Equity</span>
-              <strong>{fmtNum(serverWallet.equity, 2)}</strong>
-            </GlowCard>
-            <GlowCard className="stat-card">
-              <span>Total P&L</span>
-              <strong className={serverWallet.totalPnl >= 0 ? 'up' : 'down'}>{fmtNum(serverWallet.totalPnl, 2)}</strong>
-            </GlowCard>
-            <GlowCard className="stat-card">
-              <span>Trades</span>
-              <strong>{fmtInt(serverWallet.tradeCount)}</strong>
-            </GlowCard>
-            <GlowCard className="stat-card">
-              <span>Win Rate</span>
-              <strong>{serverWallet.tradeCount > 0 ? fmtNum((serverWallet.winCount / serverWallet.tradeCount) * 100, 1) : '0'}%</strong>
-            </GlowCard>
+          <WalletSummary
+            equity={toNum(activeWallet.equity, runtimeEquity)}
+            cash={toNum(activeWallet.cash, 0)}
+            totalPnl={toNum(activeWallet.totalPnl, runtimeRealizedPnl)}
+            unrealizedPnl={toNum(activeWallet.unrealizedPnl, runtimeUnrealizedPnl)}
+            tradeCount={toNum(activeWallet.tradeCount, 0)}
+            winRate={activeWallet.tradeCount > 0 ? (toNum(activeWallet.winCount, 0) / activeWallet.tradeCount) * 100 : 0}
+            openNotional={openNotional}
+            startCash={toNum(activePaperAccount?.startCash, DEFAULT_START_CASH)}
+          />
+        </GlowCard>
+      ) : (
+        <WalletSummary
+          equity={runtimeEquity}
+          totalPnl={runtimeRealizedPnl}
+          unrealizedPnl={runtimeUnrealizedPnl}
+          openNotional={openNotional}
+          startCash={toNum(activePaperAccount?.startCash, DEFAULT_START_CASH)}
+        />
+      )}
+
+      {activeEquityCurve.length > 0 ? (
+        <EquityCurve
+          title={`Runtime Equity (${walletSource === 'live' ? 'Live' : 'Paper'})`}
+          points={activeEquityCurve}
+        />
+      ) : null}
+
+      {activePositions.length > 0 ? (
+        <GlowCard className="panel-card">
+          <div className="section-label" style={{display:'flex', alignItems:'center', gap: 8, marginBottom: 12}}>
+            {serverPositions.length > 0 ? (
+              <span style={{background:'#065f46', color:'#34d399', padding:'2px 8px', borderRadius:4, fontSize:11, fontWeight:600}}>LIVE</span>
+            ) : (
+              <span style={{background:'#78350f', color:'#fbbf24', padding:'2px 8px', borderRadius:4, fontSize:11, fontWeight:600}}>PAPER</span>
+            )}
+            <h2 style={{margin:0}}>Active Positions</h2>
+            <span style={{color:'#6b7280', fontSize:12}}>{fmtInt(activePositions.length)} open</span>
           </div>
-          {serverPositions.length > 0 ? (
-            <>
-              <div className="section-head"><h2>Server Positions</h2><span>{fmtInt(serverPositions.length)}</span></div>
-              <div className="list-stack">
-                {serverPositions.slice(0, 10).map((pos) => (
-                  <article key={`spos:${pos.symbol}`} className="list-item">
-                    <strong>{pos.symbol} | {pos.side} {fmtNum(pos.quantity, 6)}</strong>
-                    <p>avg entry {fmtNum(pos.avgEntryPrice, 4)}</p>
-                  </article>
-                ))}
-              </div>
-            </>
-          ) : null}
-          {serverTrades.length > 0 ? (
-            <>
-              <div className="section-head"><h2>Recent Trades</h2><span>{fmtInt(serverTrades.length)}</span></div>
-              <div className="list-stack">
-                {serverTrades.slice(0, 10).map((trade) => (
-                  <article key={`strade:${trade.id}`} className="list-item">
-                    <strong className={trade.side === 'buy' ? 'up' : 'down'}>
-                      {trade.side} {trade.symbol} | {fmtNum(trade.quantity, 6)} @ {fmtNum(trade.price, 4)}
-                    </strong>
-                    <p>fee {fmtNum(trade.fee, 4)} | {trade.venue} | {fmtTime(trade.createdAt)}</p>
-                  </article>
-                ))}
-              </div>
-            </>
-          ) : null}
+          <PositionTable
+            positions={activePositions.map((pos) => ({
+              symbol: pos.symbol,
+              assetClass: pos.assetClass || 'unknown',
+              units: pos.units || pos.quantity || 0,
+              avgEntry: pos.avgEntryPrice || pos.avgEntry,
+              markPrice: pos.markPrice || 0,
+              notional: Math.abs(toNum(pos.units || pos.quantity, 0)) * toNum(pos.markPrice, 0),
+              unrealized: toNum(pos.unrealizedPnl, 0),
+              updatedAt: pos.timestamp || pos.updatedAt
+            }))}
+            emptyMessage="No active positions."
+          />
+        </GlowCard>
+      ) : null}
+
+      {activeTrades.length > 0 ? (
+        <GlowCard className="panel-card">
+          <div className="section-label" style={{display:'flex', alignItems:'center', gap: 8, marginBottom: 12}}>
+            {serverTrades.length > 0 ? (
+              <span style={{background:'#065f46', color:'#34d399', padding:'2px 8px', borderRadius:4, fontSize:11, fontWeight:600}}>LIVE</span>
+            ) : (
+              <span style={{background:'#78350f', color:'#fbbf24', padding:'2px 8px', borderRadius:4, fontSize:11, fontWeight:600}}>PAPER</span>
+            )}
+            <h2 style={{margin:0}}>Recent Trades</h2>
+            <span style={{color:'#6b7280', fontSize:12}}>{fmtInt(activeTrades.length)} total</span>
+          </div>
+          <TradeTable
+            trades={activeTrades.slice(0, 20)}
+            emptyMessage="No trades yet."
+          />
         </GlowCard>
       ) : null}
 

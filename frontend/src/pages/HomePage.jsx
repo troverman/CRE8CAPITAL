@@ -5,6 +5,7 @@ import { fmtInt, fmtNum, fmtTime, severityClass } from '../lib/format';
 import { fetchWallet, fetchAlerts, fetchExecution } from '../lib/capitalApi';
 import { getDisplaySignals } from '../lib/signalView';
 import { Link } from '../lib/router';
+import { useStrategyLabStore } from '../store/strategyLabStore';
 
 export default function HomePage({
   snapshot,
@@ -14,6 +15,10 @@ export default function HomePage({
   historyByMarket
 }) {
   const providerConnected = snapshot.providers.filter((provider) => provider.connected).length;
+
+  // Simulation wallet (always available in demo mode)
+  const simWallet = useStrategyLabStore((state) => state.wallet);
+  const simRunning = useStrategyLabStore((state) => state.running);
 
   const [wallet, setWallet] = useState(null);
   const [unreadAlerts, setUnreadAlerts] = useState(0);
@@ -109,41 +114,58 @@ export default function HomePage({
         </div>
       </div>
 
-      {wallet ? (
-        <div className="home-section">
-          <h3 className="home-section-label">Wallet</h3>
-          <div className="stat-grid">
-            <GlowCard className="stat-card stat-card-hero">
-              <span>Equity</span>
-              <strong className="stat-big">{fmtNum(wallet.equity, 2)}</strong>
-            </GlowCard>
-            <GlowCard className="stat-card">
-              <span>Cash</span>
-              <strong>{fmtNum(wallet.cash, 2)}</strong>
-            </GlowCard>
-            <GlowCard className="stat-card">
-              <span>Total P&L</span>
-              <strong className={wallet.totalPnl >= 0 ? 'up' : 'down'}>{fmtNum(wallet.totalPnl, 2)}</strong>
-            </GlowCard>
-            <GlowCard className="stat-card">
-              <span>Trades / Win Rate</span>
-              <strong>
-                {fmtInt(wallet.tradeCount)} / {wallet.tradeCount > 0 ? fmtNum((wallet.winCount / wallet.tradeCount) * 100, 1) : '0'}%
-              </strong>
-            </GlowCard>
-            <GlowCard className="stat-card">
-              <span>Mode</span>
-              <strong>
-                <span className={`status-pill ${executionStats?.mode === 'live' ? 'online' : ''}`}>{executionStats?.mode || 'paper'}</span>
-              </strong>
-            </GlowCard>
-            <GlowCard className="stat-card">
-              <span>Unread Alerts</span>
-              <strong>{fmtInt(unreadAlerts)}</strong>
-            </GlowCard>
+      {(() => {
+        const displayWallet = wallet || (simWallet && simWallet.equity > 0 ? {
+          equity: simWallet.equity,
+          cash: simWallet.cash,
+          totalPnl: simWallet.realizedPnl || 0,
+          tradeCount: simWallet.tradeCount || 0,
+          winCount: simWallet.winCount || 0,
+        } : null);
+        const isLive = Boolean(wallet);
+        return displayWallet ? (
+          <div className="home-section">
+            <h3 className="home-section-label">
+              Wallet
+              {isLive ? (
+                <span style={{background:'#065f46', color:'#34d399', padding:'2px 8px', borderRadius:4, fontSize:11, fontWeight:600, marginLeft:8}}>LIVE</span>
+              ) : (
+                <span style={{background:'#78350f', color:'#fbbf24', padding:'2px 8px', borderRadius:4, fontSize:11, fontWeight:600, marginLeft:8}}>PAPER</span>
+              )}
+            </h3>
+            <div className="stat-grid">
+              <GlowCard className="stat-card stat-card-hero">
+                <span>Equity</span>
+                <strong className="stat-big">{fmtNum(displayWallet.equity, 2)}</strong>
+              </GlowCard>
+              <GlowCard className="stat-card">
+                <span>Cash</span>
+                <strong>{fmtNum(displayWallet.cash, 2)}</strong>
+              </GlowCard>
+              <GlowCard className="stat-card">
+                <span>Total P&L</span>
+                <strong className={displayWallet.totalPnl >= 0 ? 'up' : 'down'}>{fmtNum(displayWallet.totalPnl, 2)}</strong>
+              </GlowCard>
+              <GlowCard className="stat-card">
+                <span>Trades / Win Rate</span>
+                <strong>
+                  {fmtInt(displayWallet.tradeCount)} / {displayWallet.tradeCount > 0 ? fmtNum((displayWallet.winCount / displayWallet.tradeCount) * 100, 1) : '0'}%
+                </strong>
+              </GlowCard>
+              <GlowCard className="stat-card">
+                <span>Mode</span>
+                <strong>
+                  <span className={`status-pill ${executionStats?.mode === 'live' ? 'online' : ''}`}>{isLive ? (executionStats?.mode || 'live') : (simRunning ? 'paper (running)' : 'paper')}</span>
+                </strong>
+              </GlowCard>
+              <GlowCard className="stat-card">
+                <span>Unread Alerts</span>
+                <strong>{fmtInt(unreadAlerts)}</strong>
+              </GlowCard>
+            </div>
           </div>
-        </div>
-      ) : null}
+        ) : null;
+      })()}
 
       <GlowCard className="live-preview-card">
         <div className="section-head">
