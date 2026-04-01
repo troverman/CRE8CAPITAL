@@ -1,7 +1,8 @@
-import { fmtInt, fmtNum } from '../lib/format';
+import { useState } from 'react';
 
 /**
  * Start/stop/reset simulation buttons with speed/risk controls.
+ * Includes confirmation dialog before starting.
  */
 export default function SimulationControls({
   running,
@@ -21,6 +22,21 @@ export default function SimulationControls({
   executionStrategyModeLabel,
   executionWalletScopeLabel
 }) {
+  const [showConfirm, setShowConfirm] = useState(false);
+
+  const handleStartClick = () => {
+    if (running) {
+      onToggleRunning(); // pause — no confirmation needed
+    } else {
+      setShowConfirm(true); // show confirmation before starting
+    }
+  };
+
+  const handleConfirmStart = () => {
+    setShowConfirm(false);
+    onToggleRunning();
+  };
+
   return (
     <>
       <div className="strategy-risk-grid">
@@ -64,11 +80,11 @@ export default function SimulationControls({
       </div>
 
       <div className="hero-actions">
-        <button type="button" className={running ? 'btn secondary' : 'btn primary'} onClick={onToggleRunning}>
-          {running ? 'Pause Realtime' : 'Start Realtime'}
+        <button type="button" className={running ? 'btn secondary' : 'btn primary'} onClick={handleStartClick}>
+          {running ? '⏸ Pause Simulation' : '▶ Start Paper Simulation'}
         </button>
-        <button type="button" className="btn secondary" onClick={onManualTrigger}>
-          Manual Trigger
+        <button type="button" className="btn secondary" onClick={onManualTrigger} disabled={!running}>
+          Step Once
         </button>
         <button type="button" className="btn secondary" onClick={onRunBacktest}>
           Run Backtest
@@ -78,13 +94,34 @@ export default function SimulationControls({
         </button>
       </div>
 
+      {showConfirm && (
+        <div style={{background: '#111827', border: '1px solid #374151', borderRadius: 8, padding: 16, marginTop: 12}}>
+          <p style={{color: '#f3f4f6', fontWeight: 600, marginBottom: 8}}>Start Paper Simulation?</p>
+          <p style={{color: '#9ca3af', fontSize: 13, marginBottom: 12}}>
+            This will run the selected strategy on <strong style={{color: '#e5e7eb'}}>{selectedMarketSymbol || 'the selected market'}</strong> in
+            <span style={{background: '#78350f', color: '#fbbf24', padding: '1px 6px', borderRadius: 3, margin: '0 4px', fontSize: 11, fontWeight: 600}}>PAPER</span>
+            mode. No real money will be used. Trades will be simulated with {slippageBps} bps slippage.
+          </p>
+          <div style={{display: 'flex', gap: 8}}>
+            <button type="button" className="btn primary" onClick={handleConfirmStart}>
+              Confirm — Start Paper Trading
+            </button>
+            <button type="button" className="btn secondary" onClick={() => setShowConfirm(false)}>
+              Cancel
+            </button>
+          </div>
+        </div>
+      )}
+
       <div className="strategy-lab-status-row">
-        <span className={running ? 'status-pill online' : 'status-pill'}>{running ? 'realtime active' : 'realtime paused'}</span>
-        <span className="status-pill">mode {sourceId}</span>
-        <span className="status-pill">market {selectedMarketSymbol || '-'}</span>
-        <span className="status-pill">strategy exec {executionStrategyModeLabel}</span>
-        <span className="status-pill">wallet exec {executionWalletScopeLabel}</span>
-        <span className={hasLiveHistory ? 'status-pill online' : 'status-pill'}>history {hasLiveHistory ? 'available' : 'limited'}</span>
+        <span className={running ? 'status-pill online' : 'status-pill'}>
+          {running ? 'PAPER simulation active' : 'simulation paused'}
+        </span>
+        <span className="status-pill">source: {sourceId}</span>
+        <span className="status-pill">market: {selectedMarketSymbol || '-'}</span>
+        <span className="status-pill">strategy: {executionStrategyModeLabel}</span>
+        <span className="status-pill">wallet: {executionWalletScopeLabel}</span>
+        <span className={hasLiveHistory ? 'status-pill online' : 'status-pill'}>history {hasLiveHistory ? 'ready' : 'limited'}</span>
       </div>
     </>
   );
