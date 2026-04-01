@@ -1,7 +1,8 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import FlashList from '../components/FlashList';
 import GlowCard from '../components/GlowCard';
 import { fmtCompact, fmtInt, fmtNum, fmtTime } from '../lib/format';
+import { fetchPositions } from '../lib/capitalApi';
 import { Link } from '../lib/router';
 import { useExecutionFeedStore } from '../store/executionFeedStore';
 import { useStrategyLabStore } from '../store/strategyLabStore';
@@ -27,11 +28,25 @@ const positionDirection = (units) => {
 
 const rowKey = (row) => `${String(row?.accountId || '')}|${String(row?.marketKey || '')}|${String(row?.symbol || '')}`;
 
-export default function PositionListPage() {
+export default function PositionListPage({ snapshot }) {
   const [search, setSearch] = useState('');
+  const [serverPositions, setServerPositions] = useState([]);
   const walletAccounts = useStrategyLabStore((state) => state.walletAccounts);
   const activeWalletAccountId = useStrategyLabStore((state) => state.activeWalletAccountId);
   const positionEvents = useExecutionFeedStore((state) => state.positionEvents);
+
+  // Fetch real positions from API
+  useEffect(() => {
+    const load = async () => {
+      try {
+        const data = await fetchPositions();
+        setServerPositions(data.items || []);
+      } catch (_) {}
+    };
+    load();
+    const timer = setInterval(load, 5000);
+    return () => clearInterval(timer);
+  }, []);
 
   const latestByPosition = useMemo(() => {
     const map = new Map();
@@ -103,6 +118,11 @@ export default function PositionListPage() {
     return walletAccounts.find((account) => account.id === activeWalletAccountId) || walletAccounts[0] || null;
   }, [activeWalletAccountId, walletAccounts]);
 
+  const maxNotional = useMemo(() => {
+    if (filteredPositions.length === 0) return 1;
+    return Math.max(...filteredPositions.map((row) => row.positionNotional), 1);
+  }, [filteredPositions]);
+
   return (
     <section className="page-grid">
       <GlowCard className="list-header-card">
@@ -133,7 +153,7 @@ export default function PositionListPage() {
         <GlowCard className="stat-card">
           <span>Long / Short</span>
           <strong>
-            {fmtInt(stats.longCount)} / {fmtInt(stats.shortCount)}
+            <span className="up">{fmtInt(stats.longCount)}</span> / <span className="down">{fmtInt(stats.shortCount)}</span>
           </strong>
         </GlowCard>
         <GlowCard className="stat-card">
@@ -146,39 +166,84 @@ export default function PositionListPage() {
         </GlowCard>
       </div>
 
+      {serverPositions.length > 0 ? (
+        <GlowCard className="panel-card">
+          <div className="section-head">
+            <h2>Server Positions</h2>
+            <span>{fmtInt(serverPositions.length)} from backend</span>
+          </div>
+          <FlashList
+            items={serverPositions}
+            height={320}
+            itemHeight={78}
+            className="tick-flash-list"
+            emptyCopy="No server positions."
+            keyExtractor={(row) => `server:${row.symbol}`}
+            renderItem={(row) => {
+              const unrealizedPnl = row.avgEntryPrice > 0 ? ((row.quantity || 0) * ((snapshot?.markets || []).find(m => m.symbol === row.symbol)?.referencePrice || row.avgEntryPrice) - (row.quantity || 0) * row.avgEntryPrice) : 0;
+              return (
+                <article className="tensor-event-row">
+                  <strong className={unrealizedPnl >= 0 ? 'up' : 'down'}>
+                    {row.symbol} | {row.side} {fmtNum(row.quantity, 6)}
+                  </strong>
+                  <p>avg entry {fmtNum(row.avgEntryPrice, 4)} | unrealized P&L <span className={unrealizedPnl >= 0 ? 'up' : 'down'}>{fmtNum(unrealizedPnl, 2)}</span></p>
+                  <small>{fmtTime(row.updatedAt)}</small>
+                </article>
+              );
+            }}
+          />
+        </GlowCard>
+      ) : null}
+
       <GlowCard className="panel-card">
         <div className="section-head">
           <h2>Open Position Book</h2>
           <span>latest snapshot per account/market</span>
         </div>
-        <FlashList
-          items={filteredPositions}
-          height={520}
-          itemHeight={98}
-          className="tick-flash-list"
-          emptyCopy="No open positions yet. Run strategy runtime or create positions from wallet."
-          keyExtractor={(row) => row.key}
-          renderItem={(row) => (
-            <article className="tensor-event-row">
-              <strong className={row.units >= 0 ? 'up' : 'down'}>
-                {row.symbol} ({row.assetClass}) | {row.direction} {fmtNum(row.units, 4)}
-              </strong>
-              <p>{row.reason || 'position update'}</p>
-              <small>
-                acc{' '}
-                <Link to={`/wallet/${encodeURIComponent(row.accountId)}`} className="inline-link">
-                  {row.accountName}
-                </Link>{' '}
-                | strat{' '}
-                <Link to={`/strategy/${encodeURIComponent(row.strategyId)}`} className="inline-link">
-                  {row.strategyId}
-                </Link>{' '}
-                | eq {fmtNum(row.equity, 2)} | cash {fmtNum(row.cash, 2)} | mark {fmtNum(row.markPrice, 4)} | notional {fmtNum(row.positionNotional, 2)} |{' '}
-                {fmtTime(row.timestamp)}
-              </small>
-            </article>
-          )}
-        />
+        {filteredPositions.length === 0 ? (
+          <div className="empty-state">
+            <p>No open positions yet. Run strategy runtime or create positions from wallet.</p>
+            <Link to="/wallet" className="btn secondary" style={{ marginTop: 12 }}>Open Wallet</Link>
+          </div>
+        ) : (
+          <FlashList
+            items={filteredPositions}
+            height={520}
+            itemHeight={98}
+            className="tick-flash-list"
+            emptyCopy="No open positions yet."
+            keyExtractor={(row) => row.key}
+            renderItem={(row) => {
+              const pctOfMax = maxNotional > 0 ? (row.positionNotional / maxNotional) * 100 : 0;
+              return (
+                <article className="tensor-event-row position-row-enhanced">
+                  <div className="position-row-head">
+                    <strong className={row.units >= 0 ? 'up' : 'down'}>
+                      {row.symbol} ({row.assetClass}) | {row.direction} {fmtNum(row.units, 4)}
+                    </strong>
+                    <span className="position-notional">{fmtNum(row.positionNotional, 2)}</span>
+                  </div>
+                  <div className="position-bar-track">
+                    <div className={`position-bar ${row.units >= 0 ? 'up' : 'down'}`} style={{ width: `${Math.min(pctOfMax, 100)}%` }} />
+                  </div>
+                  <p>{row.reason || 'position update'}</p>
+                  <small>
+                    acc{' '}
+                    <Link to={`/wallet/${encodeURIComponent(row.accountId)}`} className="inline-link">
+                      {row.accountName}
+                    </Link>{' '}
+                    | strat{' '}
+                    <Link to={`/strategy/${encodeURIComponent(row.strategyId)}`} className="inline-link">
+                      {row.strategyId}
+                    </Link>{' '}
+                    | eq {fmtNum(row.equity, 2)} | cash {fmtNum(row.cash, 2)} | mark {fmtNum(row.markPrice, 4)} |{' '}
+                    {fmtTime(row.timestamp)}
+                  </small>
+                </article>
+              );
+            }}
+          />
+        )}
       </GlowCard>
 
       <GlowCard className="panel-card">
@@ -210,4 +275,3 @@ export default function PositionListPage() {
     </section>
   );
 }
-

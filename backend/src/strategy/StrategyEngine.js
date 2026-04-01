@@ -1,3 +1,5 @@
+const { computeRSI, computeMACD } = require('../shared/indicators');
+
 const DEFAULT_STRATEGIES = [
 	{
 		id: 'crypto-trend-rider',
@@ -25,6 +27,66 @@ const DEFAULT_STRATEGIES = [
 		signalTypes: ['cross-venue-gap', 'wide-spread'],
 		protocol: 'arb',
 		minScore: 18
+	},
+	{
+		id: 'dca-bot',
+		name: 'DCA Bot',
+		description: 'Dollar-cost averaging: buys a fixed amount at regular intervals.',
+		assetClasses: ['crypto', 'equity'],
+		signalTypes: ['momentum-shift'],
+		protocol: 'dca',
+		minScore: 0,
+		config: { intervalMs: 3600000, amount: 100 }
+	},
+	{
+		id: 'scalper',
+		name: 'Scalper',
+		description: 'Captures small price movements with tight entries and exits.',
+		assetClasses: ['crypto'],
+		signalTypes: ['momentum-shift'],
+		protocol: 'scalp',
+		minScore: 0,
+		config: { entryThreshold: 0.001, takeProfitPct: 0.003, stopLossPct: 0.001 }
+	},
+	{
+		id: 'grid-bot',
+		name: 'Grid Bot',
+		description: 'Places layered orders across a price grid to profit from oscillations.',
+		assetClasses: ['crypto'],
+		signalTypes: ['momentum-shift', 'volatility-spike'],
+		protocol: 'grid',
+		minScore: 0,
+		config: { gridLevels: 10, gridSpacingPct: 0.005 }
+	},
+	{
+		id: 'rsi-revert',
+		name: 'RSI Mean Revert',
+		description: 'Buys oversold and sells overbought based on RSI indicator.',
+		assetClasses: ['crypto', 'equity'],
+		signalTypes: ['momentum-shift'],
+		protocol: 'rsi-revert',
+		minScore: 0,
+		config: { rsiPeriod: 14, oversold: 30, overbought: 70 }
+	},
+	{
+		id: 'macd-cross',
+		name: 'MACD Crossover',
+		description: 'Enters on bullish MACD crossover and exits on bearish crossover.',
+		assetClasses: ['crypto', 'equity'],
+		signalTypes: ['momentum-shift'],
+		protocol: 'macd-cross',
+		minScore: 0,
+		config: { fastPeriod: 12, slowPeriod: 26, signalPeriod: 9 }
+	},
+	{
+		id: 'pairs-trade',
+		name: 'Pairs Trading',
+		description: 'Exploits cross-venue pricing gaps using z-score reversion.',
+		assetClasses: ['crypto'],
+		signalTypes: ['cross-venue-gap'],
+		protocol: 'pairs',
+		minScore: 0,
+		config: { lookback: 50, entryZScore: 2 }
 	}
 ];
 
@@ -36,6 +98,8 @@ class StrategyEngine {
 		this.lastSignalsByMarket = new Map();
 		this.positions = new Map();
 		this.strategyMap = new Map();
+		this.priceHistory = new Map(); // symbol -> [price, price, ...] last 100
+		this.lastBuyTime = new Map(); // strategyId:symbol -> timestamp
 
 		strategies.forEach((strategy) => {
 			this.strategyMap.set(strategy.id, {
@@ -130,6 +194,143 @@ class StrategyEngine {
 			};
 		}
 
+		if (strategy.protocol === 'dca') {
+			const cfg = strategy.config || {};
+			const intervalMs = cfg.intervalMs || 3600000;
+			const key = `${strategy.id}:${signal.symbol}`;
+			const lastBuy = this.lastBuyTime.get(key) || 0;
+			const now = signal.timestamp || Date.now();
+			if (now - lastBuy >= intervalMs) {
+				this.lastBuyTime.set(key, now);
+				return {
+					action: 'accumulate',
+					intent: 'dca-buy',
+					reason: `DCA interval elapsed (${Math.round(intervalMs / 60000)}m). Accumulating $${cfg.amount || 100}.`
+				};
+			}
+			return null;
+		}
+
+		if (strategy.protocol === 'scalp') {
+			const cfg = strategy.config || {};
+			const entryThreshold = cfg.entryThreshold || 0.001;
+			const changeBps = Math.abs(signal.meta?.changeBps || 0) / 10000;
+			if (signal.direction === 'up' && changeBps >= entryThreshold) {
+				return {
+					action: 'accumulate',
+					intent: 'scalp-entry',
+					reason: `Scalp entry: ${(changeBps * 100).toFixed(3)}% move exceeds ${(entryThreshold * 100).toFixed(3)}% threshold`
+				};
+			}
+			if (signal.direction === 'down' && changeBps >= entryThreshold) {
+				return {
+					action: 'reduce',
+					intent: 'scalp-exit',
+					reason: `Scalp exit: ${(changeBps * 100).toFixed(3)}% adverse move`
+				};
+			}
+			return null;
+		}
+
+		if (strategy.protocol === 'grid') {
+			const cfg = strategy.config || {};
+			const gridLevels = cfg.gridLevels || 10;
+			const gridSpacingPct = cfg.gridSpacingPct || 0.005;
+			const currentPrice = signal.meta?.currentPrice || 0;
+			const previousPrice = signal.meta?.previousPrice || 0;
+			if (!currentPrice || !previousPrice) return null;
+			const midPrice = (currentPrice + previousPrice) / 2;
+			const priceOffset = (currentPrice - midPrice) / midPrice;
+			const gridLevel = Math.round(priceOffset / gridSpacingPct);
+			if (gridLevel <= -(gridLevels / 4)) {
+				return {
+					action: 'accumulate',
+					intent: 'grid-buy',
+					reason: `Grid buy level ${gridLevel}: price ${(priceOffset * 100).toFixed(3)}% below mid`
+				};
+			}
+			if (gridLevel >= (gridLevels / 4)) {
+				return {
+					action: 'reduce',
+					intent: 'grid-sell',
+					reason: `Grid sell level ${gridLevel}: price ${(priceOffset * 100).toFixed(3)}% above mid`
+				};
+			}
+			return null;
+		}
+
+		if (strategy.protocol === 'rsi-revert') {
+			const cfg = strategy.config || {};
+			const rsiPeriod = cfg.rsiPeriod || 14;
+			const oversold = cfg.oversold || 30;
+			const overbought = cfg.overbought || 70;
+			const prices = this.priceHistory.get(signal.symbol) || [];
+			if (prices.length < rsiPeriod + 1) return null;
+			const rsi = computeRSI(prices, rsiPeriod);
+			if (rsi === null) return null;
+			if (rsi < oversold) {
+				return {
+					action: 'accumulate',
+					intent: 'rsi-oversold',
+					reason: `RSI ${rsi.toFixed(1)} below oversold threshold ${oversold}`
+				};
+			}
+			if (rsi > overbought) {
+				return {
+					action: 'reduce',
+					intent: 'rsi-overbought',
+					reason: `RSI ${rsi.toFixed(1)} above overbought threshold ${overbought}`
+				};
+			}
+			return null;
+		}
+
+		if (strategy.protocol === 'macd-cross') {
+			const cfg = strategy.config || {};
+			const fastPeriod = cfg.fastPeriod || 12;
+			const slowPeriod = cfg.slowPeriod || 26;
+			const signalPeriod = cfg.signalPeriod || 9;
+			const prices = this.priceHistory.get(signal.symbol) || [];
+			if (prices.length < slowPeriod + signalPeriod) return null;
+			const macd = computeMACD(prices, fastPeriod, slowPeriod, signalPeriod);
+			if (macd.macd === null || macd.signal === null || macd.prevMacd === null || macd.prevSignal === null) return null;
+			const bullishCross = macd.prevMacd <= macd.prevSignal && macd.macd > macd.signal;
+			const bearishCross = macd.prevMacd >= macd.prevSignal && macd.macd < macd.signal;
+			if (bullishCross) {
+				return {
+					action: 'accumulate',
+					intent: 'macd-bullish-cross',
+					reason: `MACD bullish crossover: MACD ${macd.macd.toFixed(4)} > Signal ${macd.signal.toFixed(4)}`
+				};
+			}
+			if (bearishCross) {
+				return {
+					action: 'reduce',
+					intent: 'macd-bearish-cross',
+					reason: `MACD bearish crossover: MACD ${macd.macd.toFixed(4)} < Signal ${macd.signal.toFixed(4)}`
+				};
+			}
+			return null;
+		}
+
+		if (strategy.protocol === 'pairs') {
+			const cfg = strategy.config || {};
+			const entryZScore = cfg.entryZScore || 2;
+			if (signal.type !== 'cross-venue-gap') return null;
+			const gapBps = signal.meta?.gapBps || 0;
+			// Use gap size relative to typical gap as a z-score proxy
+			const thresholdBps = signal.meta?.thresholdBps || 20;
+			const zProxy = thresholdBps > 0 ? gapBps / thresholdBps : 0;
+			if (zProxy >= entryZScore) {
+				return {
+					action: 'pair-trade',
+					intent: 'pairs-arb',
+					reason: `Pairs trade: gap ${gapBps.toFixed(1)} bps, z-proxy ${zProxy.toFixed(2)} >= ${entryZScore}`
+				};
+			}
+			return null;
+		}
+
 		return null;
 	}
 
@@ -185,6 +386,14 @@ class StrategyEngine {
 		const decisions = [];
 		for (const signal of signals) {
 			this.lastSignalsByMarket.set(signal.marketKey || `${signal.assetClass}:${signal.symbol}`, signal);
+
+			// Track price history per symbol (from signal meta)
+			if (signal.symbol && signal.meta?.currentPrice) {
+				const prices = this.priceHistory.get(signal.symbol) || [];
+				prices.push(signal.meta.currentPrice);
+				if (prices.length > 100) prices.shift();
+				this.priceHistory.set(signal.symbol, prices);
+			}
 
 			for (const strategy of this.strategyMap.values()) {
 				if (!this._isStrategyEligible(strategy, signal)) {
@@ -250,6 +459,31 @@ class StrategyEngine {
 		return decisions;
 	}
 
+	loadCustomStrategies(customStrategies) {
+		if (!Array.isArray(customStrategies)) return;
+		for (const cs of customStrategies) {
+			if (!cs.id) continue;
+			// Don't overwrite built-in strategies
+			if (this.strategyMap.has(cs.id)) continue;
+			this.strategyMap.set(cs.id, {
+				id: cs.id,
+				name: cs.name || cs.id,
+				description: cs.description || '',
+				assetClasses: Array.isArray(cs.assetClasses) ? cs.assetClasses : (cs.assetClasses || 'crypto').split(','),
+				signalTypes: Array.isArray(cs.signals) ? cs.signals : (cs.signals || 'momentum-shift').split(','),
+				protocol: cs.protocol || 'trend-follow',
+				minScore: Number(cs.minScore) || 0,
+				config: typeof cs.config === 'string' ? JSON.parse(cs.config || '{}') : (cs.config || {}),
+				enabled: cs.enabled !== 0 && cs.enabled !== false,
+				custom: true,
+				metrics: {
+					decisionCount: 0,
+					lastDecisionAt: null
+				}
+			});
+		}
+	}
+
 	getStrategies() {
 		return Array.from(this.strategyMap.values()).map((strategy) => ({
 			id: strategy.id,
@@ -259,7 +493,9 @@ class StrategyEngine {
 			signalTypes: strategy.signalTypes,
 			protocol: strategy.protocol,
 			minScore: strategy.minScore,
+			config: strategy.config,
 			enabled: strategy.enabled,
+			custom: strategy.custom || false,
 			metrics: { ...strategy.metrics }
 		}));
 	}

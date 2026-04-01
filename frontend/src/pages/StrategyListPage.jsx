@@ -1,8 +1,9 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import WalletAccountSelectField from '../components/WalletAccountSelectField';
 import GlowCard from '../components/GlowCard';
 import RuntimeExecutionControls from '../components/RuntimeExecutionControls';
 import { fmtInt, fmtNum, fmtTime } from '../lib/format';
+import { fetchStrategies, toggleStrategy } from '../lib/capitalApi';
 import { selectActiveWalletAccount } from '../lib/strategyLabSelectors';
 import { buildStrategyRows, toStrategyKey } from '../lib/strategyView';
 import { Link, navigate } from '../lib/router';
@@ -18,6 +19,7 @@ const resolveEnabled = (strategy, enabledByKey) => {
 
 export default function StrategyListPage({ snapshot }) {
   const [search, setSearch] = useState('');
+  const [serverStrategies, setServerStrategies] = useState([]);
   const enabledByKey = useStrategyToggleStore((state) => state.enabledByKey);
   const ensureStrategies = useStrategyToggleStore((state) => state.ensureStrategies);
   const setStrategyEnabled = useStrategyToggleStore((state) => state.setStrategyEnabled);
@@ -29,9 +31,51 @@ export default function StrategyListPage({ snapshot }) {
   const activeWalletAccountId = useStrategyLabStore((state) => state.activeWalletAccountId);
   const setActiveWalletAccount = useStrategyLabStore((state) => state.setActiveWalletAccount);
 
+  const loadServerStrategies = useCallback(async () => {
+    try {
+      const data = await fetchStrategies();
+      setServerStrategies(data.items || []);
+    } catch (_) {}
+  }, []);
+
+  useEffect(() => {
+    loadServerStrategies();
+  }, [loadServerStrategies]);
+
+  const handleToggleServer = useCallback(async (id) => {
+    try {
+      await toggleStrategy(id);
+      loadServerStrategies();
+    } catch (_) {}
+  }, [loadServerStrategies]);
+
   const strategies = useMemo(() => {
-    return buildStrategyRows(snapshot);
-  }, [snapshot]);
+    // Merge snapshot strategies with server strategies
+    const base = buildStrategyRows(snapshot);
+    // Add any server-only strategies not in snapshot
+    const knownIds = new Set(base.map(s => s.id));
+    for (const ss of serverStrategies) {
+      if (!knownIds.has(ss.id)) {
+        base.push({
+          key: ss.id,
+          id: ss.id,
+          name: ss.name || ss.id,
+          description: ss.description || `${ss.protocol} strategy`,
+          protocol: ss.protocol,
+          assetClasses: ss.assetClasses,
+          signalTypes: ss.signalTypes,
+          enabled: ss.enabled,
+          custom: ss.custom || false,
+          decisionCount: ss.metrics?.decisionCount || 0,
+          marketCount: 0,
+          avgScore: 0,
+          lastAction: '-',
+          lastDecisionAt: 0
+        });
+      }
+    }
+    return base;
+  }, [snapshot, serverStrategies]);
 
   useEffect(() => {
     ensureStrategies(strategies);

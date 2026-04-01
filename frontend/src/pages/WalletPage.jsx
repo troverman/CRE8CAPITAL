@@ -1,8 +1,13 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import EquityCurve from '../components/EquityCurve';
 import FlashList from '../components/FlashList';
 import GlowCard from '../components/GlowCard';
 import LineChart from '../components/LineChart';
+import PositionTable from '../components/PositionTable';
+import TradeTable from '../components/TradeTable';
+import WalletSummary from '../components/WalletSummary';
 import { fmtCompact, fmtInt, fmtNum, fmtPct, fmtTime } from '../lib/format';
+import { fetchWallet, fetchPositions, fetchTrades } from '../lib/capitalApi';
 import { countEnabledWalletAccounts, selectActiveWalletAccount } from '../lib/strategyLabSelectors';
 import { createWalletState, executeWalletAction, markWallet } from '../lib/strategyEngine';
 import { buildStrategyRows, toStrategyKey } from '../lib/strategyView';
@@ -247,6 +252,29 @@ export default function WalletPage({ snapshot }) {
   const enabledByKey = useStrategyToggleStore((state) => state.enabledByKey);
   const ensureStrategies = useStrategyToggleStore((state) => state.ensureStrategies);
   const setStrategyEnabled = useStrategyToggleStore((state) => state.setStrategyEnabled);
+
+  // Server-side wallet, positions, and trades
+  const [serverWallet, setServerWallet] = useState(null);
+  const [serverPositions, setServerPositions] = useState([]);
+  const [serverTrades, setServerTrades] = useState([]);
+
+  useEffect(() => {
+    const load = async () => {
+      try {
+        const [w, p, t] = await Promise.all([
+          fetchWallet(),
+          fetchPositions(),
+          fetchTrades()
+        ]);
+        setServerWallet(w);
+        setServerPositions(p.items || []);
+        setServerTrades(t.items || []);
+      } catch (_) {}
+    };
+    load();
+    const timer = setInterval(load, 5000);
+    return () => clearInterval(timer);
+  }, []);
 
   const rankedMarkets = useMemo(() => {
     const input = Array.isArray(snapshot?.markets) ? snapshot.markets : [];
@@ -927,24 +955,72 @@ export default function WalletPage({ snapshot }) {
         </p>
       </GlowCard>
 
-      <div className="detail-stat-grid">
-        <GlowCard className="stat-card">
-          <span>Active Runtime Equity</span>
-          <strong className={runtimeEquity >= toNum(activePaperAccount?.startCash, DEFAULT_START_CASH) ? 'up' : 'down'}>{fmtNum(runtimeEquity, 2)}</strong>
+      <WalletSummary
+        equity={runtimeEquity}
+        totalPnl={runtimeRealizedPnl}
+        unrealizedPnl={runtimeUnrealizedPnl}
+        openNotional={openNotional}
+        startCash={toNum(activePaperAccount?.startCash, DEFAULT_START_CASH)}
+      />
+
+      {serverWallet ? (
+        <GlowCard className="panel-card">
+          <div className="section-head">
+            <h2>Backend Wallet</h2>
+            <span>server state</span>
+          </div>
+          <div className="detail-stat-grid">
+            <GlowCard className="stat-card">
+              <span>Cash</span>
+              <strong>{fmtNum(serverWallet.cash, 2)}</strong>
+            </GlowCard>
+            <GlowCard className="stat-card">
+              <span>Equity</span>
+              <strong>{fmtNum(serverWallet.equity, 2)}</strong>
+            </GlowCard>
+            <GlowCard className="stat-card">
+              <span>Total P&L</span>
+              <strong className={serverWallet.totalPnl >= 0 ? 'up' : 'down'}>{fmtNum(serverWallet.totalPnl, 2)}</strong>
+            </GlowCard>
+            <GlowCard className="stat-card">
+              <span>Trades</span>
+              <strong>{fmtInt(serverWallet.tradeCount)}</strong>
+            </GlowCard>
+            <GlowCard className="stat-card">
+              <span>Win Rate</span>
+              <strong>{serverWallet.tradeCount > 0 ? fmtNum((serverWallet.winCount / serverWallet.tradeCount) * 100, 1) : '0'}%</strong>
+            </GlowCard>
+          </div>
+          {serverPositions.length > 0 ? (
+            <>
+              <div className="section-head"><h2>Server Positions</h2><span>{fmtInt(serverPositions.length)}</span></div>
+              <div className="list-stack">
+                {serverPositions.slice(0, 10).map((pos) => (
+                  <article key={`spos:${pos.symbol}`} className="list-item">
+                    <strong>{pos.symbol} | {pos.side} {fmtNum(pos.quantity, 6)}</strong>
+                    <p>avg entry {fmtNum(pos.avgEntryPrice, 4)}</p>
+                  </article>
+                ))}
+              </div>
+            </>
+          ) : null}
+          {serverTrades.length > 0 ? (
+            <>
+              <div className="section-head"><h2>Recent Trades</h2><span>{fmtInt(serverTrades.length)}</span></div>
+              <div className="list-stack">
+                {serverTrades.slice(0, 10).map((trade) => (
+                  <article key={`strade:${trade.id}`} className="list-item">
+                    <strong className={trade.side === 'buy' ? 'up' : 'down'}>
+                      {trade.side} {trade.symbol} | {fmtNum(trade.quantity, 6)} @ {fmtNum(trade.price, 4)}
+                    </strong>
+                    <p>fee {fmtNum(trade.fee, 4)} | {trade.venue} | {fmtTime(trade.createdAt)}</p>
+                  </article>
+                ))}
+              </div>
+            </>
+          ) : null}
         </GlowCard>
-        <GlowCard className="stat-card">
-          <span>Runtime Realized PnL</span>
-          <strong className={runtimeRealizedPnl >= 0 ? 'up' : 'down'}>{fmtNum(runtimeRealizedPnl, 2)}</strong>
-        </GlowCard>
-        <GlowCard className="stat-card">
-          <span>Runtime Unrealized PnL</span>
-          <strong className={runtimeUnrealizedPnl >= 0 ? 'up' : 'down'}>{fmtNum(runtimeUnrealizedPnl, 2)}</strong>
-        </GlowCard>
-        <GlowCard className="stat-card">
-          <span>Open Notional</span>
-          <strong>{fmtCompact(openNotional)}</strong>
-        </GlowCard>
-      </div>
+      ) : null}
 
       <GlowCard className="panel-card">
         <div className="section-head">
@@ -1250,42 +1326,20 @@ export default function WalletPage({ snapshot }) {
         </div>
       </GlowCard>
 
-      <GlowCard className="chart-card">
-        <LineChart
-          title={`Equity Curve (Paper) - ${selectedMarket?.symbol || 'N/A'}`}
-          points={equitySeries}
-          stroke="#62ffcc"
-          fillFrom="rgba(98, 255, 204, 0.28)"
-          fillTo="rgba(98, 255, 204, 0.02)"
-        />
-      </GlowCard>
+      <EquityCurve
+        title={`Equity Curve (Paper) - ${selectedMarket?.symbol || 'N/A'}`}
+        points={equitySeries}
+      />
 
       <GlowCard className="panel-card">
         <div className="section-head">
           <h2>Held Assets</h2>
           <span>{openHoldings.length} open positions</span>
         </div>
-        <div className="list-stack">
-          {openHoldings.map((holding) => (
-            <article key={`holding:${holding.marketKey}`} className="list-item wallet-holding-item">
-              <div className="wallet-holding-head">
-                <strong>
-                  {holding.symbol} ({holding.assetClass})
-                </strong>
-                <span className={holding.units >= 0 ? 'status-pill up' : 'status-pill down'}>{holding.units >= 0 ? 'long' : 'short'}</span>
-              </div>
-              <div className="item-meta">
-                <small>units {fmtNum(holding.units, 4)}</small>
-                <small>avg {holding.avgEntry === null ? '-' : fmtNum(holding.avgEntry, 4)}</small>
-                <small>mark {fmtNum(holding.markPrice, 4)}</small>
-                <small>notional {fmtNum(holding.notional, 2)}</small>
-                <small className={holding.unrealized >= 0 ? 'up' : 'down'}>uPnL {fmtNum(holding.unrealized, 2)}</small>
-                <small>{fmtTime(holding.updatedAt)}</small>
-              </div>
-            </article>
-          ))}
-          {openHoldings.length === 0 ? <p className="action-message">No open assets yet. Use Position Creator to place limit orders.</p> : null}
-        </div>
+        <PositionTable
+          positions={openHoldings}
+          emptyMessage="No open assets yet. Use Position Creator to place limit orders."
+        />
       </GlowCard>
 
       <GlowCard className="panel-card">
@@ -1293,27 +1347,10 @@ export default function WalletPage({ snapshot }) {
           <h2>Recent Trades</h2>
           <span>{walletLab.tradeLog.length} rows</span>
         </div>
-        <div className="list-stack">
-          {walletLab.tradeLog.map((trade) => (
-            <article key={trade.id} className="list-item wallet-trade-item">
-              <div className="wallet-trade-head">
-                <strong className={trade.action === 'accumulate' ? 'up' : 'down'}>
-                  {trade.action === 'accumulate' ? 'buy' : 'sell'} {trade.symbol ? `| ${trade.symbol}` : ''}
-                </strong>
-                <small>{fmtTime(trade.timestamp)}</small>
-              </div>
-              <p>{trade.reason || 'manual trade'}</p>
-              <div className="item-meta">
-                <small>fill {fmtNum(trade.fillPrice, 4)}</small>
-                <small>mark {fmtNum(trade.markPrice, 4)}</small>
-                <small>spread {fmtNum(trade.spreadBps, 2)} bps</small>
-                <small>units {fmtNum(trade.unitsAfter, 4)}</small>
-                <small className={trade.realizedDelta >= 0 ? 'up' : 'down'}>realized {fmtNum(trade.realizedDelta, 2)}</small>
-              </div>
-            </article>
-          ))}
-          {walletLab.tradeLog.length === 0 ? <p className="action-message">No paper trades yet. Create a position order and wait for live fill.</p> : null}
-        </div>
+        <TradeTable
+          trades={walletLab.tradeLog}
+          emptyMessage="No paper trades yet. Create a position order and wait for live fill."
+        />
       </GlowCard>
 
       {message ? (

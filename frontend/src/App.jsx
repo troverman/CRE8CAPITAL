@@ -1,5 +1,6 @@
 import { useMemo } from 'react';
 import TopNav from './components/TopNav';
+import ErrorBoundary from './components/ErrorBoundary';
 import GlowCard from './components/GlowCard';
 import useCapitalLive from './hooks/useCapitalLive';
 import useMarketHistory from './hooks/useMarketHistory';
@@ -45,7 +46,7 @@ const parseRoute = (pathname) => {
   if (routePath === '/derivatives' || routePath === '/deriv') return { name: 'derivatives' };
   if (routePath === '/graph') return { name: 'graph' };
   if (routePath === '/knowledge') return { name: 'knowledge' };
-  if (routePath === '/other') return { name: 'other' };
+  if (routePath === '/other' || routePath === '/tools') return { name: 'other' };
   if (routePath === '/exchange') return { name: 'exchange' };
   if (routePath === '/total-market') return { name: 'total-market' };
   if (routePath === '/providers') return { name: 'providers' };
@@ -143,6 +144,7 @@ export default function App() {
         <span>{loading ? 'booting...' : `markets ${snapshot.markets.length}`}</span>
       </section>
 
+      <ErrorBoundary>
       {route.name === 'home' ? (
         <HomePage
           snapshot={snapshot}
@@ -181,7 +183,7 @@ export default function App() {
 
       {route.name === 'providers' ? <ProviderListPage snapshot={snapshot} /> : null}
 
-      {route.name === 'positions' ? <PositionListPage /> : null}
+      {route.name === 'positions' ? <PositionListPage snapshot={snapshot} /> : null}
 
       {route.name === 'runtime' ? <RuntimePage snapshot={snapshot} /> : null}
 
@@ -214,6 +216,7 @@ export default function App() {
       {route.name === 'wallet-detail' ? <WalletDetailPage walletId={route.id} snapshot={snapshot} /> : null}
 
       {route.name === 'not-found' ? <NotFoundPage /> : null}
+      </ErrorBoundary>
     </main>
   );
 }

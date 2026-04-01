@@ -91,3 +91,41 @@ export const updateRisk = (params) =>
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(params)
   }).then((r) => r.json());
+
+// --- Alert endpoints ---
+export const fetchAlerts = (limit = 50) =>
+  fetch(`${apiBase}/api/alerts?limit=${limit}`).then((r) => r.json());
+
+export const markAlertRead = (id) =>
+  fetch(`${apiBase}/api/alerts/${id}/read`, { method: 'POST' }).then((r) => r.json());
+
+export const markAllAlertsRead = () =>
+  fetch(`${apiBase}/api/alerts/read-all`, { method: 'POST' }).then((r) => r.json());
+
+// --- Strategy CRUD endpoints ---
+export const fetchStrategies = () =>
+  fetch(`${apiBase}/api/strategies`).then((r) => r.json());
+
+export const createStrategy = (params) =>
+  fetch(`${apiBase}/api/strategies`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(params)
+  }).then((r) => r.json());
+
+export const updateStrategy = (id, params) =>
+  fetch(`${apiBase}/api/strategies/${encodeURIComponent(id)}`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(params)
+  }).then((r) => r.json());
+
+export const deleteStrategy = (id) =>
+  fetch(`${apiBase}/api/strategies/${encodeURIComponent(id)}`, {
+    method: 'DELETE'
+  }).then((r) => r.json());
+
+export const toggleStrategy = (id) =>
+  fetch(`${apiBase}/api/strategies/${encodeURIComponent(id)}/toggle`, {
+    method: 'POST'
+  }).then((r) => r.json());

@@ -1,12 +1,16 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import FlashList from '../components/FlashList';
 import GlowCard from '../components/GlowCard';
 import { fmtInt, fmtTime, severityClass } from '../lib/format';
 import { buildSignalStrategyIndex, getDisplaySignals } from '../lib/signalView';
 import { Link } from '../lib/router';
 
+const SIGNAL_TYPE_FILTERS = ['momentum', 'volatility', 'spread', 'cross-venue'];
+
 export default function SignalListPage({ snapshot }) {
   const [search, setSearch] = useState('');
+  const [activeTypeFilter, setActiveTypeFilter] = useState(null);
+  const listRef = useRef(null);
 
   const signals = useMemo(() => {
     const liveCount = Array.isArray(snapshot?.signals) ? snapshot.signals.length : 0;
@@ -16,20 +20,31 @@ export default function SignalListPage({ snapshot }) {
   }, [snapshot]);
 
   const filtered = useMemo(() => {
-    const term = search.trim().toLowerCase();
-    if (!term) return signals;
-    return signals.filter((signal) => {
-      return (
-        String(signal.symbol || '').toLowerCase().includes(term) ||
-        String(signal.assetClass || '').toLowerCase().includes(term) ||
-        String(signal.type || '').toLowerCase().includes(term) ||
-        String(signal.direction || '').toLowerCase().includes(term) ||
-        String(signal.severity || '').toLowerCase().includes(term) ||
-        String(signal.message || '').toLowerCase().includes(term) ||
-        String(signal.id || '').toLowerCase().includes(term)
+    let result = signals;
+
+    if (activeTypeFilter) {
+      result = result.filter((signal) =>
+        String(signal.type || '').toLowerCase().includes(activeTypeFilter)
       );
-    });
-  }, [search, signals]);
+    }
+
+    const term = search.trim().toLowerCase();
+    if (term) {
+      result = result.filter((signal) => {
+        return (
+          String(signal.symbol || '').toLowerCase().includes(term) ||
+          String(signal.assetClass || '').toLowerCase().includes(term) ||
+          String(signal.type || '').toLowerCase().includes(term) ||
+          String(signal.direction || '').toLowerCase().includes(term) ||
+          String(signal.severity || '').toLowerCase().includes(term) ||
+          String(signal.message || '').toLowerCase().includes(term) ||
+          String(signal.id || '').toLowerCase().includes(term)
+        );
+      });
+    }
+
+    return result;
+  }, [search, signals, activeTypeFilter]);
 
   const strategyIndexBySignal = useMemo(() => {
     return buildSignalStrategyIndex(snapshot, signals, 4);
@@ -42,6 +57,17 @@ export default function SignalListPage({ snapshot }) {
     if (candidates.length === 0) return signals.length;
     return Math.max(...candidates);
   }, [signals.length, snapshot?.signalSummary?.total, snapshot?.telemetry?.signalsGenerated]);
+
+  // Auto-scroll to top when new signals arrive
+  useEffect(() => {
+    if (listRef.current) {
+      listRef.current.scrollTop = 0;
+    }
+  }, [signals.length]);
+
+  const toggleTypeFilter = (type) => {
+    setActiveTypeFilter((prev) => (prev === type ? null : type));
+  };
 
   return (
     <section className="page-grid">
@@ -60,6 +86,18 @@ export default function SignalListPage({ snapshot }) {
           placeholder="Search symbol, severity, type, direction, or id"
           aria-label="Search signals"
         />
+        <div className="filter-chips">
+          {SIGNAL_TYPE_FILTERS.map((type) => (
+            <button
+              key={type}
+              type="button"
+              className={`filter-chip ${activeTypeFilter === type ? 'active' : ''}`}
+              onClick={() => toggleTypeFilter(type)}
+            >
+              {type}
+            </button>
+          ))}
+        </div>
       </GlowCard>
 
       <GlowCard className="panel-card">

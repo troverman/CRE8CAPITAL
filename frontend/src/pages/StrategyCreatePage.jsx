@@ -1,8 +1,20 @@
 import { useEffect, useMemo, useState } from 'react';
 import GlowCard from '../components/GlowCard';
+import { PageHeader } from '../components/PageLayout';
 import { fmtInt, fmtNum, fmtTime } from '../lib/format';
+import { createStrategy } from '../lib/capitalApi';
 import { getStrategyImplementationDetail, STRATEGY_OPTIONS } from '../lib/strategyEngine';
 import { Link, navigate } from '../lib/router';
+
+const PROTOCOL_CONFIGS = {
+  'tensor-lite': { recommended: 'crypto', fields: ['entryScore', 'exitScore', 'confidenceGate'] },
+  'dca-baseline': { recommended: 'crypto/equity', fields: ['interval', 'amount'] },
+  'scalper-baseline': { recommended: 'crypto', fields: ['entryThreshold', 'takeProfit', 'stopLoss'] },
+  'grid-baseline': { recommended: 'crypto', fields: ['levels', 'spacing'] },
+  'rsi-baseline': { recommended: 'crypto/equity', fields: ['period', 'oversold', 'overbought'] },
+  'macd-baseline': { recommended: 'equity', fields: ['fastPeriod', 'slowPeriod', 'signalPeriod'] },
+  'pairs-baseline': { recommended: 'equity', fields: ['symbolA', 'symbolB', 'lookback', 'zScore'] }
+};
 
 const DRAFT_STORAGE_KEY = 'cre8capital.strategy.create.drafts.v1';
 const MAX_DRAFTS = 24;
@@ -223,7 +235,7 @@ export default function StrategyCreatePage({ snapshot }) {
     return '';
   };
 
-  const onSubmit = (event) => {
+  const onSubmit = async (event) => {
     event.preventDefault();
     setMessage('');
     const error = validate();
@@ -242,7 +254,34 @@ export default function StrategyCreatePage({ snapshot }) {
     };
 
     persistDrafts([draftRow, ...drafts]);
-    setMessage(`Saved draft ${draftRow.name} (${draftRow.id}) to local strategy drafts.`);
+
+    // Also POST to backend API
+    try {
+      const result = await createStrategy({
+        id: generatedId,
+        name: form.name || 'Untitled Strategy',
+        protocol: form.templateId,
+        assetClasses: form.assetClass === 'all' ? ['crypto', 'equity'] : [form.assetClass],
+        signals: ['momentum-shift'],
+        config: {
+          maxNotional: toNum(form.maxNotional, 0),
+          maxPositions: toNum(form.maxPositions, 1),
+          cooldownSec: toNum(form.cooldownSec, 0),
+          entryScore: toNum(form.entryScore, 0),
+          exitScore: toNum(form.exitScore, 0),
+          confidenceGate: toNum(form.confidenceGate, 0),
+          marketScope: form.marketScope
+        }
+      });
+      if (result.ok) {
+        setMessage(`Strategy ${draftRow.name} saved to server and local drafts.`);
+        navigate('/strategies');
+        return;
+      }
+      setMessage(`Draft saved locally. Server: ${result.message || result.error || 'unknown error'}.`);
+    } catch (err) {
+      setMessage(`Draft saved locally. Server save failed: ${err.message}`);
+    }
   };
 
   const onLoadDraft = (draftId) => {
@@ -310,17 +349,7 @@ export default function StrategyCreatePage({ snapshot }) {
                 <span>ID (optional)</span>
                 <input value={form.id} onChange={(event) => onField('id', event.target.value)} placeholder="tensor-swing-v2" />
               </label>
-              <label className="control-field">
-                <span>Template</span>
-                <select value={form.templateId} onChange={(event) => onField('templateId', event.target.value)}>
-                  {STRATEGY_OPTIONS.map((option) => (
-                    <option key={option.id} value={option.id}>
-                      {option.label}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <label className="control-field">
+              <label className="control-field" style={{ gridColumn: 'span 2' }}>
                 <span>Asset Class Scope</span>
                 <select value={form.assetClass} onChange={(event) => onField('assetClass', event.target.value)}>
                   {assetClassOptions.map((item) => (
@@ -330,6 +359,30 @@ export default function StrategyCreatePage({ snapshot }) {
                   ))}
                 </select>
               </label>
+            </div>
+
+            <div className="section-head">
+              <h2>Protocol</h2>
+              <span>{template.name}</span>
+            </div>
+            <div className="protocol-card-grid">
+              {STRATEGY_OPTIONS.map((option) => {
+                const cfg = PROTOCOL_CONFIGS[option.id] || {};
+                return (
+                  <div
+                    key={option.id}
+                    className={`protocol-card ${form.templateId === option.id ? 'selected' : ''}`}
+                    onClick={() => onField('templateId', option.id)}
+                    role="button"
+                    tabIndex={0}
+                    onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') onField('templateId', option.id); }}
+                  >
+                    <strong>{option.label}</strong>
+                    <p>{option.description || 'Strategy protocol template.'}</p>
+                    {cfg.recommended ? <span className="protocol-tag">{cfg.recommended}</span> : null}
+                  </div>
+                );
+              })}
             </div>
 
             <label className="control-field">

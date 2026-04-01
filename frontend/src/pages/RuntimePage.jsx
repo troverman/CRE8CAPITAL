@@ -1,11 +1,13 @@
-import { useMemo } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import FlashList from '../components/FlashList';
 import GlowCard from '../components/GlowCard';
 import LineChart from '../components/LineChart';
+import { TabBar } from '../components/PageLayout';
 import WalletAccountSelectField from '../components/WalletAccountSelectField';
 import { buildDecisionWalletLinkIndex } from '../lib/decisionWalletLink';
 import { buildDecisionRows } from '../lib/decisionView';
 import { fmtInt, fmtNum, fmtTime } from '../lib/format';
+import { fetchExecution, fetchRisk, fetchAlerts, updateRisk } from '../lib/capitalApi';
 import { Link } from '../lib/router';
 import { getDisplaySignals, buildSignalStrategyIndex } from '../lib/signalView';
 import { selectActiveWalletAccount } from '../lib/strategyLabSelectors';
@@ -13,6 +15,13 @@ import { STRATEGY_OPTIONS } from '../lib/strategyEngine';
 import { buildStrategyRows, toStrategyKey } from '../lib/strategyView';
 import { useExecutionFeedStore } from '../store/executionFeedStore';
 import { useStrategyLabStore } from '../store/strategyLabStore';
+
+const RUNTIME_TABS = [
+  { id: 'controller', label: 'Controller' },
+  { id: 'execution', label: 'Execution' },
+  { id: 'risk', label: 'Risk' },
+  { id: 'alerts', label: 'Alerts' }
+];
 
 const toNum = (value, fallback = 0) => {
   const num = Number(value);
@@ -58,6 +67,42 @@ export default function RuntimePage({ snapshot }) {
 
   const txEvents = useExecutionFeedStore((state) => state.txEvents);
   const positionEvents = useExecutionFeedStore((state) => state.positionEvents);
+
+  const [activeTab, setActiveTab] = useState('controller');
+
+  // Fetch execution stats, risk, and alerts from API
+  const [executionStats, setExecutionStats] = useState(null);
+  const [riskStatus, setRiskStatus] = useState(null);
+  const [recentAlerts, setRecentAlerts] = useState([]);
+  const [riskForm, setRiskForm] = useState({ stopLossPct: '', takeProfitPct: '', maxDailyLossPct: '', maxPositionPct: '', maxOpenPositions: '' });
+  const [riskMessage, setRiskMessage] = useState('');
+
+  useEffect(() => {
+    const load = async () => {
+      try {
+        const [exec, risk, alerts] = await Promise.all([
+          fetchExecution(),
+          fetchRisk(),
+          fetchAlerts(10)
+        ]);
+        setExecutionStats(exec.stats || null);
+        setRiskStatus(risk);
+        setRecentAlerts(alerts.items || []);
+        if (risk && !riskForm.stopLossPct) {
+          setRiskForm({
+            stopLossPct: String(toNum(risk.stopLossPct, 0) * 100),
+            takeProfitPct: String(toNum(risk.takeProfitPct, 0) * 100),
+            maxDailyLossPct: String(toNum(risk.maxDailyLossPct, 0) * 100),
+            maxPositionPct: String(toNum(risk.maxPositionPct, 0) * 100),
+            maxOpenPositions: String(toNum(risk.maxOpenPositions, 10))
+          });
+        }
+      } catch (_) {}
+    };
+    load();
+    const timer = setInterval(load, 5000);
+    return () => clearInterval(timer);
+  }, []);
 
   const activeWallet = useMemo(() => {
     return selectActiveWalletAccount(walletAccounts, activeWalletAccountId) || null;
@@ -361,15 +406,134 @@ export default function RuntimePage({ snapshot }) {
         </GlowCard>
       </div>
 
-      <GlowCard className="chart-card">
-        <LineChart
-          title={`Wallet Equity (${activeWallet.name})`}
-          points={walletEquitySeries}
-          stroke="#62ffcc"
-          fillFrom="rgba(98, 255, 204, 0.26)"
-          fillTo="rgba(98, 255, 204, 0.02)"
-          markers={walletTradeMarkers}
-        />
+      <GlowCard className="panel-card">
+        <TabBar tabs={RUNTIME_TABS} active={activeTab} onChange={setActiveTab} />
+
+        {activeTab === 'controller' ? (
+          <div className="runtime-tab-content">
+            <GlowCard className="chart-card">
+              <LineChart
+                title={`Wallet Equity (${activeWallet.name})`}
+                points={walletEquitySeries}
+                stroke="#62ffcc"
+                fillFrom="rgba(98, 255, 204, 0.26)"
+                fillTo="rgba(98, 255, 204, 0.02)"
+                markers={walletTradeMarkers}
+              />
+            </GlowCard>
+            <div className="strategy-function-grid" style={{ marginTop: '0.55rem' }}>
+              <article><span>FPS</span><strong>{fmtInt(Math.round(1000 / 5000))} tps</strong></article>
+              <article><span>Strategies</span><strong>{fmtInt(enabledStrategyRows.length)}</strong></article>
+              <article><span>Decisions</span><strong>{fmtInt(walletDecisions.length)}</strong></article>
+              <article><span>Signals</span><strong>{fmtInt(walletSignals.length)}</strong></article>
+            </div>
+          </div>
+        ) : null}
+
+        {activeTab === 'execution' ? (
+          <div className="runtime-tab-content">
+            {executionStats ? (
+              <>
+                <div className="section-head">
+                  <h2>Execution Engine</h2>
+                  <span className={`status-pill ${executionStats.mode === 'live' ? 'online' : ''}`}>{executionStats.mode}</span>
+                </div>
+                <div className="strategy-function-grid">
+                  <article><span>Executed</span><strong>{fmtInt(executionStats.executed)}</strong></article>
+                  <article><span>Rejected</span><strong>{fmtInt(executionStats.rejected)}</strong></article>
+                  <article><span>Pending</span><strong>{fmtInt(executionStats.pending)}</strong></article>
+                  <article><span>Mode</span><strong>{executionStats.mode}</strong></article>
+                </div>
+              </>
+            ) : <p className="action-message">No execution stats available yet.</p>}
+          </div>
+        ) : null}
+
+        {activeTab === 'risk' ? (
+          <div className="runtime-tab-content">
+            {riskStatus ? (
+              <>
+                <div className="section-head">
+                  <h2>Risk Manager</h2>
+                  <span>live status | daily loss {fmtNum(riskStatus.dailyLoss, 2)}</span>
+                </div>
+                <div className="risk-edit-grid">
+                  <label className="control-field">
+                    <span>Stop Loss %</span>
+                    <input type="number" min={0} max={100} step={0.1} value={riskForm.stopLossPct} onChange={(e) => setRiskForm((f) => ({ ...f, stopLossPct: e.target.value }))} />
+                  </label>
+                  <label className="control-field">
+                    <span>Take Profit %</span>
+                    <input type="number" min={0} max={100} step={0.1} value={riskForm.takeProfitPct} onChange={(e) => setRiskForm((f) => ({ ...f, takeProfitPct: e.target.value }))} />
+                  </label>
+                  <label className="control-field">
+                    <span>Max Daily Loss %</span>
+                    <input type="number" min={0} max={100} step={0.1} value={riskForm.maxDailyLossPct} onChange={(e) => setRiskForm((f) => ({ ...f, maxDailyLossPct: e.target.value }))} />
+                  </label>
+                  <label className="control-field">
+                    <span>Max Position %</span>
+                    <input type="number" min={0} max={100} step={0.1} value={riskForm.maxPositionPct} onChange={(e) => setRiskForm((f) => ({ ...f, maxPositionPct: e.target.value }))} />
+                  </label>
+                  <label className="control-field">
+                    <span>Max Open Positions</span>
+                    <input type="number" min={1} max={100} step={1} value={riskForm.maxOpenPositions} onChange={(e) => setRiskForm((f) => ({ ...f, maxOpenPositions: e.target.value }))} />
+                  </label>
+                </div>
+                <div className="hero-actions" style={{ marginTop: '0.55rem' }}>
+                  <button type="button" className="btn primary" onClick={async () => {
+                    try {
+                      if (typeof updateRisk === 'function') {
+                        await updateRisk({
+                          stopLossPct: toNum(riskForm.stopLossPct, 0) / 100,
+                          takeProfitPct: toNum(riskForm.takeProfitPct, 0) / 100,
+                          maxDailyLossPct: toNum(riskForm.maxDailyLossPct, 0) / 100,
+                          maxPositionPct: toNum(riskForm.maxPositionPct, 0) / 100,
+                          maxOpenPositions: Math.round(toNum(riskForm.maxOpenPositions, 10))
+                        });
+                      }
+                      setRiskMessage('Risk settings updated.');
+                    } catch (err) {
+                      setRiskMessage(`Update failed: ${err.message}`);
+                    }
+                  }}>
+                    Update Risk Settings
+                  </button>
+                </div>
+                {riskMessage ? <p className="action-message">{riskMessage}</p> : null}
+              </>
+            ) : <p className="action-message">No risk data available yet.</p>}
+          </div>
+        ) : null}
+
+        {activeTab === 'alerts' ? (
+          <div className="runtime-tab-content">
+            <div className="section-head">
+              <h2>Recent Alerts</h2>
+              <span>{fmtInt(recentAlerts.length)} alerts</span>
+            </div>
+            <div className="list-stack">
+              {recentAlerts.map((alert) => (
+                <article key={alert.id} className="list-item">
+                  <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'flex-start' }}>
+                    <span className={`severity-icon ${alert.severity === 'critical' ? 'critical' : alert.severity === 'warning' ? 'warning' : alert.severity === 'info' ? 'info' : 'low'}`}>
+                      {alert.severity === 'critical' ? '!' : alert.severity === 'warning' ? 'W' : 'i'}
+                    </span>
+                    <div>
+                      <strong>{alert.title}</strong>
+                      <p>{alert.message}</p>
+                      <div className="item-meta">
+                        <span className={`severity ${alert.severity === 'warning' || alert.severity === 'critical' ? 'high' : ''}`}>{alert.severity}</span>
+                        <small>{alert.type}</small>
+                        <small>{fmtTime(alert.createdAt)}</small>
+                      </div>
+                    </div>
+                  </div>
+                </article>
+              ))}
+              {recentAlerts.length === 0 ? <p className="action-message">No alerts to display.</p> : null}
+            </div>
+          </div>
+        ) : null}
       </GlowCard>
 
       <div className="two-col">

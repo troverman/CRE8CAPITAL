@@ -93,6 +93,18 @@ db.exec(`
     createdAt TEXT DEFAULT (datetime('now'))
   );
 
+  CREATE TABLE IF NOT EXISTS strategy (
+    id TEXT PRIMARY KEY,
+    name TEXT,
+    protocol TEXT,
+    assetClasses TEXT,
+    signals TEXT,
+    config TEXT,
+    enabled INTEGER DEFAULT 1,
+    createdAt TEXT DEFAULT (datetime('now')),
+    updatedAt TEXT DEFAULT (datetime('now'))
+  );
+
   CREATE INDEX IF NOT EXISTS idx_trade_symbol ON trade(symbol);
   CREATE INDEX IF NOT EXISTS idx_trade_strategy ON trade(strategyId);
   CREATE INDEX IF NOT EXISTS idx_position_symbol ON position(symbol);

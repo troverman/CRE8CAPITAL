@@ -2,8 +2,12 @@ import { useEffect, useMemo, useState } from 'react';
 import FlashList from '../components/FlashList';
 import GlowCard from '../components/GlowCard';
 import LineChart from '../components/LineChart';
+import MarketStats from '../components/MarketStats';
+import OrderBookPanel from '../components/OrderBookPanel';
 import OrderBook3D from '../components/OrderBook3D';
+import PriceHeader from '../components/PriceHeader';
 import Sparkline from '../components/Sparkline';
+import TechnicalIndicators from '../components/TechnicalIndicators';
 import useProviderWindowHistory, { LIVE_WINDOW_OPTIONS, resolveWindowMs } from '../hooks/useProviderWindowHistory';
 import useSocketProviders from '../hooks/useSocketProviders';
 import useTensorStrategy from '../hooks/useTensorStrategy';
@@ -584,25 +588,6 @@ export default function MarketDetailPage({ marketId, snapshot, historyByMarket, 
     ];
   }, [classicAnalysis]);
 
-  const taTrendTone = classicAnalysis.states.trend === 'bullish' ? 'up' : classicAnalysis.states.trend === 'bearish' ? 'down' : '';
-  const taBandTone = classicAnalysis.states.bandState === 'upper-break' ? 'up' : classicAnalysis.states.bandState === 'lower-break' ? 'down' : '';
-  const taCrossTone = classicAnalysis.states.crossover === 'bull-cross' ? 'up' : classicAnalysis.states.crossover === 'bear-cross' ? 'down' : '';
-  const taSmaSpreadTone =
-    Number.isFinite(classicAnalysis.metrics.fastVsSlowPct) && classicAnalysis.metrics.fastVsSlowPct !== 0
-      ? classicAnalysis.metrics.fastVsSlowPct > 0
-        ? 'up'
-        : 'down'
-      : '';
-  const taEmaSlopeTone =
-    Number.isFinite(classicAnalysis.metrics.emaSlopePct) && classicAnalysis.metrics.emaSlopePct !== 0
-      ? classicAnalysis.metrics.emaSlopePct > 0
-        ? 'up'
-        : 'down'
-      : '';
-  const formatRawPercent = (value) => {
-    return Number.isFinite(value) ? `${fmtNum(value, 2)}%` : '-';
-  };
-
   const depthBook = useMemo(() => {
     const activeDepth = resolvedDepth.depth || null;
     const bids = normalizeDepthSide(activeDepth?.bids, 'bid');
@@ -764,24 +749,12 @@ export default function MarketDetailPage({ marketId, snapshot, historyByMarket, 
 
       {activeSubtab === 'overview' ? (
         <>
-          <div className="detail-stat-grid">
-            <GlowCard className="stat-card">
-              <span>Reference</span>
-              <strong>{fmtNum(displayedReferencePrice, 4)}</strong>
-            </GlowCard>
-            <GlowCard className="stat-card">
-              <span>Change</span>
-              <strong className={Number(market.changePct) >= 0 ? 'up' : 'down'}>{fmtPct(market.changePct)}</strong>
-            </GlowCard>
-            <GlowCard className="stat-card">
-              <span>Spread</span>
-              <strong>{fmtNum(displayedSpreadBps, 2)} bps</strong>
-            </GlowCard>
-            <GlowCard className="stat-card">
-              <span>Volume</span>
-              <strong>{fmtCompact(displayedVolume)}</strong>
-            </GlowCard>
-          </div>
+          <PriceHeader
+            referencePrice={displayedReferencePrice}
+            changePct={market.changePct}
+            spreadBps={displayedSpreadBps}
+            volume={displayedVolume}
+          />
 
           <GlowCard className="chart-card">
             <LineChart
@@ -799,46 +772,7 @@ export default function MarketDetailPage({ marketId, snapshot, historyByMarket, 
       {activeSubtab === 'overview' ? (
         <>
           <GlowCard className="panel-card">
-            <div className="section-head">
-              <h2>Classic Analysis</h2>
-              <span>{classicAnalysis.sampleSize} samples</span>
-            </div>
-            <p className="socket-status-copy">
-              {classicAnalysis.ready
-                ? `Bollinger(${classicAnalysis.periods.bbPeriod},${classicAnalysis.periods.bbMultiplier}) + moving averages on ${sourceLabel}.`
-                : `Collecting data for classic indicators (${classicAnalysis.periods.bbPeriod} points required).`}
-            </p>
-            <div className="ta-grid">
-              <article className="ta-item">
-                <span>Price vs SMA{classicAnalysis.periods.fastPeriod}</span>
-                <strong className={taTrendTone}>{fmtPct(classicAnalysis.metrics.priceVsFastPct)}</strong>
-              </article>
-              <article className="ta-item">
-                <span>SMA{classicAnalysis.periods.fastPeriod} vs SMA{classicAnalysis.periods.slowPeriod}</span>
-                <strong className={taSmaSpreadTone}>{fmtPct(classicAnalysis.metrics.fastVsSlowPct)}</strong>
-              </article>
-              <article className="ta-item">
-                <span>EMA Slope (5)</span>
-                <strong className={taEmaSlopeTone}>{fmtPct(classicAnalysis.metrics.emaSlopePct)}</strong>
-              </article>
-              <article className="ta-item">
-                <span>Band Width</span>
-                <strong>{formatRawPercent(classicAnalysis.metrics.bbWidthPct)}</strong>
-              </article>
-              <article className="ta-item">
-                <span>Band Position</span>
-                <strong>{formatRawPercent(classicAnalysis.metrics.bbPositionPct)}</strong>
-              </article>
-              <article className="ta-item">
-                <span>Price / EMA{classicAnalysis.periods.emaPeriod}</span>
-                <strong>{fmtNum(classicAnalysis.latest.price, 4)} / {fmtNum(classicAnalysis.latest.ema, 4)}</strong>
-              </article>
-            </div>
-            <div className="ta-chip-row">
-              <span className={`status-pill ${taTrendTone}`}>trend {classicAnalysis.states.trend}</span>
-              <span className={`status-pill ${taBandTone}`}>band {classicAnalysis.states.bandState}</span>
-              <span className={`status-pill ${taCrossTone}`}>cross {classicAnalysis.states.crossover}</span>
-            </div>
+            <TechnicalIndicators classicAnalysis={classicAnalysis} sourceLabel={sourceLabel} />
           </GlowCard>
 
           <GlowCard className="chart-card">
@@ -987,71 +921,14 @@ export default function MarketDetailPage({ marketId, snapshot, historyByMarket, 
 
       {supportsSocketProviders && activeSubtab === 'depth' ? (
         <GlowCard className="panel-card">
-          <div className="section-head">
-            <h2>Order Book Depth</h2>
-            <div className="section-actions">
-              <span>
-                {depthBook.providerName
-                  ? `${depthBook.providerName}${depthBook.sourceLabel ? ` (${depthBook.sourceLabel})` : ''}`
-                  : 'No provider depth yet'}
-              </span>
-              <button
-                type="button"
-                className="btn secondary"
-                onClick={() => setShowOrderBook3D((current) => !current)}
-                disabled={!socketLiveEnabled}
-              >
-                {showOrderBook3D ? 'Hide MultiMarket 3D' : 'Open MultiMarket 3D'}
-              </button>
-              {multimarketHref ? (
-                <a className="btn secondary" href={multimarketHref} target="_blank" rel="noreferrer">
-                  Open External
-                </a>
-              ) : null}
-            </div>
-          </div>
-          <p className="socket-status-copy">
-            bids {fmtCompact(depthBook.bidNotional)} | asks {fmtCompact(depthBook.askNotional)} | imbalance {fmtPct(depthBook.imbalance)} | at{' '}
-            {fmtTime(depthBook.timestamp)}
-          </p>
-          <div className="depth-grid">
-            <section className="depth-side bid">
-              <h3>Bid Depth</h3>
-              {(depthBook.bids || []).map((level, index) => (
-                <article key={`bid:${index}:${level.price}`} className="depth-row bid-row">
-                  <div className="depth-bar bid" style={{ width: `${Math.min(100, (Number(level.size) / depthBook.maxSize) * 100)}%` }} />
-                  <div className="depth-content">
-                    <strong>{fmtNum(level.price, 4)}</strong>
-                    <small>{fmtCompact(level.size)}</small>
-                  </div>
-                </article>
-              ))}
-              {depthBook.bids.length === 0 ? <p className="depth-empty">No bid depth yet.</p> : null}
-            </section>
-
-            <section className="depth-side ask">
-              <h3>Ask Depth</h3>
-              {(depthBook.asks || []).map((level, index) => (
-                <article key={`ask:${index}:${level.price}`} className="depth-row ask-row">
-                  <div className="depth-bar ask" style={{ width: `${Math.min(100, (Number(level.size) / depthBook.maxSize) * 100)}%` }} />
-                  <div className="depth-content">
-                    <strong>{fmtNum(level.price, 4)}</strong>
-                    <small>{fmtCompact(level.size)}</small>
-                  </div>
-                </article>
-              ))}
-              {depthBook.asks.length === 0 ? <p className="depth-empty">No ask depth yet.</p> : null}
-            </section>
-          </div>
-          {showOrderBook3D ? (
-            <section className="depth-3d-wrap">
-              <div className="depth-3d-head">
-                <strong>3D Order Book (Live)</strong>
-                <small>{fmtInt(depthSnapshots.length)} snapshots buffered</small>
-              </div>
-              <OrderBook3D snapshots={depthSnapshots} />
-            </section>
-          ) : null}
+          <OrderBookPanel
+            depthBook={depthBook}
+            showOrderBook3D={showOrderBook3D}
+            setShowOrderBook3D={setShowOrderBook3D}
+            socketLiveEnabled={socketLiveEnabled}
+            multimarketHref={multimarketHref}
+            depthSnapshots={depthSnapshots}
+          />
         </GlowCard>
       ) : null}
 
@@ -1090,85 +967,15 @@ export default function MarketDetailPage({ marketId, snapshot, historyByMarket, 
       ) : null}
 
       {activeSubtab === 'intel' ? (
-        <div className="two-col">
-          <GlowCard className="panel-card">
-            <div className="section-head">
-              <h2>Provider Quotes</h2>
-              <span>{visibleQuoteRows.length} rows</span>
-            </div>
-            <p className="socket-status-copy">
-              With frontend sockets enabled, this table defaults to socket quotes to avoid runtime-vs-socket confusion. Toggle runtime rows only for diagnostics.
-            </p>
-            {socketLiveEnabled ? (
-              <div className="socket-toggle-row">
-                <label className="toggle-label">
-                  <input type="checkbox" checked={showRuntimeQuotes} onChange={(event) => setShowRuntimeQuotes(event.target.checked)} />
-                  <span>Include runtime snapshot rows</span>
-                </label>
-                <small>
-                  socket {quoteRows.filter((row) => row.source === 'socket').length} | runtime {quoteRows.filter((row) => row.source === 'runtime').length}
-                </small>
-              </div>
-            ) : null}
-            <div className="table-wrap">
-              <table>
-                <thead>
-                  <tr>
-                    <th>Source</th>
-                    <th>Provider</th>
-                    <th>Pair</th>
-                    <th>Price</th>
-                    <th>Bid</th>
-                    <th>Ask</th>
-                    <th>Volume</th>
-                    <th>Basis</th>
-                    <th>At</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {visibleQuoteRows.map((provider) => (
-                    <tr key={provider.id}>
-                      <td>{provider.sourceLabel || provider.source}</td>
-                      <td>{provider.name}</td>
-                      <td>{provider.pairLabel}</td>
-                      <td>{fmtNum(provider.price, 4)}</td>
-                      <td>{fmtNum(provider.bid, 4)}</td>
-                      <td>{fmtNum(provider.ask, 4)}</td>
-                      <td>{fmtCompact(provider.volume)}</td>
-                      <td className={provider.basis?.className || ''}>{provider.basis?.label || '-'}</td>
-                      <td>{fmtTime(provider.timestamp)}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          </GlowCard>
-
-          <GlowCard className="panel-card">
-            <div className="section-head">
-              <h2>Signals</h2>
-              <span>{signals.length} recent</span>
-            </div>
-            <div className="list-stack">
-              {signals.map((signal) => (
-                <article key={signal.id} className="list-item">
-                  <strong>
-                    <Link to={`/signal/${encodeURIComponent(signal.id)}`} className="inline-link">
-                      {signal.type}
-                    </Link>{' '}
-                    | {signal.direction}
-                  </strong>
-                  <p>{signal.message}</p>
-                  <div className="item-meta">
-                    <span className={`severity ${severityClass(signal.severity)}`}>{signal.severity}</span>
-                    <small>score {fmtInt(signal.score)}</small>
-                    <small>{fmtTime(signal.timestamp)}</small>
-                  </div>
-                </article>
-              ))}
-            </div>
-          </GlowCard>
-        </div>
+        <MarketStats
+          visibleQuoteRows={visibleQuoteRows}
+          socketLiveEnabled={socketLiveEnabled}
+          showRuntimeQuotes={showRuntimeQuotes}
+          setShowRuntimeQuotes={setShowRuntimeQuotes}
+          quoteRows={quoteRows}
+          signals={signals}
+          market={market}
+        />
       ) : null}
 
       {activeSubtab === 'decisions' ? (

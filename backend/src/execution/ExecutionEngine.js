@@ -9,6 +9,7 @@
  */
 
 const RiskManager = require('./RiskManager');
+const alertEngine = require('../shared/alertEngine');
 const log = require('../shared/logger');
 
 class ExecutionEngine {
@@ -135,6 +136,15 @@ class ExecutionEngine {
 		if (!riskCheck.allowed) {
 			log.warn('Execution', `Risk rejected ${side} ${symbol}: ${riskCheck.reason}`);
 			this.rejectedCount++;
+			// Fire alert on risk rejection
+			const isDailyLimit = riskCheck.reason.includes('Daily loss limit');
+			alertEngine.fire(
+				isDailyLimit ? 'risk.daily_limit' : 'risk.rejected',
+				isDailyLimit ? 'critical' : 'warning',
+				`Risk rejected: ${side} ${symbol}`,
+				riskCheck.reason,
+				{ symbol, side, quantity, price: executionPrice, reason: riskCheck.reason }
+			);
 			return null;
 		}
 
@@ -155,6 +165,14 @@ class ExecutionEngine {
 			}
 			this._notifyTrade(trade);
 			log.info('Execution', `${this.mode.toUpperCase()} ${trade.side} ${trade.quantity.toFixed(6)} ${trade.symbol} @ ${trade.price.toFixed(4)} (fee: ${trade.fee.toFixed(4)})`);
+
+			// Fire alert on trade execution
+			alertEngine.fire(
+				'trade.executed', 'info',
+				`Trade executed: ${trade.side} ${trade.symbol}`,
+				`${this.mode.toUpperCase()} ${trade.side} ${trade.quantity.toFixed(6)} ${trade.symbol} @ ${trade.price.toFixed(4)} (fee: ${trade.fee.toFixed(4)})`,
+				{ tradeId: trade.id, symbol: trade.symbol, side: trade.side, quantity: trade.quantity, price: trade.price, fee: trade.fee, mode: this.mode }
+			);
 		}
 
 		return trade;

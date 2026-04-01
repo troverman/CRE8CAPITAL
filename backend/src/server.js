@@ -3,6 +3,8 @@ const { WebSocketServer } = require('ws');
 const { runtime } = require('./runtime');
 const BacktestEngine = require('./backtest/BacktestEngine');
 const HistoryProvider = require('./backtest/HistoryProvider');
+const alertEngine = require('./shared/alertEngine');
+const db = require('./database');
 const log = require('./shared/logger');
 
 const backtestEngine = new BacktestEngine();
@@ -14,7 +16,7 @@ const STREAM_INTERVAL_MS = Number(process.env.CAPITAL_STREAM_INTERVAL_MS || 1000
 
 const corsHeaders = {
 	'Access-Control-Allow-Origin': '*',
-	'Access-Control-Allow-Methods': 'GET,POST,PUT,OPTIONS',
+	'Access-Control-Allow-Methods': 'GET,POST,PUT,DELETE,OPTIONS',
 	'Access-Control-Allow-Headers': 'Content-Type'
 };
 
@@ -219,6 +221,8 @@ const api = async (req, res) => {
 	}
 
 	if (req.method === 'GET' && url.pathname === '/api/strategies') {
+		const customRows = db.prepare('SELECT * FROM strategy ORDER BY createdAt DESC').all();
+		runtime.strategyEngine.loadCustomStrategies(customRows);
 		return sendJson(res, 200, {
 			items: runtime.getStrategies(),
 			summary: runtime.strategyEngine.getSummary(),
@@ -358,6 +362,105 @@ const api = async (req, res) => {
 		}
 	}
 
+	// --- Alert endpoints ---
+	if (req.method === 'GET' && url.pathname === '/api/alerts') {
+		const limit = numberParam(url.searchParams.get('limit'), 50);
+		const items = alertEngine.getRecent(limit);
+		const unread = alertEngine.getUnread();
+		return sendJson(res, 200, { items, unreadCount: unread.length });
+	}
+
+	if (req.method === 'POST' && url.pathname.match(/^\/api\/alerts\/(\d+)\/read$/)) {
+		const alertId = Number(url.pathname.match(/^\/api\/alerts\/(\d+)\/read$/)[1]);
+		alertEngine.markRead(alertId);
+		return sendJson(res, 200, { ok: true });
+	}
+
+	if (req.method === 'POST' && url.pathname === '/api/alerts/read-all') {
+		alertEngine.markAllRead();
+		return sendJson(res, 200, { ok: true });
+	}
+
+	// --- Strategy CRUD endpoints ---
+	if (req.method === 'POST' && url.pathname === '/api/strategies') {
+		try {
+			const body = await readBody(req);
+			const id = body.id || `custom-${Date.now().toString(36)}`;
+			const name = body.name || id;
+			const protocol = body.protocol || 'trend-follow';
+			const assetClasses = Array.isArray(body.assetClasses) ? body.assetClasses.join(',') : (body.assetClasses || 'crypto');
+			const signals = Array.isArray(body.signals) ? body.signals.join(',') : (body.signals || 'momentum-shift');
+			const config = typeof body.config === 'string' ? body.config : JSON.stringify(body.config || {});
+			const enabled = body.enabled !== false ? 1 : 0;
+
+			db.prepare('INSERT OR REPLACE INTO strategy (id, name, protocol, assetClasses, signals, config, enabled) VALUES (?, ?, ?, ?, ?, ?, ?)')
+				.run(id, name, protocol, assetClasses, signals, config, enabled);
+
+			// Reload into engine
+			const customRows = db.prepare('SELECT * FROM strategy ORDER BY createdAt DESC').all();
+			runtime.strategyEngine.loadCustomStrategies(customRows);
+
+			return sendJson(res, 201, { ok: true, id, name, protocol });
+		} catch (error) {
+			return sendJson(res, 400, { error: 'Failed to create strategy', message: error.message });
+		}
+	}
+
+	const strategyPutMatch = req.method === 'PUT' && url.pathname.match(/^\/api\/strategies\/(.+)$/);
+	if (strategyPutMatch) {
+		try {
+			const strategyId = decodeURIComponent(strategyPutMatch[1]);
+			const body = await readBody(req);
+			const existing = db.prepare('SELECT * FROM strategy WHERE id = ?').get(strategyId);
+			if (!existing) return sendJson(res, 404, { error: 'Strategy not found' });
+			const name = body.name || existing.name;
+			const protocol = body.protocol || existing.protocol;
+			const assetClasses = body.assetClasses ? (Array.isArray(body.assetClasses) ? body.assetClasses.join(',') : body.assetClasses) : existing.assetClasses;
+			const signals = body.signals ? (Array.isArray(body.signals) ? body.signals.join(',') : body.signals) : existing.signals;
+			const config = body.config !== undefined ? (typeof body.config === 'string' ? body.config : JSON.stringify(body.config)) : existing.config;
+			const enabled = body.enabled !== undefined ? (body.enabled ? 1 : 0) : existing.enabled;
+
+			db.prepare("UPDATE strategy SET name = ?, protocol = ?, assetClasses = ?, signals = ?, config = ?, enabled = ?, updatedAt = datetime('now') WHERE id = ?")
+				.run(name, protocol, assetClasses, signals, config, enabled, strategyId);
+
+			return sendJson(res, 200, { ok: true, id: strategyId });
+		} catch (error) {
+			return sendJson(res, 400, { error: 'Failed to update strategy', message: error.message });
+		}
+	}
+
+	const strategyDeleteMatch = req.method === 'DELETE' && url.pathname.match(/^\/api\/strategies\/(.+)$/);
+	if (strategyDeleteMatch) {
+		const strategyId = decodeURIComponent(strategyDeleteMatch[1]);
+		db.prepare('DELETE FROM strategy WHERE id = ?').run(strategyId);
+		return sendJson(res, 200, { ok: true, id: strategyId });
+	}
+
+	const strategyToggleMatch = req.method === 'POST' && url.pathname.match(/^\/api\/strategies\/(.+)\/toggle$/);
+	if (strategyToggleMatch) {
+		const strategyId = decodeURIComponent(strategyToggleMatch[1]);
+		const existing = db.prepare('SELECT * FROM strategy WHERE id = ?').get(strategyId);
+		if (existing) {
+			const newEnabled = existing.enabled ? 0 : 1;
+			db.prepare("UPDATE strategy SET enabled = ?, updatedAt = datetime('now') WHERE id = ?").run(newEnabled, strategyId);
+			return sendJson(res, 200, { ok: true, id: strategyId, enabled: !!newEnabled });
+		}
+		// Toggle built-in strategy in the engine
+		const strategies = runtime.strategyEngine.getStrategies();
+		const builtIn = strategies.find(s => s.id === strategyId);
+		if (builtIn) {
+			// Store toggle state for built-in in DB
+			const assetClasses = Array.isArray(builtIn.assetClasses) ? builtIn.assetClasses.join(',') : '';
+			const signals = Array.isArray(builtIn.signalTypes) ? builtIn.signalTypes.join(',') : '';
+			const config = JSON.stringify(builtIn.config || {});
+			const newEnabled = builtIn.enabled ? 0 : 1;
+			db.prepare('INSERT OR REPLACE INTO strategy (id, name, protocol, assetClasses, signals, config, enabled) VALUES (?, ?, ?, ?, ?, ?, ?)')
+				.run(strategyId, builtIn.name, builtIn.protocol, assetClasses, signals, config, newEnabled);
+			return sendJson(res, 200, { ok: true, id: strategyId, enabled: !!newEnabled });
+		}
+		return sendJson(res, 404, { error: 'Strategy not found' });
+	}
+
 	return sendJson(res, 404, {
 		error: 'Not found',
 		availableRoutes: [
@@ -380,6 +483,7 @@ const api = async (req, res) => {
 			'/api/decisions/history',
 			'/api/backtest',
 			'/api/risk',
+			'/api/alerts',
 			'/api/triggers/restrategy',
 			'/api/runtime/start',
 			'/api/runtime/stop'
@@ -438,6 +542,11 @@ wss.on('connection', (ws, req) => {
 // Wire execution engine to broadcast trades to WS clients
 runtime.executionEngine.onTrade((trade) => {
 	broadcastWsEvent('trade', trade);
+});
+
+// Wire alert engine to broadcast alerts to WS clients
+alertEngine.onAlert((alert) => {
+	broadcastWsEvent('alert', alert);
 });
 
 server.listen(PORT, HOST, async () => {

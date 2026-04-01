@@ -2,7 +2,10 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import FlashList from '../components/FlashList';
 import GlowCard from '../components/GlowCard';
 import LineChart from '../components/LineChart';
+import PortfolioSummary from '../components/PortfolioSummary';
 import RuntimeExecutionControls from '../components/RuntimeExecutionControls';
+import SimulationControls from '../components/SimulationControls';
+import StrategySelector from '../components/StrategySelector';
 import WalletAccountSelectField from '../components/WalletAccountSelectField';
 import useStrategyLab from '../hooks/useStrategyLab';
 import { fmtInt, fmtNum, fmtPct, fmtTime } from '../lib/format';
@@ -669,36 +672,15 @@ export default function StrategyLabPage({ snapshot, historyByMarket }) {
             </label>
           </div>
 
-          <div className="section-head">
-            <h2>Multi Strategy Runtime</h2>
-            <span>{fmtInt(enabledStrategyIds.length)} active</span>
-          </div>
-          <div className="section-actions">
-            <button type="button" className="btn secondary" onClick={enableAllStrategies}>
-              Enable Entire Set
-            </button>
-            <button type="button" className="btn secondary" onClick={disableToPrimaryStrategy}>
-              Focus Only
-            </button>
-            <button
-              type="button"
-              className="btn secondary"
-              onClick={() => changeEnabledStrategies(strategyOptions.slice(0, 3).map((option) => option.id))}
-            >
-              Enable Top 3 Preset
-            </button>
-          </div>
-          <div className="strategy-enabled-grid">
-            {strategyOptions.map((option) => {
-              const checked = enabledStrategySet.has(option.id);
-              return (
-                <label key={`strategy-enabled:${option.id}`} className={checked ? 'strategy-toggle-chip active' : 'strategy-toggle-chip'}>
-                  <input type="checkbox" checked={checked} onChange={() => toggleStrategyEnabled(option.id)} />
-                  <span>{option.label}</span>
-                </label>
-              );
-            })}
-          </div>
+          <StrategySelector
+            strategyOptions={strategyOptions}
+            enabledStrategySet={enabledStrategySet}
+            onToggle={toggleStrategyEnabled}
+            onEnableAll={enableAllStrategies}
+            onFocusOnly={disableToPrimaryStrategy}
+            onPreset={() => changeEnabledStrategies(strategyOptions.slice(0, 3).map((option) => option.id))}
+            enabledCount={enabledStrategyIds.length}
+          />
           <RuntimeExecutionControls
             strategyMode={executionStrategyMode}
             walletScope={executionWalletScope}
@@ -739,111 +721,35 @@ export default function StrategyLabPage({ snapshot, historyByMarket }) {
             Enabled strategies: {enabledStrategyLabels.length ? enabledStrategyLabels.join(', ') : '-'}
           </p>
 
-          <div className="strategy-risk-grid">
-            <label className="control-field">
-              <span>Interval (ms)</span>
-              <input type="number" min={280} max={5000} step={20} value={intervalMs} onChange={(event) => updateInterval(event.target.value)} />
-            </label>
-            <label className="control-field">
-              <span>Max units</span>
-              <input
-                type="number"
-                min={1}
-                max={60}
-                step={1}
-                value={maxAbsUnits}
-                onChange={(event) => changeRisk({ nextMaxAbsUnits: event.target.value, nextSlippageBps: slippageBps, nextCooldownMs: cooldownMs })}
-              />
-            </label>
-            <label className="control-field">
-              <span>Slippage (bps)</span>
-              <input
-                type="number"
-                min={0}
-                max={40}
-                step={0.1}
-                value={slippageBps}
-                onChange={(event) => changeRisk({ nextMaxAbsUnits: maxAbsUnits, nextSlippageBps: event.target.value, nextCooldownMs: cooldownMs })}
-              />
-            </label>
-            <label className="control-field">
-              <span>Cooldown (ms)</span>
-              <input
-                type="number"
-                min={0}
-                max={120000}
-                step={200}
-                value={cooldownMs}
-                onChange={(event) => changeRisk({ nextMaxAbsUnits: maxAbsUnits, nextSlippageBps: slippageBps, nextCooldownMs: event.target.value })}
-              />
-            </label>
-          </div>
-
-          <div className="hero-actions">
-            <button type="button" className={running ? 'btn secondary' : 'btn primary'} onClick={toggleRunning}>
-              {running ? 'Pause Realtime' : 'Start Realtime'}
-            </button>
-            <button type="button" className="btn secondary" onClick={triggerManual}>
-              Manual Trigger
-            </button>
-            <button type="button" className="btn secondary" onClick={runBacktestNow}>
-              Run Backtest
-            </button>
-            <button type="button" className="btn secondary" onClick={resetSession}>
-              Reset Session
-            </button>
-          </div>
-
-          <div className="strategy-lab-status-row">
-            <span className={running ? 'status-pill online' : 'status-pill'}>{running ? 'realtime active' : 'realtime paused'}</span>
-            <span className="status-pill">mode {sourceId}</span>
-            <span className="status-pill">market {selectedMarket?.symbol || '-'}</span>
-            <span className="status-pill">strategy exec {executionStrategyModeLabel}</span>
-            <span className="status-pill">wallet exec {executionWalletScopeLabel}</span>
-            <span className={hasLiveHistory ? 'status-pill online' : 'status-pill'}>history {hasLiveHistory ? 'available' : 'limited'}</span>
-          </div>
+          <SimulationControls
+            running={running}
+            onToggleRunning={toggleRunning}
+            onManualTrigger={triggerManual}
+            onRunBacktest={runBacktestNow}
+            onResetSession={resetSession}
+            intervalMs={intervalMs}
+            onUpdateInterval={updateInterval}
+            maxAbsUnits={maxAbsUnits}
+            slippageBps={slippageBps}
+            cooldownMs={cooldownMs}
+            onChangeRisk={changeRisk}
+            sourceId={sourceId}
+            selectedMarketSymbol={selectedMarket?.symbol}
+            hasLiveHistory={hasLiveHistory}
+            executionStrategyModeLabel={executionStrategyModeLabel}
+            executionWalletScopeLabel={executionWalletScopeLabel}
+          />
           <p className="socket-status-copy">{strategyDescription}</p>
         </GlowCard>
 
         <GlowCard className="panel-card strategy-lab-overview-card">
-          <div className="section-head">
-            <h2>Session Overview</h2>
-            <span>{activeExecutionAccount?.name || 'paper account'}</span>
-          </div>
-          <div className="strategy-lab-mini-grid">
-            <article className="strategy-lab-mini-stat">
-              <span>Wallet Equity</span>
-              <strong className={toneClass(activeExecutionWallet.equity - 100000)}>{fmtNum(activeExecutionWallet.equity, 2)}</strong>
-            </article>
-            <article className="strategy-lab-mini-stat">
-              <span>Realized PnL</span>
-              <strong className={toneClass(activeExecutionWallet.realizedPnl)}>{fmtNum(activeExecutionWallet.realizedPnl, 2)}</strong>
-            </article>
-            <article className="strategy-lab-mini-stat">
-              <span>Unrealized PnL</span>
-              <strong className={toneClass(activeExecutionWallet.unrealizedPnl)}>{fmtNum(activeExecutionWallet.unrealizedPnl, 2)}</strong>
-            </article>
-            <article className="strategy-lab-mini-stat">
-              <span>Position</span>
-              <strong>{fmtNum(activeExecutionWallet.units, 0)} units</strong>
-            </article>
-            <article className="strategy-lab-mini-stat">
-              <span>Backtest Return</span>
-              <strong className={toneClass(backtestStats.returnPct)}>{fmtPct(backtestStats.returnPct)}</strong>
-            </article>
-            <article className="strategy-lab-mini-stat">
-              <span>Backtest PnL</span>
-              <strong className={toneClass(backtestStats.pnl)}>{fmtNum(backtestStats.pnl, 2)}</strong>
-            </article>
-            <article className="strategy-lab-mini-stat">
-              <span>Enabled Accounts</span>
-              <strong>{fmtInt(enabledAccountCount)}</strong>
-            </article>
-            <article className="strategy-lab-mini-stat">
-              <span>Trigger Events</span>
-              <strong>{fmtInt(eventLog.length)}</strong>
-            </article>
-          </div>
+          <PortfolioSummary
+            wallet={activeExecutionWallet}
+            backtestStats={backtestStats}
+            enabledAccountCount={enabledAccountCount}
+            eventLogCount={eventLog.length}
+            accountName={activeExecutionAccount?.name}
+          />
           <p className="socket-status-copy">
             tx feed {fmtInt(txEvents.length)} | position snapshots {fmtInt(positionEvents.length)} | execution rows {fmtInt(tradeLog.length)} | signal inputs{' '}
             {fmtInt(signalRows.length)}

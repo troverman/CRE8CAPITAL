@@ -1,6 +1,13 @@
 import { useEffect, useMemo, useState } from 'react';
 import GlowCard from '../components/GlowCard';
+import { TabBar } from '../components/PageLayout';
 import { fmtCompact, fmtNum, fmtTime } from '../lib/format';
+
+const ACCOUNT_TABS = [
+  { id: 'passport', label: 'Passport' },
+  { id: 'providers', label: 'Providers' },
+  { id: 'preferences', label: 'Preferences' }
+];
 
 const STORAGE_KEY = 'cre8capital.account-passport.v1';
 
@@ -59,6 +66,7 @@ export default function AccountPage() {
   const [linkForm, setLinkForm] = useState(createEmptyForm);
   const [showSecrets, setShowSecrets] = useState(false);
   const [message, setMessage] = useState('');
+  const [activeTab, setActiveTab] = useState('passport');
 
   useEffect(() => {
     try {
@@ -248,6 +256,27 @@ export default function AccountPage() {
         </GlowCard>
       </div>
 
+      {passport.providers.length > 0 ? (
+        <GlowCard className="panel-card">
+          <div className="section-head">
+            <h2>Connected Providers Summary</h2>
+            <span>{passport.providers.length} linked</span>
+          </div>
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.45rem' }}>
+            {passport.providers.map((provider) => (
+              <span key={provider.id} className={provider.status === 'validated' ? 'status-pill online' : 'status-pill'}>
+                {provider.providerName} ({provider.assetClass}) {provider.testnet ? '| testnet' : '| live'}
+              </span>
+            ))}
+          </div>
+        </GlowCard>
+      ) : null}
+
+      <GlowCard className="panel-card">
+        <TabBar tabs={ACCOUNT_TABS} active={activeTab} onChange={setActiveTab} />
+      </GlowCard>
+
+      {activeTab === 'passport' ? (
       <div className="account-grid">
         <GlowCard className="panel-card passport-card">
           <div className="section-head">
@@ -418,6 +447,9 @@ export default function AccountPage() {
         </GlowCard>
       </div>
 
+      ) : null}
+
+      {activeTab === 'providers' ? (
       <GlowCard className="panel-card">
         <div className="section-head">
           <h2>Linked Providers</h2>
@@ -456,6 +488,51 @@ export default function AccountPage() {
           {passport.providers.length === 0 ? <p className="action-message">No linked providers yet.</p> : null}
         </div>
       </GlowCard>
+      ) : null}
+
+      {activeTab === 'preferences' ? (
+      <GlowCard className="panel-card">
+        <div className="section-head">
+          <h2>Display Preferences</h2>
+          <span>local settings</span>
+        </div>
+        <p className="socket-status-copy">
+          Theme and display preferences are stored locally. Execution mode and risk defaults are managed in the Passport tab.
+        </p>
+        <div className="passport-config-grid">
+          <label className="control-field">
+            <span>Profile Name</span>
+            <input value={passport.profileName} onChange={(event) => onPassportField('profileName', event.target.value)} placeholder="CRE8 Operator" />
+          </label>
+          <label className="control-field">
+            <span>Execution Mode</span>
+            <select value={passport.executionMode} onChange={(event) => onPassportField('executionMode', event.target.value)}>
+              <option value="paper">paper</option>
+              <option value="guarded-live">guarded-live</option>
+              <option value="live">live</option>
+            </select>
+          </label>
+          <label className="control-field">
+            <span>Max Order Notional</span>
+            <input
+              type="number"
+              min={0}
+              step={50}
+              value={passport.maxOrderNotional}
+              onChange={(event) => onPassportField('maxOrderNotional', Math.max(0, Number(event.target.value) || 0))}
+            />
+          </label>
+          <label className="toggle-label passport-toggle">
+            <input
+              type="checkbox"
+              checked={Boolean(passport.externalActionsEnabled)}
+              onChange={(event) => onPassportField('externalActionsEnabled', event.target.checked)}
+            />
+            <span>Allow external actions</span>
+          </label>
+        </div>
+      </GlowCard>
+      ) : null}
 
       {message ? (
         <GlowCard className="panel-card">

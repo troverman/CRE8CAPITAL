@@ -4,6 +4,7 @@ const SignalEngine = require('../signal/SignalEngine');
 const StrategyEngine = require('../strategy/StrategyEngine');
 const ExecutionEngine = require('../execution/ExecutionEngine');
 const { createProviders } = require('../provider');
+const alertEngine = require('../shared/alertEngine');
 const log = require('../shared/logger');
 const persistence = require('../shared/persistence');
 
@@ -165,6 +166,12 @@ class CapitalRuntime {
 							const highSignal = signals.find((signal) => signal.severity === 'high');
 							if (highSignal) {
 								this.lastAutoRestrategySignalAt = highSignal.timestamp;
+								alertEngine.fire(
+									'signal.high', 'warning',
+									`High severity signal: ${highSignal.type} ${highSignal.symbol}`,
+									highSignal.message || `${highSignal.type} ${highSignal.direction} on ${highSignal.symbol}`,
+									{ signalId: highSignal.id, symbol: highSignal.symbol, type: highSignal.type, direction: highSignal.direction, score: highSignal.score }
+								);
 							}
 						}
 						return { signals };
@@ -238,6 +245,14 @@ class CapitalRuntime {
 										this._pushFeed('trade', trade);
 										this._pushFeed('risk-action', { ...action, tradeId: trade.id });
 										log.info('RiskManager', `${action.action} executed for ${action.symbol}: ${action.reason}`);
+										// Fire alert on stop loss / take profit
+										alertEngine.fire(
+											action.action === 'stop_loss' ? 'risk.stop_loss' : 'risk.take_profit',
+											action.action === 'stop_loss' ? 'warning' : 'info',
+											`${action.action === 'stop_loss' ? 'Stop Loss' : 'Take Profit'}: ${action.symbol}`,
+											action.reason,
+											{ symbol: action.symbol, action: action.action, pnlPct: action.pnlPct, tradeId: trade.id }
+										);
 									}
 								} catch (err) {
 									log.warn('RiskManager', `failed to execute ${action.action} for ${action.symbol}: ${err.message}`);
@@ -270,6 +285,12 @@ class CapitalRuntime {
 				});
 				this.telemetry.restrategyCount += 1;
 				this.telemetry.lastRestrategyAt = Date.now();
+				alertEngine.fire(
+					'strategy.restrategy', 'info',
+					`Restrategy triggered (${params.source})`,
+					`Reason: ${params.reason}. Generated ${decisions.length} decisions.`,
+					{ reason: params.reason, source: params.source, decisionCount: decisions.length }
+				);
 				if (decisions.length > 0) {
 					this.telemetry.decisionsGenerated += decisions.length;
 					this.telemetry.lastDecisionAt = decisions[0].timestamp;

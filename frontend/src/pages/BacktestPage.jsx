@@ -1,9 +1,13 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import BacktestConfig from '../components/BacktestConfig';
+import BacktestResults from '../components/BacktestResults';
 import FlashList from '../components/FlashList';
 import GlowCard from '../components/GlowCard';
 import LineChart from '../components/LineChart';
+import MetricsGrid from '../components/MetricsGrid';
 import useProviderWindowHistory from '../hooks/useProviderWindowHistory';
 import { fmtInt, fmtNum, fmtPct, fmtTime } from '../lib/format';
+import { runBacktest as runServerBacktest } from '../lib/capitalApi';
 import {
   buildMarketImageSnapshot,
   buildMarketTensorSnapshot,
@@ -33,14 +37,6 @@ const EMPTY_RESULT = {
   tradeLog: [],
   signalLog: []
 };
-
-const BACKTEST_HISTORY_WINDOW_OPTIONS = [
-  { key: '5m', label: '5m' },
-  { key: '1h', label: '1h' },
-  { key: '24h', label: '24h' },
-  { key: '7d', label: '7d' },
-  { key: '30d', label: '30d' }
-];
 
 const toNum = (value, fallback = 0) => {
   const numeric = Number(value);
@@ -619,6 +615,34 @@ const buildWindowComparisonRows = ({ oracleWindows = [], pdfWindows = [], minMov
 
 export default function BacktestPage({ snapshot, historyByMarket }) {
   const sortedMarkets = useMemo(() => sortMarkets(snapshot?.markets || []), [snapshot?.markets]);
+
+  // Server-side backtest
+  const [serverBtResult, setServerBtResult] = useState(null);
+  const [serverBtLoading, setServerBtLoading] = useState(false);
+  const [serverBtError, setServerBtError] = useState('');
+
+  const handleServerBacktest = useCallback(async () => {
+    setServerBtLoading(true);
+    setServerBtError('');
+    setServerBtResult(null);
+    try {
+      const result = await runServerBacktest({
+        strategy: { protocol: 'trend-follow' },
+        symbols: ['BTC-USDT', 'ETH-USDT'],
+        days: 30,
+        initialCash: 10000
+      });
+      if (result.error) {
+        setServerBtError(result.message || result.error);
+      } else {
+        setServerBtResult(result);
+      }
+    } catch (err) {
+      setServerBtError(err.message);
+    } finally {
+      setServerBtLoading(false);
+    }
+  }, []);
   const [sourceMode, setSourceMode] = useState('live-history');
   const [historyWindowKey, setHistoryWindowKey] = useState('24h');
   const [strategyId, setStrategyId] = useState('tensor-lite');
@@ -1349,164 +1373,88 @@ export default function BacktestPage({ snapshot, historyByMarket }) {
 
       <GlowCard className="panel-card">
         <div className="section-head">
-          <h2>Run Controls</h2>
-          <span>{sourceLabel}</span>
-        </div>
-        <div className="strategy-control-grid">
-          <label className="control-field">
-            <span>Source</span>
-            <select value={sourceMode} onChange={(event) => setSourceMode(event.target.value)}>
-              <option value="live-history">live-history</option>
-              <option value="provider-history">provider-history</option>
-              <option value="scenario">scenario</option>
-            </select>
-          </label>
-
-          <label className="control-field">
-            <span>Strategy</span>
-            <select value={strategyId} onChange={(event) => setStrategyId(event.target.value)}>
-              {STRATEGY_OPTIONS.map((option) => (
-                <option key={option.id} value={option.id}>
-                  {option.label}
-                </option>
-              ))}
-            </select>
-          </label>
-
-          <label className="control-field">
-            <span>Market</span>
-            <select value={marketKey} onChange={(event) => setMarketKey(event.target.value)} disabled={!sortedMarkets.length}>
-              {sortedMarkets.map((market) => (
-                <option key={market.key} value={market.key}>
-                  {market.symbol} ({market.assetClass})
-                </option>
-              ))}
-            </select>
-          </label>
-
-          <label className="control-field">
-            <span>Scenario</span>
-            <select value={scenarioId} onChange={(event) => setScenarioId(event.target.value)} disabled={sourceMode !== 'scenario'}>
-              {SCENARIO_OPTIONS.map((option) => (
-                <option key={option.id} value={option.id}>
-                  {option.label}
-                </option>
-              ))}
-            </select>
-          </label>
-
-          <label className="control-field">
-            <span>History Window</span>
-            <select value={historyWindowKey} onChange={(event) => setHistoryWindowKey(event.target.value)} disabled={sourceMode !== 'provider-history'}>
-              {BACKTEST_HISTORY_WINDOW_OPTIONS.map((option) => (
-                <option key={option.key} value={option.key}>
-                  {option.label}
-                </option>
-              ))}
-            </select>
-          </label>
-        </div>
-
-        <div className="strategy-risk-grid">
-          <label className="control-field">
-            <span>Sample Size</span>
-            <input type="number" min={64} max={720} step={8} value={sampleSize} onChange={(event) => setSampleSize(Math.max(64, Math.min(720, Math.round(toNum(event.target.value, 280)))))} />
-          </label>
-
-          <label className="control-field">
-            <span>Start Cash</span>
-            <input type="number" min={100} step={100} value={startCash} onChange={(event) => setStartCash(Math.max(100, toNum(event.target.value, 100000)))} />
-          </label>
-
-          <label className="control-field">
-            <span>Max Units</span>
-            <input type="number" min={1} step={1} value={maxAbsUnits} onChange={(event) => setMaxAbsUnits(Math.max(1, Math.round(toNum(event.target.value, 8))))} />
-          </label>
-
-          <label className="control-field">
-            <span>Slippage (bps)</span>
-            <input type="number" min={0} step={0.1} value={slippageBps} onChange={(event) => setSlippageBps(Math.max(0, toNum(event.target.value, 1.2)))} />
-          </label>
-        </div>
-
-        <div className="hero-actions">
-          <button type="button" className="btn primary" onClick={runBacktestNow}>
-            Run Backtest
-          </button>
+          <h2>Server Backtest</h2>
+          <span>run against backend history</span>
         </div>
         <p className="socket-status-copy">
-          sample {fmtInt(activeSeries.length)} | market {selectedMarket.symbol} | last run {fmtTime(ranAt)}
+          Execute a backtest on the server using historical candle data. Results include equity curve and trade log.
         </p>
-        {sourceMode === 'provider-history' ? (
-          <p className="socket-status-copy">
-            provider {providerHistoryProviderName || 'none'} | window {historyWindowKey} | rows{' '}
-            {fmtInt(providerHistorySeries.length)}
-            {providerWindowHistory.loading ? ' | loading...' : ''}
-            {providerWindowHistory.error ? ` | ${providerWindowHistory.error}` : ''}
-          </p>
+        <div className="hero-actions">
+          <button type="button" className="btn primary" onClick={handleServerBacktest} disabled={serverBtLoading}>
+            {serverBtLoading ? 'Running...' : 'Run Server Backtest'}
+          </button>
+        </div>
+        {serverBtError ? <p className="action-message" style={{ color: '#ef4444' }}>{serverBtError}</p> : null}
+        {serverBtResult ? (
+          <div className="detail-stat-grid">
+            <GlowCard className="stat-card">
+              <span>End Equity</span>
+              <strong>{fmtNum(serverBtResult.stats?.endEquity || serverBtResult.endEquity, 2)}</strong>
+            </GlowCard>
+            <GlowCard className="stat-card">
+              <span>P&L</span>
+              <strong className={(serverBtResult.stats?.pnl || serverBtResult.pnl || 0) >= 0 ? 'up' : 'down'}>
+                {fmtNum(serverBtResult.stats?.pnl || serverBtResult.pnl, 2)}
+              </strong>
+            </GlowCard>
+            <GlowCard className="stat-card">
+              <span>Return</span>
+              <strong>{fmtNum(serverBtResult.stats?.returnPct || serverBtResult.returnPct, 2)}%</strong>
+            </GlowCard>
+            <GlowCard className="stat-card">
+              <span>Trades</span>
+              <strong>{fmtInt(serverBtResult.stats?.tradeCount || serverBtResult.tradeCount || 0)}</strong>
+            </GlowCard>
+            <GlowCard className="stat-card">
+              <span>Candles</span>
+              <strong>{fmtInt(serverBtResult.candleCount || 0)}</strong>
+            </GlowCard>
+          </div>
         ) : null}
       </GlowCard>
 
-      <div className="detail-stat-grid">
-        <GlowCard className="stat-card">
-          <span>Return</span>
-          <strong className={stats.returnPct >= 0 ? 'up' : 'down'}>{fmtPct(stats.returnPct)}</strong>
-        </GlowCard>
-        <GlowCard className="stat-card">
-          <span>PnL</span>
-          <strong className={stats.pnl >= 0 ? 'up' : 'down'}>{fmtNum(stats.pnl, 2)}</strong>
-        </GlowCard>
-        <GlowCard className="stat-card">
-          <span>Trades</span>
-          <strong>{fmtInt(stats.tradeCount)}</strong>
-        </GlowCard>
-        <GlowCard className="stat-card">
-          <span>Max Drawdown</span>
-          <strong className={stats.maxDrawdownPct > 0 ? 'down' : ''}>{fmtPct(stats.maxDrawdownPct)}</strong>
-        </GlowCard>
-        <GlowCard className="stat-card">
-          <span>Oracle Return</span>
-          <strong className={oracleStats.returnPct >= 0 ? 'up' : 'down'}>{fmtPct(oracleStats.returnPct)}</strong>
-        </GlowCard>
-        <GlowCard className="stat-card">
-          <span>PDF Return</span>
-          <strong className={pdfPolicyStats.returnPct >= 0 ? 'up' : 'down'}>{fmtPct(pdfPolicyStats.returnPct)}</strong>
-        </GlowCard>
-        <GlowCard className="stat-card">
-          <span>Oracle Edge</span>
-          <strong className={oracleStats.returnPct - stats.returnPct >= 0 ? 'up' : 'down'}>{fmtPct(oracleStats.returnPct - stats.returnPct)}</strong>
-        </GlowCard>
-        <GlowCard className="stat-card">
-          <span>PDF Edge</span>
-          <strong className={pdfPolicyStats.returnPct - stats.returnPct >= 0 ? 'up' : 'down'}>{fmtPct(pdfPolicyStats.returnPct - stats.returnPct)}</strong>
-        </GlowCard>
-        <GlowCard className="stat-card">
-          <span>Oracle vs PDF</span>
-          <strong className={oracleStats.returnPct - pdfPolicyStats.returnPct >= 0 ? 'up' : 'down'}>{fmtPct(oracleStats.returnPct - pdfPolicyStats.returnPct)}</strong>
-        </GlowCard>
-      </div>
+      <BacktestConfig
+        sourceMode={sourceMode}
+        setSourceMode={setSourceMode}
+        strategyId={strategyId}
+        setStrategyId={setStrategyId}
+        strategyOptions={STRATEGY_OPTIONS}
+        marketKey={marketKey}
+        setMarketKey={setMarketKey}
+        sortedMarkets={sortedMarkets}
+        scenarioId={scenarioId}
+        setScenarioId={setScenarioId}
+        scenarioOptions={SCENARIO_OPTIONS}
+        historyWindowKey={historyWindowKey}
+        setHistoryWindowKey={setHistoryWindowKey}
+        sampleSize={sampleSize}
+        setSampleSize={setSampleSize}
+        startCash={startCash}
+        setStartCash={setStartCash}
+        maxAbsUnits={maxAbsUnits}
+        setMaxAbsUnits={setMaxAbsUnits}
+        slippageBps={slippageBps}
+        setSlippageBps={setSlippageBps}
+        onRunBacktest={runBacktestNow}
+        sourceLabel={sourceLabel}
+        activeSeries={activeSeries}
+        selectedMarket={selectedMarket}
+        ranAt={ranAt}
+        providerHistoryProviderName={providerHistoryProviderName}
+        providerHistorySeries={providerHistorySeries}
+        providerWindowHistory={providerWindowHistory}
+      />
 
-      <div className="strategy-lab-chart-grid">
-        <GlowCard className="chart-card">
-          <LineChart
-            title={`Backtest Equity Curve (${fmtInt(result.equitySeries?.length || 0)} points)`}
-            points={result.equitySeries || []}
-            stroke="#9d92ff"
-            fillFrom="rgba(150, 130, 255, 0.3)"
-            fillTo="rgba(150, 130, 255, 0.02)"
-          />
-        </GlowCard>
-
-        <GlowCard className="chart-card">
-          <LineChart
-            title={`Source Price (${sourceLabel})`}
-            points={sourcePriceSeries}
-            stroke="#72ecff"
-            fillFrom="rgba(82, 199, 255, 0.32)"
-            fillTo="rgba(82, 199, 255, 0.02)"
-          />
-        </GlowCard>
-      </div>
+      <BacktestResults
+        stats={stats}
+        equitySeries={result.equitySeries}
+        tradeRows={tradeRows}
+        signalRows={signalRows}
+        sourcePriceSeries={sourcePriceSeries}
+        sourceLabel={sourceLabel}
+        oracleStats={oracleStats}
+        pdfPolicyStats={pdfPolicyStats}
+      />
 
       <GlowCard className="panel-card">
         <div className="section-head">
@@ -2148,59 +2096,6 @@ export default function BacktestPage({ snapshot, historyByMarket }) {
         </GlowCard>
       </div>
 
-      <div className="two-col">
-        <GlowCard className="panel-card">
-          <div className="section-head">
-            <h2>Backtest Trade Tape</h2>
-            <span>{fmtInt(tradeRows.length)} rows</span>
-          </div>
-          <FlashList
-            items={tradeRows}
-            height={320}
-            itemHeight={72}
-            className="tick-flash-list"
-            emptyCopy="No backtest trades generated for this run."
-            keyExtractor={(trade) => trade.id}
-            renderItem={(trade) => (
-              <article className="tensor-event-row">
-                <strong className={trade.action === 'accumulate' ? 'up' : trade.action === 'reduce' ? 'down' : ''}>
-                  {trade.action} | fill {fmtNum(trade.fillPrice, 4)}
-                </strong>
-                <p>{trade.reason || 'backtest execution'}</p>
-                <small>
-                  units {fmtNum(trade.unitsAfter, 0)} | realized {fmtNum(trade.realizedDelta, 2)} | spread {fmtNum(trade.spreadBps, 2)} bps | {fmtTime(trade.timestamp)}
-                </small>
-              </article>
-            )}
-          />
-        </GlowCard>
-
-        <GlowCard className="panel-card">
-          <div className="section-head">
-            <h2>Backtest Signal Tape</h2>
-            <span>{fmtInt(signalRows.length)} rows</span>
-          </div>
-          <FlashList
-            items={signalRows}
-            height={320}
-            itemHeight={72}
-            className="tick-flash-list"
-            emptyCopy="No backtest signals generated for this run."
-            keyExtractor={(signal) => signal.id}
-            renderItem={(signal) => (
-              <article className="tensor-event-row">
-                <strong className={signal.action === 'accumulate' ? 'up' : signal.action === 'reduce' ? 'down' : ''}>
-                  {signal.action} | {signal.stance}
-                </strong>
-                <p>{signal.reason}</p>
-                <small>
-                  score {fmtNum(signal.score, 2)} | px {fmtNum(signal.price, 4)} | sigs {fmtInt(signal.signalCount)} | {fmtTime(signal.timestamp)}
-                </small>
-              </article>
-            )}
-          />
-        </GlowCard>
-      </div>
     </section>
   );
 }
