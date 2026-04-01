@@ -22,13 +22,15 @@ export default function MarketStats({
           <span>{visibleQuoteRows.length} rows</span>
         </div>
         <p className="socket-status-copy">
-          With frontend sockets enabled, this table defaults to socket quotes to avoid runtime-vs-socket confusion. Toggle runtime rows only for diagnostics.
+          {socketLiveEnabled && visibleQuoteRows.some((row) => row.source === 'socket')
+            ? 'Showing live socket quotes where available. Toggle runtime rows for comparison.'
+            : 'Direct exchange sockets unavailable from browser — using runtime data.'}
         </p>
         {socketLiveEnabled ? (
           <div className="socket-toggle-row">
             <label className="toggle-label">
               <input type="checkbox" checked={showRuntimeQuotes} onChange={(event) => setShowRuntimeQuotes(event.target.checked)} />
-              <span>Include runtime snapshot rows</span>
+              <span>Show all socket rows (diagnostic mode)</span>
             </label>
             <small>
               socket {quoteRows.filter((row) => row.source === 'socket').length} | runtime {quoteRows.filter((row) => row.source === 'runtime').length}
@@ -53,7 +55,11 @@ export default function MarketStats({
             <tbody>
               {visibleQuoteRows.map((provider) => (
                 <tr key={provider.id}>
-                  <td>{provider.sourceLabel || provider.source}</td>
+                  <td>
+                    <span className={`source-badge ${provider.source === 'runtime' ? 'source-runtime' : 'source-socket'}`}>
+                      {provider.source === 'runtime' ? 'Runtime' : 'Socket'}
+                    </span>
+                  </td>
                   <td>{provider.name}</td>
                   <td>{provider.pairLabel}</td>
                   <td>{fmtNum(provider.price, 4)}</td>

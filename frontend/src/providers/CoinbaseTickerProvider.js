@@ -169,13 +169,21 @@ export default class CoinbaseTickerProvider extends Provider {
       onStatus?.({ id: this.id, name: this.name, connected: false });
     };
 
+    let firstMsg = true;
+
     socket.onmessage = (event) => {
       try {
         const payload = JSON.parse(event.data);
+
+        if (firstMsg && payload.type === 'ticker') {
+          firstMsg = false;
+          console.debug('[CoinbaseTickerProvider] first ticker message shape:', Object.keys(payload));
+        }
+
         if (payload.type === 'ticker') {
           const bid = toNum(payload.best_bid);
           const ask = toNum(payload.best_ask);
-          const price = toNum(payload.price) || (bid !== null && ask !== null ? (bid + ask) / 2 : null);
+          const price = toNum(payload.price) || toNum(payload.last_trade_price) || (bid !== null && ask !== null ? (bid + ask) / 2 : null);
           if (price === null) return;
 
           const tick = {
@@ -188,7 +196,7 @@ export default class CoinbaseTickerProvider extends Provider {
             price,
             bid,
             ask,
-            volume: toNum(payload.last_size),
+            volume: toNum(payload.last_size) || toNum(payload.volume_24h),
             timestamp: payload.time ? new Date(payload.time).getTime() : Date.now(),
             raw: payload
           };

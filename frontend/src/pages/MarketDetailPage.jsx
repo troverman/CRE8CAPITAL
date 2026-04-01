@@ -437,7 +437,7 @@ export default function MarketDetailPage({ marketId, snapshot, historyByMarket, 
     if (!socketLiveEnabled) {
       setShowOrderBook3D(false);
       setDepthSnapshots([]);
-      setShowRuntimeQuotes(true);
+      setShowRuntimeQuotes(false);
     }
   }, [socketLiveEnabled]);
 
@@ -521,21 +521,31 @@ export default function MarketDetailPage({ marketId, snapshot, historyByMarket, 
   const socketLatestSpread = pickFirstFinite(socketLatestSpreadFromQuote, socketLatestPoint?.spread);
   const runtimeLatestSpread = runtimeSpreadSeries[runtimeSpreadSeries.length - 1];
   const selectedSocketBasis = socketPrimarySelection?.basis || { score: 0, label: 'unknown' };
-  const useSocketAsPrimary = socketLiveEnabled && selectedSocketBasis.score >= 2 && Number.isFinite(Number(socketLatestPrice));
-  const socketPriceFallback = Number.isFinite(Number(socketLatestPrice)) ? [socketLatestPrice] : [];
-  const runtimePriceFallback = runtimePriceSeries.length > 0 ? runtimePriceSeries : socketPriceFallback;
-  const priceSeries = useSocketAsPrimary ? (socketPriceSeries.length > 1 ? socketPriceSeries : runtimePriceFallback) : runtimePriceFallback;
+  const socketHasRealPrice = socketLiveEnabled && selectedSocketBasis.score >= 2 && Number.isFinite(Number(socketLatestPrice)) && Number(socketLatestPrice) > 0;
+  const socketHasRealSeries = socketHasRealPrice && socketPriceSeries.length > 1;
 
-  const socketSpreadFallback = Number.isFinite(Number(socketLatestSpread)) ? [socketLatestSpread] : [];
-  const runtimeSpreadFallback = runtimeSpreadSeries.length > 0 ? runtimeSpreadSeries : socketSpreadFallback;
-  const spreadSeries = useSocketAsPrimary ? (socketSpreadSeries.length > 1 ? socketSpreadSeries : runtimeSpreadFallback) : runtimeSpreadFallback;
-  const socketHistorySuffix = useSocketAsPrimary && providerWindowRows.length > 0 ? ' + history' : '';
-  const sourceLabel = useSocketAsPrimary
-    ? `${resolvedPrimaryProvider?.name || 'Socket'} socket${selectedSocketBasis.label ? ` (${selectedSocketBasis.label})` : ''}${socketHistorySuffix} | ${selectedWindowMeta.label}`
-    : `Runtime snapshot | ${selectedWindowMeta.label}`;
-  const displayedReferencePrice = pickFirstFinite(useSocketAsPrimary ? socketLatestPrice : null, runtimeLatestPrice, market.referencePrice);
-  const displayedSpreadBps = pickFirstFinite(useSocketAsPrimary ? socketLatestSpread : null, runtimeLatestSpread, market.spreadBps);
-  const displayedVolume = pickFirstFinite(useSocketAsPrimary ? resolvedPrimaryProvider?.volume : null, market.totalVolume);
+  // Runtime data is primary; socket data enhances when available
+  const runtimePriceFallback = runtimePriceSeries.length > 0 ? runtimePriceSeries : [];
+  const priceSeries = runtimePriceFallback.length > 0
+    ? runtimePriceFallback
+    : (socketHasRealSeries ? socketPriceSeries : (Number.isFinite(Number(socketLatestPrice)) && Number(socketLatestPrice) > 0 ? [socketLatestPrice] : []));
+
+  const runtimeSpreadFallback = runtimeSpreadSeries.length > 0 ? runtimeSpreadSeries : [];
+  const spreadSeries = runtimeSpreadFallback.length > 0
+    ? runtimeSpreadFallback
+    : (socketHasRealSeries ? socketSpreadSeries : (Number.isFinite(Number(socketLatestSpread)) ? [socketLatestSpread] : []));
+
+  const sourceParts = [];
+  sourceParts.push('Runtime snapshot');
+  if (socketHasRealPrice) {
+    sourceParts.push(`${resolvedPrimaryProvider?.name || 'Socket'} live${selectedSocketBasis.label ? ` (${selectedSocketBasis.label})` : ''}`);
+  }
+  const sourceLabel = `${sourceParts.join(' + ')} | ${selectedWindowMeta.label}`;
+
+  // Prefer runtime price; use socket only as fallback if runtime has nothing
+  const displayedReferencePrice = pickFirstFinite(runtimeLatestPrice, market.referencePrice, socketHasRealPrice ? socketLatestPrice : null);
+  const displayedSpreadBps = pickFirstFinite(runtimeLatestSpread, market.spreadBps, socketHasRealPrice ? socketLatestSpread : null);
+  const displayedVolume = pickFirstFinite(market.totalVolume, socketHasRealPrice ? resolvedPrimaryProvider?.volume : null);
   const tensorActionClass = tensorStrategy.action === 'accumulate' ? 'up' : tensorStrategy.action === 'reduce' ? 'down' : '';
   const classicAnalysis = useMemo(() => {
     return buildClassicAnalysis(priceSeries, {
@@ -658,10 +668,15 @@ export default function MarketDetailPage({ marketId, snapshot, historyByMarket, 
   }, [latestTickByProviderId, market.providers, market.symbol, marketPair, providerStates]);
 
   const visibleQuoteRows = useMemo(() => {
-    const socketRows = quoteRows.filter((row) => row.source === 'socket');
-    if (!socketLiveEnabled) return quoteRows;
-    if (showRuntimeQuotes) return quoteRows;
-    return socketRows.length > 0 ? socketRows : quoteRows;
+    // Always show runtime rows; include socket rows that have real prices
+    const runtimeRows = quoteRows.filter((row) => row.source === 'runtime');
+    const socketRowsWithData = quoteRows.filter((row) => row.source === 'socket' && Number.isFinite(Number(row.price)) && Number(row.price) > 0);
+    if (!socketLiveEnabled || !showRuntimeQuotes) {
+      // Default: show runtime rows plus any socket rows with real data
+      return [...socketRowsWithData, ...runtimeRows];
+    }
+    // Toggle on: show everything including socket rows without data (for diagnostics)
+    return quoteRows;
   }, [quoteRows, showRuntimeQuotes, socketLiveEnabled]);
 
   const multimarketHref = useMemo(() => {
@@ -702,10 +717,14 @@ export default function MarketDetailPage({ marketId, snapshot, historyByMarket, 
           </label>
               <small>
                 {supportsSocketProviders
-                  ? localFallbackActive
-                    ? 'External sockets unavailable, using local synthetic fallback'
-                    : `Frontend socket feed active | external ${externalConnectedCount}/${externalProviderCount} connected`
-                  : 'Socket providers currently enabled for crypto markets'}
+                  ? socketEnabled
+                    ? localFallbackActive
+                      ? 'External exchange sockets unavailable from browser — runtime data primary'
+                      : externalConnectedCount > 0
+                        ? `Optional direct feed: ${externalConnectedCount}/${externalProviderCount} connected — runtime data primary`
+                        : 'Connecting to exchanges... runtime data active'
+                    : 'Socket providers disabled — using runtime data'
+                  : 'Direct sockets available for crypto markets only'}
               </small>
         </div>
 
@@ -886,38 +905,57 @@ export default function MarketDetailPage({ marketId, snapshot, historyByMarket, 
         </div>
       ) : null}
 
-      {supportsSocketProviders && activeSubtab === 'intel' ? (
-        <GlowCard className="panel-card">
-          <div className="section-head">
-            <h2>Socket Provider Status</h2>
-            <span>
-              {providerStates.filter((provider) => provider.connected).length}/{providerStates.length} connected
-            </span>
-          </div>
-          <p className="socket-status-copy">
-            external {externalConnectedCount}/{externalProviderCount} connected
-            {localFallbackActive ? ' | local fallback active' : ''}
-          </p>
-          <div className="socket-provider-grid">
-            {providerStates.map((provider) => (
-              <article key={provider.id} className="socket-provider-card">
-                <div className="socket-provider-head">
-                  <strong>{provider.name}</strong>
-                  <span className={provider.connected ? 'status-pill online' : 'status-pill'}>
-                    {provider.connected ? 'connected' : 'offline'}
-                  </span>
-                </div>
-                <p>
-                  price {fmtNum(provider.price, 4)} | bid {fmtNum(provider.bid, 4)} | ask {fmtNum(provider.ask, 4)}
-                </p>
-                <small>symbol {latestTickByProviderId.get(provider.id)?.symbol || depthByProvider[provider.id]?.symbol || '-'}</small>
-                <Sparkline data={(seriesByProvider[provider.id] || []).map((point) => point.price)} width={160} height={42} />
-                <small>{provider.error || `last tick ${fmtTime(provider.lastTickAt)}`}</small>
-              </article>
-            ))}
-          </div>
-        </GlowCard>
+      {activeSubtab === 'intel' ? (
+        <MarketStats
+          visibleQuoteRows={visibleQuoteRows}
+          socketLiveEnabled={socketLiveEnabled}
+          showRuntimeQuotes={showRuntimeQuotes}
+          setShowRuntimeQuotes={setShowRuntimeQuotes}
+          quoteRows={quoteRows}
+          signals={signals}
+          market={market}
+        />
       ) : null}
+
+      {supportsSocketProviders && activeSubtab === 'intel' ? (() => {
+        const withData = providerStates.filter((provider) => provider.connected && Number.isFinite(Number(provider.price)) && Number(provider.price) > 0);
+        const withoutData = providerStates.filter((provider) => !withData.includes(provider));
+        const summaryParts = withoutData.map((provider) => {
+          const reason = provider.error || (!provider.connected ? 'blocked' : 'no data');
+          return `${provider.name} (${reason})`;
+        });
+        return (
+          <GlowCard className="panel-card">
+            <div className="section-head">
+              <h2>Direct Exchange Sockets</h2>
+              <small>Optional — direct exchange feed</small>
+            </div>
+            {withData.length > 0 ? (
+              <div className="socket-provider-grid">
+                {withData.map((provider) => (
+                  <article key={provider.id} className="socket-provider-card">
+                    <div className="socket-provider-head">
+                      <strong>{provider.name}</strong>
+                      <span className="status-pill online">live</span>
+                    </div>
+                    <p>
+                      price {fmtNum(provider.price, 4)} | bid {fmtNum(provider.bid, 4)} | ask {fmtNum(provider.ask, 4)}
+                    </p>
+                    <small>symbol {latestTickByProviderId.get(provider.id)?.symbol || depthByProvider[provider.id]?.symbol || '-'}</small>
+                    <Sparkline data={(seriesByProvider[provider.id] || []).map((point) => point.price)} width={160} height={42} />
+                    <small>last tick {fmtTime(provider.lastTickAt)}</small>
+                  </article>
+                ))}
+              </div>
+            ) : null}
+            {summaryParts.length > 0 ? (
+              <p className="socket-status-copy">
+                {withData.length > 0 ? 'Other sockets: ' : 'Direct sockets: '}{summaryParts.join(', ')} — using runtime feed
+              </p>
+            ) : null}
+          </GlowCard>
+        );
+      })() : null}
 
       {supportsSocketProviders && activeSubtab === 'depth' ? (
         <GlowCard className="panel-card">
@@ -964,18 +1002,6 @@ export default function MarketDetailPage({ marketId, snapshot, historyByMarket, 
             )}
           />
         </GlowCard>
-      ) : null}
-
-      {activeSubtab === 'intel' ? (
-        <MarketStats
-          visibleQuoteRows={visibleQuoteRows}
-          socketLiveEnabled={socketLiveEnabled}
-          showRuntimeQuotes={showRuntimeQuotes}
-          setShowRuntimeQuotes={setShowRuntimeQuotes}
-          quoteRows={quoteRows}
-          signals={signals}
-          market={market}
-        />
       ) : null}
 
       {activeSubtab === 'decisions' ? (

@@ -6,11 +6,14 @@ import { fmtCompact, fmtNum, fmtPct } from '../lib/format';
  * Used at top of MarketDetailPage overview tab.
  */
 export default function PriceHeader({ referencePrice, changePct, spreadBps, volume }) {
+  const safePrice = Number(referencePrice);
+  const hasPrice = Number.isFinite(safePrice) && safePrice > 0;
+
   return (
     <div className="detail-stat-grid">
       <GlowCard className="stat-card">
         <span>Reference</span>
-        <strong>{fmtNum(referencePrice, 4)}</strong>
+        <strong>{hasPrice ? fmtNum(safePrice, 4) : 'Awaiting data...'}</strong>
       </GlowCard>
       <GlowCard className="stat-card">
         <span>Change</span>

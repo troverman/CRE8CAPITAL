@@ -589,6 +589,28 @@ a {
   color: #ffb4c3;
 }
 
+.source-badge {
+  border-radius: var(--radius-pill);
+  font-size: 0.6rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  padding: 0.12rem 0.38rem;
+  font-weight: 700;
+  display: inline-block;
+}
+
+.source-badge.source-runtime {
+  border: 1px solid rgba(80, 180, 220, 0.45);
+  background: rgba(53, 140, 183, 0.18);
+  color: #84d8ff;
+}
+
+.source-badge.source-socket {
+  border: 1px solid rgba(180, 130, 255, 0.45);
+  background: rgba(130, 80, 210, 0.18);
+  color: #c4a8ff;
+}
+
 .error-copy {
   color: var(--bad);
   font-size: 0.78rem;

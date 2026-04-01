@@ -1168,6 +1168,66 @@ export const evaluateStrategy = ({ strategyId, series = [], signalRows = [], sel
   return evaluatePriceStrategy({ strategyId, series, selectedMarket });
 };
 
+/**
+ * Lightweight market scanner — scores a market from snapshot data alone.
+ * No series history required; used by the multi-market scanner panel.
+ */
+export const evaluateStrategyQuick = ({ price, market, strategyId }) => {
+  if (!price || price <= 0) return { score: 0, action: 'hold', reason: '', stance: 'neutral' };
+
+  const changePct = toNum(market?.changePct, 0);
+  const spread = toNum(market?.spread, 0);
+  const spreadBps = toNum(market?.spreadBps, 0);
+  const effectiveSpread = spread || spreadBps;
+  const volume = toNum(market?.totalVolume, 0);
+
+  let score = 0;
+  let action = 'hold';
+  const reasons = [];
+
+  // Momentum signal: strong moves in either direction
+  if (Math.abs(changePct) > 1) {
+    score += Math.min(50, Math.abs(changePct) * 10);
+    action = changePct > 0 ? 'accumulate' : 'reduce';
+    reasons.push(`${changePct > 0 ? '+' : ''}${changePct.toFixed(2)}% momentum`);
+  } else if (Math.abs(changePct) > 0.3) {
+    score += Math.abs(changePct) * 8;
+    reasons.push(`${changePct > 0 ? '+' : ''}${changePct.toFixed(2)}% drift`);
+  }
+
+  // Volume signal: high volume markets are more interesting
+  if (volume > 10000000) {
+    score += 15;
+    reasons.push('very high volume');
+  } else if (volume > 1000000) {
+    score += 10;
+    reasons.push('high volume');
+  }
+
+  // Spread signal: wide spreads = opportunity but also risk
+  if (effectiveSpread > 50) {
+    score += 15;
+    reasons.push('wide spread opportunity');
+  } else if (effectiveSpread > 20) {
+    score += 8;
+    reasons.push('moderate spread');
+  }
+
+  // Derive action from changePct if not set by momentum
+  if (action === 'hold' && score > 10) {
+    action = changePct >= 0 ? 'accumulate' : 'reduce';
+  }
+
+  const stance = score >= 40 ? (action === 'accumulate' ? 'bullish' : 'bearish') : score >= 15 ? 'active' : 'neutral';
+
+  return {
+    score: Math.min(100, Math.round(score)),
+    action,
+    reason: reasons.join(' \u00b7 ') || 'no signal',
+    stance
+  };
+};
+
 export const executeWalletAction = ({
   wallet,
   action,

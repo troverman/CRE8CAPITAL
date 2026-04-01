@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   buildScenarioSeries,
+  evaluateStrategyQuick,
   runBacktest,
   SCENARIO_OPTIONS,
   selectSignalRowsForMarket,
@@ -303,6 +304,48 @@ export default function useStrategyLab({ snapshot, historyByMarket }) {
     syncToggleFromRuntime(enabledStrategyIds);
   }, [enabledStrategyIds, syncToggleFromRuntime]);
 
+  // --- Multi-market scanner ---
+  const snapshotRef = useRef(snapshot);
+  useEffect(() => {
+    snapshotRef.current = snapshot;
+  }, [snapshot]);
+
+  const [marketScores, setMarketScores] = useState([]);
+
+  useEffect(() => {
+    if (!running) {
+      setMarketScores([]);
+      return undefined;
+    }
+    const scanMarkets = () => {
+      const allMarkets = snapshotRef.current?.markets || [];
+      const scores = allMarkets
+        .map((market) => {
+          const price = Number(market?.referencePrice) || Number(market?.price) || 0;
+          if (!price || price <= 0) return null;
+          const signal = evaluateStrategyQuick({ price, market, strategyId });
+          return {
+            key: market.key,
+            symbol: market.symbol || market.key,
+            assetClass: market.assetClass || '',
+            price,
+            changePct: toNum(market.changePct, 0),
+            totalVolume: toNum(market.totalVolume, 0),
+            signalScore: signal.score,
+            signalAction: signal.action,
+            signalReason: signal.reason,
+            signalStance: signal.stance
+          };
+        })
+        .filter(Boolean)
+        .sort((a, b) => b.signalScore - a.signalScore);
+      setMarketScores(scores);
+    };
+    scanMarkets();
+    const timer = setInterval(scanMarkets, 5000);
+    return () => clearInterval(timer);
+  }, [running, strategyId]);
+
   const setRunning = useCallback(
     (nextRunning) => {
       setConfig({ running: Boolean(nextRunning) });
@@ -465,6 +508,7 @@ export default function useStrategyLab({ snapshot, historyByMarket }) {
     setActiveWalletAccount,
     triggerManual,
     resetSession,
-    runBacktestNow
+    runBacktestNow,
+    marketScores
   };
 }

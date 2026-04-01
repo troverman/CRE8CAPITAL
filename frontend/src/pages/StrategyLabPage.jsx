@@ -88,6 +88,7 @@ const findNearestPointIndexByTime = (rows, targetTime) => {
 
 const STRATEGY_LAB_TABS = [
   { id: 'runtime', label: 'Runtime' },
+  { id: 'scanner', label: 'Scanner' },
   { id: 'accounts', label: 'Accounts' },
   { id: 'strategy', label: 'Strategy' },
   { id: 'solver', label: 'Solver' },
@@ -159,7 +160,8 @@ export default function StrategyLabPage({ snapshot, historyByMarket }) {
     setActiveWalletAccount,
     triggerManual,
     resetSession,
-    runBacktestNow
+    runBacktestNow,
+    marketScores
   } = useStrategyLab({
     snapshot,
     historyByMarket
@@ -852,6 +854,120 @@ export default function StrategyLabPage({ snapshot, historyByMarket }) {
                   <strong>{fmtInt(selectedAccountPositionRows.length)}</strong>
                 </article>
               </div>
+            </article>
+          </div>
+        ) : null}
+
+        {labView === 'scanner' ? (
+          <div className="strategy-drill-grid">
+            <article className="strategy-drill-card" style={{ gridColumn: '1 / -1' }}>
+              <div className="section-head">
+                <h2>Multi-Market Scanner</h2>
+                <span>{fmtInt(marketScores.length)} markets scanned{running ? '' : ' (paused)'}</span>
+              </div>
+              <p className="socket-status-copy">
+                Scans all snapshot markets every 5s and ranks by signal score. Click a row to switch the active simulation market.
+              </p>
+              {!running && (
+                <p className="socket-status-copy" style={{ color: '#fbbf24' }}>
+                  Start the simulation to enable scanning.
+                </p>
+              )}
+              {marketScores.length > 0 ? (
+                <div className="list-stack" style={{ maxHeight: 520, overflowY: 'auto' }}>
+                  <div className="list-item" style={{ fontWeight: 600, opacity: 0.7, cursor: 'default', borderBottom: '1px solid rgba(255,255,255,0.08)' }}>
+                    <span style={{ flex: '0 0 54px' }}>#</span>
+                    <span style={{ flex: '1 1 120px' }}>Symbol</span>
+                    <span style={{ flex: '0 0 80px', textAlign: 'right' }}>Price</span>
+                    <span style={{ flex: '0 0 72px', textAlign: 'right' }}>Chg%</span>
+                    <span style={{ flex: '0 0 100px', textAlign: 'right' }}>Volume</span>
+                    <span style={{ flex: '0 0 90px', textAlign: 'center' }}>Signal</span>
+                    <span style={{ flex: '0 0 48px', textAlign: 'right' }}>Score</span>
+                    <span style={{ flex: '1 1 140px' }}>Reason</span>
+                  </div>
+                  {marketScores.slice(0, 60).map((m, idx) => {
+                    const isActive = m.key === selectedMarket?.key;
+                    return (
+                      <div
+                        key={m.key}
+                        className="list-item"
+                        style={{
+                          cursor: 'pointer',
+                          background: isActive ? 'rgba(99, 182, 255, 0.10)' : undefined,
+                          borderLeft: isActive ? '3px solid #63b6ff' : '3px solid transparent'
+                        }}
+                        onClick={() => changeMarket(m.key)}
+                        title={`Switch to ${m.symbol}`}
+                      >
+                        <span style={{ flex: '0 0 54px', opacity: 0.5 }}>{idx + 1}</span>
+                        <span style={{ flex: '1 1 120px', fontWeight: isActive ? 700 : 500 }}>
+                          {m.symbol}
+                          {m.assetClass ? <small style={{ marginLeft: 6, opacity: 0.45 }}>{m.assetClass}</small> : null}
+                        </span>
+                        <span style={{ flex: '0 0 80px', textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>
+                          {fmtNum(m.price, m.price < 1 ? 6 : 2)}
+                        </span>
+                        <span
+                          style={{ flex: '0 0 72px', textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}
+                          className={toneClass(m.changePct)}
+                        >
+                          {fmtSigned(m.changePct, 2)}%
+                        </span>
+                        <span style={{ flex: '0 0 100px', textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>
+                          {fmtInt(m.totalVolume)}
+                        </span>
+                        <span
+                          style={{ flex: '0 0 90px', textAlign: 'center' }}
+                          className={actionClass(m.signalAction)}
+                        >
+                          {m.signalAction}
+                        </span>
+                        <span style={{ flex: '0 0 48px', textAlign: 'right', fontWeight: 600, fontVariantNumeric: 'tabular-nums' }}>
+                          {fmtInt(m.signalScore)}
+                        </span>
+                        <span style={{ flex: '1 1 140px', opacity: 0.7, fontSize: 12 }}>
+                          {m.signalReason}
+                        </span>
+                      </div>
+                    );
+                  })}
+                </div>
+              ) : (
+                <p className="socket-status-copy">No market data available.</p>
+              )}
+              {marketScores.length > 0 && (
+                <div className="strategy-lab-mini-grid" style={{ marginTop: 12 }}>
+                  <article className="strategy-lab-mini-stat">
+                    <span>Active Signals</span>
+                    <strong>{fmtInt(marketScores.filter((m) => m.signalAction !== 'hold').length)}</strong>
+                  </article>
+                  <article className="strategy-lab-mini-stat">
+                    <span>Accumulate</span>
+                    <strong className="up">{fmtInt(marketScores.filter((m) => m.signalAction === 'accumulate').length)}</strong>
+                  </article>
+                  <article className="strategy-lab-mini-stat">
+                    <span>Reduce</span>
+                    <strong className="down">{fmtInt(marketScores.filter((m) => m.signalAction === 'reduce').length)}</strong>
+                  </article>
+                  <article className="strategy-lab-mini-stat">
+                    <span>Top Score</span>
+                    <strong>{fmtInt(marketScores[0]?.signalScore || 0)}</strong>
+                  </article>
+                  <article className="strategy-lab-mini-stat">
+                    <span>Avg Score</span>
+                    <strong>
+                      {fmtNum(
+                        marketScores.reduce((sum, m) => sum + m.signalScore, 0) / Math.max(marketScores.length, 1),
+                        1
+                      )}
+                    </strong>
+                  </article>
+                  <article className="strategy-lab-mini-stat">
+                    <span>Selected</span>
+                    <strong>{selectedMarket?.symbol || '-'}</strong>
+                  </article>
+                </div>
+              )}
             </article>
           </div>
         ) : null}

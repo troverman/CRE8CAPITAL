@@ -113,21 +113,23 @@ export default class BinanceBookTickerProvider extends Provider {
     };
 
     tickerSocket.onerror = () => {
-      updateStatus('Ticker socket error');
+      updateStatus('Exchange may block browser connections — runtime data available');
     };
 
     depthSocket.onerror = () => {
-      updateStatus('Depth socket error');
+      updateStatus('Exchange may block browser connections — runtime data available');
     };
 
     tickerSocket.onclose = () => {
+      const hadData = tickerOpen;
       tickerOpen = false;
-      updateStatus('');
+      updateStatus(hadData ? '' : 'Exchange blocks browser WebSocket — use backend runtime for live data');
     };
 
     depthSocket.onclose = () => {
+      const hadData = depthOpen;
       depthOpen = false;
-      updateStatus('');
+      updateStatus(hadData ? '' : 'Exchange blocks browser WebSocket — use backend runtime for live data');
     };
 
     tickerSocket.onmessage = (event) => {
