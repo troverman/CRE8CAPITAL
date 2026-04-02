@@ -3,7 +3,7 @@ import { fmtCompact, fmtInt, fmtNum, fmtPct, fmtTime, severityClass } from '../l
 import { Link } from '../lib/router';
 
 /**
- * Market stats: provider quotes table and signal feed.
+ * Market stats: unified quote matrix and signal feed.
  */
 export default function MarketStats({
   visibleQuoteRows,
@@ -22,18 +22,18 @@ export default function MarketStats({
           <span>{visibleQuoteRows.length} rows</span>
         </div>
         <p className="socket-status-copy">
-          {socketLiveEnabled && visibleQuoteRows.some((row) => row.source === 'socket')
-            ? 'Showing live socket quotes where available. Toggle runtime rows for comparison.'
-            : 'Direct exchange sockets unavailable from browser — using runtime data.'}
+          {socketLiveEnabled
+            ? 'Unified quote view: runtime snapshots plus direct socket quotes when available.'
+            : 'Unified quote view: runtime/provider history (direct sockets currently off).'}
         </p>
         {socketLiveEnabled ? (
           <div className="socket-toggle-row">
             <label className="toggle-label">
               <input type="checkbox" checked={showRuntimeQuotes} onChange={(event) => setShowRuntimeQuotes(event.target.checked)} />
-              <span>Show all socket rows (diagnostic mode)</span>
+              <span>Show diagnostics (all socket rows)</span>
             </label>
             <small>
-              socket {quoteRows.filter((row) => row.source === 'socket').length} | runtime {quoteRows.filter((row) => row.source === 'runtime').length}
+              direct {quoteRows.filter((row) => row.source === 'socket').length} | runtime {quoteRows.filter((row) => row.source === 'runtime').length}
             </small>
           </div>
         ) : null}

@@ -25,7 +25,7 @@ const MARKET_SUBTAB_DEFS = [
     key: 'overview',
     label: 'Overview',
     socketOnly: false,
-    description: 'Reference price, spread, and classic indicator context.'
+    description: 'Unified market view: windowed price/spread with classic indicator context.'
   },
   {
     key: 'tensor',
@@ -37,13 +37,13 @@ const MARKET_SUBTAB_DEFS = [
     key: 'depth',
     label: 'Depth',
     socketOnly: true,
-    description: 'Provider socket status, order book depth, and live tick tape.'
+    description: 'Order book depth, socket health, and live tick tape in one depth workspace.'
   },
   {
     key: 'intel',
     label: 'Intel',
     socketOnly: false,
-    description: 'Runtime/provider quote table with linked signal feed.'
+    description: 'Unified quote matrix (runtime + direct sockets) with linked signal feed.'
   },
   {
     key: 'decisions',
@@ -192,6 +192,52 @@ const mergeSeriesRows = (historyRows = [], liveRows = []) => {
     deduped.push(row);
   }
   return deduped;
+};
+
+const CHART_STEP_MS_BY_WINDOW = {
+  '5m': 5 * 1000,
+  '1h': 30 * 1000,
+  '24h': 5 * 60 * 1000
+};
+
+const resolveChartStepMs = (windowKey, windowMs) => {
+  if (CHART_STEP_MS_BY_WINDOW[windowKey]) return CHART_STEP_MS_BY_WINDOW[windowKey];
+  return Math.max(1000, Math.round(Math.max(windowMs || 0, 60 * 1000) / 180));
+};
+
+const formatStepLabel = (stepMs) => {
+  const safe = Math.max(1000, Math.round(Number(stepMs) || 0));
+  if (safe % 60000 === 0) return `${safe / 60000}m`;
+  if (safe % 1000 === 0) return `${safe / 1000}s`;
+  return `${safe}ms`;
+};
+
+const bucketSeriesRows = ({ rows = [], stepMs = 1000, windowStartTs = 0 }) => {
+  const safeStep = Math.max(1000, Math.round(Number(stepMs) || 0));
+  const sortedRows = [...normalizeSeriesRows(rows)].sort((a, b) => a.t - b.t);
+  if (sortedRows.length <= 2) return sortedRows;
+
+  const bucketMap = new Map();
+  for (const row of sortedRows) {
+    const bucketIndex = Math.floor((row.t - windowStartTs) / safeStep);
+    const existing = bucketMap.get(bucketIndex);
+    if (!existing || row.t >= existing.t) {
+      bucketMap.set(bucketIndex, row);
+    }
+  }
+
+  const sampledRows = [...bucketMap.entries()]
+    .sort((a, b) => a[0] - b[0])
+    .map((entry) => entry[1]);
+
+  if (sampledRows.length === 0) return sortedRows;
+  const lastSourceRow = sortedRows[sortedRows.length - 1];
+  const lastSampledRow = sampledRows[sampledRows.length - 1];
+  if (!lastSampledRow || lastSampledRow.t !== lastSourceRow.t) {
+    sampledRows.push(lastSourceRow);
+  }
+
+  return sampledRows;
 };
 
 export default function MarketDetailPage({ marketId, snapshot, historyByMarket, onRefresh, syncing }) {
@@ -494,20 +540,30 @@ export default function MarketDetailPage({ marketId, snapshot, historyByMarket, 
   const history = historyByMarket[market.key] || [];
   const signals = snapshot.signals.filter((signal) => signal.symbol === market.symbol && signal.assetClass === market.assetClass).slice(0, 10);
   const decisions = snapshot.decisions.filter((decision) => decision.symbol === market.symbol && decision.assetClass === market.assetClass).slice(0, 10);
+  const selectedWindowMeta = LIVE_WINDOW_OPTIONS.find((option) => option.key === liveWindowKey) || LIVE_WINDOW_OPTIONS[1];
+  const chartStepMs = resolveChartStepMs(liveWindowKey, selectedWindowMs);
+  const chartStepLabel = formatStepLabel(chartStepMs);
   const nowTs = Date.now();
   const windowStartTs = nowTs - selectedWindowMs;
   const runtimeWindowRows = normalizeSeriesRows(history).filter((point) => point.t >= windowStartTs);
-  const socketLiveRows = normalizeSeriesRows(resolvedPrimarySeries).filter((point) => point.t >= windowStartTs);
   const providerWindowRows = normalizeSeriesRows(providerWindowHistory.rows).filter((point) => point.t >= windowStartTs);
-  const mergedSocketRows = mergeSeriesRows(providerWindowRows, socketLiveRows);
+  const socketLiveRows = normalizeSeriesRows(resolvedPrimarySeries).filter((point) => point.t >= windowStartTs);
+  const selectedSocketBasis = socketPrimarySelection?.basis || { score: 0, label: 'unknown' };
+  const socketSeriesEligible = socketLiveEnabled && selectedSocketBasis.score >= 2;
+  const providerMergedRows = mergeSeriesRows(providerWindowRows, socketSeriesEligible ? socketLiveRows : []);
+  const unifiedWindowRows = mergeSeriesRows(runtimeWindowRows, providerMergedRows);
+  const chartRows = bucketSeriesRows({
+    rows: unifiedWindowRows,
+    stepMs: chartStepMs,
+    windowStartTs
+  });
 
   const runtimePriceSeries = runtimeWindowRows.map((point) => point.price);
   const runtimeSpreadSeries = runtimeWindowRows.map((point) => point.spread);
-  const socketPriceSeries = mergedSocketRows.map((point) => point.price);
-  const socketSpreadSeries = mergedSocketRows.map((point) => point.spread);
+  const priceSeries = chartRows.map((point) => point.price);
+  const spreadSeries = chartRows.map((point) => point.spread);
   const tensorPriceSeries = tensorSeries.map((point) => point.price);
-  const selectedWindowMeta = LIVE_WINDOW_OPTIONS.find((option) => option.key === liveWindowKey) || LIVE_WINDOW_OPTIONS[1];
-  const socketLatestPoint = mergedSocketRows[mergedSocketRows.length - 1] || null;
+  const socketLatestPoint = providerMergedRows[providerMergedRows.length - 1] || null;
   const socketLatestPrice = pickFirstFinite(resolvedPrimaryProvider?.price, socketLatestPoint?.price);
   const runtimeLatestPrice = runtimePriceSeries[runtimePriceSeries.length - 1];
   const socketLatestSpreadFromQuote =
@@ -520,31 +576,14 @@ export default function MarketDetailPage({ marketId, snapshot, historyByMarket, 
       : null;
   const socketLatestSpread = pickFirstFinite(socketLatestSpreadFromQuote, socketLatestPoint?.spread);
   const runtimeLatestSpread = runtimeSpreadSeries[runtimeSpreadSeries.length - 1];
-  const selectedSocketBasis = socketPrimarySelection?.basis || { score: 0, label: 'unknown' };
-  const socketHasRealPrice = socketLiveEnabled && selectedSocketBasis.score >= 2 && Number.isFinite(Number(socketLatestPrice)) && Number(socketLatestPrice) > 0;
-  const socketHasRealSeries = socketHasRealPrice && socketPriceSeries.length > 1;
+  const socketHasRealPrice = socketSeriesEligible && Number.isFinite(Number(socketLatestPrice)) && Number(socketLatestPrice) > 0;
+  const chartLatestPrice = priceSeries[priceSeries.length - 1];
+  const chartLatestSpread = spreadSeries[spreadSeries.length - 1];
+  const sourceLabel = `Unified view | ${selectedWindowMeta.label} | step ${chartStepLabel}`;
 
-  // Runtime data is primary; socket data enhances when available
-  const runtimePriceFallback = runtimePriceSeries.length > 0 ? runtimePriceSeries : [];
-  const priceSeries = runtimePriceFallback.length > 0
-    ? runtimePriceFallback
-    : (socketHasRealSeries ? socketPriceSeries : (Number.isFinite(Number(socketLatestPrice)) && Number(socketLatestPrice) > 0 ? [socketLatestPrice] : []));
-
-  const runtimeSpreadFallback = runtimeSpreadSeries.length > 0 ? runtimeSpreadSeries : [];
-  const spreadSeries = runtimeSpreadFallback.length > 0
-    ? runtimeSpreadFallback
-    : (socketHasRealSeries ? socketSpreadSeries : (Number.isFinite(Number(socketLatestSpread)) ? [socketLatestSpread] : []));
-
-  const sourceParts = [];
-  sourceParts.push('Runtime snapshot');
-  if (socketHasRealPrice) {
-    sourceParts.push(`${resolvedPrimaryProvider?.name || 'Socket'} live${selectedSocketBasis.label ? ` (${selectedSocketBasis.label})` : ''}`);
-  }
-  const sourceLabel = `${sourceParts.join(' + ')} | ${selectedWindowMeta.label}`;
-
-  // Prefer runtime price; use socket only as fallback if runtime has nothing
-  const displayedReferencePrice = pickFirstFinite(runtimeLatestPrice, market.referencePrice, socketHasRealPrice ? socketLatestPrice : null);
-  const displayedSpreadBps = pickFirstFinite(runtimeLatestSpread, market.spreadBps, socketHasRealPrice ? socketLatestSpread : null);
+  // Use unified chart as primary reference; runtime/socket rows remain available in intel/depth.
+  const displayedReferencePrice = pickFirstFinite(chartLatestPrice, runtimeLatestPrice, market.referencePrice, socketHasRealPrice ? socketLatestPrice : null);
+  const displayedSpreadBps = pickFirstFinite(chartLatestSpread, runtimeLatestSpread, market.spreadBps, socketHasRealPrice ? socketLatestSpread : null);
   const displayedVolume = pickFirstFinite(market.totalVolume, socketHasRealPrice ? resolvedPrimaryProvider?.volume : null);
   const tensorActionClass = tensorStrategy.action === 'accumulate' ? 'up' : tensorStrategy.action === 'reduce' ? 'down' : '';
   const classicAnalysis = useMemo(() => {
@@ -686,6 +725,15 @@ export default function MarketDetailPage({ marketId, snapshot, historyByMarket, 
     return `${base}${separator}symbol=${encodeURIComponent(market.symbol || '')}&assetClass=${encodeURIComponent(market.assetClass || '')}`;
   }, [market.assetClass, market.symbol]);
   const activeSubtabMeta = marketSubtabs.find((tab) => tab.key === activeSubtab) || marketSubtabs[0] || MARKET_SUBTAB_DEFS[0];
+  const socketStatusCopy = supportsSocketProviders
+    ? socketEnabled
+      ? externalConnectedCount > 0
+        ? `Direct sockets ${externalConnectedCount}/${externalProviderCount} connected - blended into unified chart when aligned`
+        : localFallbackActive
+          ? 'Direct sockets blocked in browser - local/provider history continues in unified chart'
+          : 'Connecting direct sockets - unified chart stays live from runtime/provider history'
+      : 'Direct sockets off - unified chart uses runtime/provider history'
+    : 'Direct sockets available for crypto markets only';
 
   return (
     <section className="page-grid">
@@ -715,17 +763,7 @@ export default function MarketDetailPage({ marketId, snapshot, historyByMarket, 
             />
             <span>Frontend socket providers</span>
           </label>
-              <small>
-                {supportsSocketProviders
-                  ? socketEnabled
-                    ? localFallbackActive
-                      ? 'External exchange sockets unavailable from browser — runtime data primary'
-                      : externalConnectedCount > 0
-                        ? `Optional direct feed: ${externalConnectedCount}/${externalProviderCount} connected — runtime data primary`
-                        : 'Connecting to exchanges... runtime data active'
-                    : 'Socket providers disabled — using runtime data'
-                  : 'Direct sockets available for crypto markets only'}
-              </small>
+          <small>{socketStatusCopy}</small>
         </div>
 
         <div className="socket-toggle-row live-window-toggle-row">
@@ -742,7 +780,7 @@ export default function MarketDetailPage({ marketId, snapshot, historyByMarket, 
             ))}
           </div>
           <small>
-            live window {selectedWindowMeta.label}
+            live window {selectedWindowMeta.label} | step {chartStepLabel} | points {fmtInt(priceSeries.length)}
             {providerWindowHistory.loading ? ' | loading provider history...' : ''}
             {providerWindowHistory.updatedAt ? ` | updated ${fmtTime(providerWindowHistory.updatedAt)}` : ''}
             {providerWindowHistory.error ? ` | ${providerWindowHistory.error}` : ''}
@@ -928,7 +966,7 @@ export default function MarketDetailPage({ marketId, snapshot, historyByMarket, 
           <GlowCard className="panel-card">
             <div className="section-head">
               <h2>Direct Exchange Sockets</h2>
-              <small>Optional — direct exchange feed</small>
+              <small>Optional - direct exchange feed</small>
             </div>
             {withData.length > 0 ? (
               <div className="socket-provider-grid">
@@ -950,7 +988,7 @@ export default function MarketDetailPage({ marketId, snapshot, historyByMarket, 
             ) : null}
             {summaryParts.length > 0 ? (
               <p className="socket-status-copy">
-                {withData.length > 0 ? 'Other sockets: ' : 'Direct sockets: '}{summaryParts.join(', ')} — using runtime feed
+                {withData.length > 0 ? 'Other sockets: ' : 'Direct sockets: '}{summaryParts.join(', ')} - unified chart remains live from runtime/provider flow
               </p>
             ) : null}
           </GlowCard>
@@ -1033,3 +1071,4 @@ export default function MarketDetailPage({ marketId, snapshot, historyByMarket, 
     </section>
   );
 }
+
