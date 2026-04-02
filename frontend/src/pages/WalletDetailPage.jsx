@@ -35,6 +35,7 @@ export default function WalletDetailPage({ walletId, snapshot }) {
   const activeWalletAccountId = useStrategyLabStore((state) => state.activeWalletAccountId);
   const executionStrategyMode = useStrategyLabStore((state) => state.executionStrategyMode);
   const executionWalletScope = useStrategyLabStore((state) => state.executionWalletScope);
+  const executionMarketScope = useStrategyLabStore((state) => state.executionMarketScope);
   const setActiveWalletAccount = useStrategyLabStore((state) => state.setActiveWalletAccount);
 
   const txEvents = useExecutionFeedStore((state) => state.txEvents);
@@ -124,7 +125,14 @@ export default function WalletDetailPage({ walletId, snapshot }) {
           </div>
         </div>
         <p>Live account drilldown with execution feed, position updates, and linked signal/decision context.</p>
-        <RuntimeExecutionControls strategyMode={executionStrategyMode} walletScope={executionWalletScope} showControls={false} summaryPrefix="engine mode" summarySuffix="" />
+        <RuntimeExecutionControls
+          strategyMode={executionStrategyMode}
+          walletScope={executionWalletScope}
+          marketScope={executionMarketScope}
+          showControls={false}
+          summaryPrefix="engine mode"
+          summarySuffix=""
+        />
         <div className="wallet-action-row">
           <div style={{ minWidth: 260 }}>
             <WalletAccountSelectField

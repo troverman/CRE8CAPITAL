@@ -15,6 +15,7 @@ const MAX_WALLET_ACCOUNTS = 12;
 const MAIN_ACCOUNT_ID = 'paper-main';
 const EXECUTION_STRATEGY_MODES = new Set(['best-enabled', 'selected-only']);
 const EXECUTION_WALLET_SCOPES = new Set(['active-only', 'all-enabled']);
+const EXECUTION_MARKET_SCOPES = new Set(['selected-market', 'scanner-top', 'scanner-rotate']);
 const STRATEGY_IDS = STRATEGY_OPTIONS.map((option) => String(option.id || '')).filter((id) => Boolean(id));
 const DEFAULT_PRIMARY_STRATEGY_ID = STRATEGY_IDS.includes('tensor-lite') ? 'tensor-lite' : STRATEGY_IDS[0] || 'tensor-lite';
 
@@ -93,6 +94,12 @@ const normalizeExecutionWalletScope = (value) => {
   return 'active-only';
 };
 
+const normalizeExecutionMarketScope = (value) => {
+  const next = String(value || '');
+  if (EXECUTION_MARKET_SCOPES.has(next)) return next;
+  return 'selected-market';
+};
+
 const sanitizeDepthSide = (levels, side) => {
   const list = Array.isArray(levels) ? levels : [];
   const mapped = list
@@ -151,13 +158,16 @@ const baseState = {
   enabledStrategyIds: defaultEnabledStrategies,
   executionStrategyMode: 'best-enabled',
   executionWalletScope: 'active-only',
+  executionMarketScope: 'selected-market',
   scenarioId: 'trend-rally',
   marketKey: '',
   intervalMs: 1200,
   maxAbsUnits: 10,
   slippageBps: 1.2,
   cooldownMs: 5000,
+  runtimeMarketKey: '',
   runtimeSeries: [],
+  marketRuntimeSeriesByKey: {},
   runtimeEquity: [],
   eventLog: [],
   tradeLog: [],
@@ -223,6 +233,8 @@ export const useStrategyLabStore = create((set) => ({
       return {
         ...state,
         runtimeSeries: [],
+        runtimeMarketKey: '',
+        marketRuntimeSeriesByKey: {},
         runtimeEquity: [],
         eventLog: [],
         tradeLog: [],
@@ -324,13 +336,15 @@ export const useStrategyLabStore = create((set) => ({
       wallet: createWalletState()
     }));
   },
-  setExecutionConfig: ({ strategyMode, walletScope } = {}) =>
+  setExecutionConfig: ({ strategyMode, walletScope, marketScope } = {}) =>
     set((state) => ({
       ...state,
       executionStrategyMode:
         typeof strategyMode === 'string' ? normalizeExecutionStrategyMode(strategyMode) : normalizeExecutionStrategyMode(state.executionStrategyMode),
       executionWalletScope:
-        typeof walletScope === 'string' ? normalizeExecutionWalletScope(walletScope) : normalizeExecutionWalletScope(state.executionWalletScope)
+        typeof walletScope === 'string' ? normalizeExecutionWalletScope(walletScope) : normalizeExecutionWalletScope(state.executionWalletScope),
+      executionMarketScope:
+        typeof marketScope === 'string' ? normalizeExecutionMarketScope(marketScope) : normalizeExecutionMarketScope(state.executionMarketScope)
     })),
   setEnabledStrategies: (strategyIds) =>
     set((state) => {
@@ -410,6 +424,7 @@ export const useStrategyLabStore = create((set) => ({
     {
       const emitPayloads = [];
       const emitPositionPayloads = [];
+      let executedMarketKey = '';
       set((state) => {
         if (!point || !Number.isFinite(Number(point.price))) return state;
 
@@ -430,7 +445,16 @@ export const useStrategyLabStore = create((set) => ({
           depth: normalizedDepth
         };
 
-        const runtimeSeries = trimTail([...state.runtimeSeries, normalizedPoint], MAX_RUNTIME_POINTS);
+        const runtimeMarketKey = String(selectedMarket?.key || state.marketKey || '');
+        const runtimeMarketSymbol = String(selectedMarket?.symbol || '');
+        const runtimeMarketAssetClass = String(selectedMarket?.assetClass || '');
+        executedMarketKey = runtimeMarketKey;
+        const marketRuntimeSeriesByKey = state.marketRuntimeSeriesByKey && typeof state.marketRuntimeSeriesByKey === 'object' ? { ...state.marketRuntimeSeriesByKey } : {};
+        const previousRuntimeSeries = runtimeMarketKey ? marketRuntimeSeriesByKey[runtimeMarketKey] || [] : state.runtimeSeries;
+        const runtimeSeries = trimTail([...previousRuntimeSeries, normalizedPoint], MAX_RUNTIME_POINTS);
+        if (runtimeMarketKey) {
+          marketRuntimeSeriesByKey[runtimeMarketKey] = runtimeSeries;
+        }
         const normalizedEnabledStrategies = sanitizeEnabledStrategyIds(state.enabledStrategyIds, state.strategyId || DEFAULT_PRIMARY_STRATEGY_ID);
         const enabledStrategyIds = sameIdArray(normalizedEnabledStrategies, state.enabledStrategyIds) ? state.enabledStrategyIds : normalizedEnabledStrategies;
         const strategySignals = enabledStrategyIds.map((strategyId) => ({
@@ -469,13 +493,35 @@ export const useStrategyLabStore = create((set) => ({
           null;
         const activeWalletTargetId = String(activeWalletSeed?.id || '');
         const executionWalletScope = normalizeExecutionWalletScope(state.executionWalletScope);
+        const executionMarketScope = normalizeExecutionMarketScope(state.executionMarketScope);
 
         const accountTrades = [];
         const walletAccounts = state.walletAccounts.map((account, accountIndex) => {
           const accountId = String(account.id || '');
           const inExecutionScope = executionWalletScope === 'all-enabled' ? account.enabled : accountId === activeWalletTargetId && account.enabled;
+          const accountWallet = account.wallet || createWalletState();
+          const heldMarketKey = String(accountWallet.marketKey || '');
+          const heldMarketSymbol = String(accountWallet.symbol || '');
+          const heldMarketAssetClass = String(accountWallet.assetClass || '');
+          const hasOpenUnits = Math.abs(toNum(accountWallet.units, 0)) > 1e-9;
+          const hasMarketMismatch = hasOpenUnits && Boolean(heldMarketKey) && Boolean(runtimeMarketKey) && heldMarketKey !== runtimeMarketKey;
+          const positionMarket = hasMarketMismatch
+            ? {
+                key: heldMarketKey,
+                symbol: heldMarketSymbol || heldMarketKey,
+                assetClass: heldMarketAssetClass || 'unknown'
+              }
+            : selectedMarket
+              ? {
+                  key: runtimeMarketKey,
+                  symbol: runtimeMarketSymbol,
+                  assetClass: runtimeMarketAssetClass
+                }
+              : null;
+
           if (!inExecutionScope) {
-            const markedWallet = markWallet(account.wallet, normalizedPoint.price);
+            const markPrice = hasMarketMismatch ? toNum(accountWallet.markPrice, toNum(accountWallet.avgEntry, normalizedPoint.price)) : normalizedPoint.price;
+            const markedWallet = markWallet(accountWallet, markPrice);
             const shouldEmitPositionSnapshot = accountId === activeWalletTargetId || Math.abs(toNum(markedWallet?.units, 0)) > 1e-9;
             if (shouldEmitPositionSnapshot) {
               emitPositionPayloads.push({
@@ -486,13 +532,7 @@ export const useStrategyLabStore = create((set) => ({
                 sourceId: sourceLabel || state.sourceId,
                 action: 'hold',
                 reason: account.enabled ? 'wallet out of execution scope' : 'wallet paused',
-                market: selectedMarket
-                  ? {
-                      key: selectedMarket.key,
-                      symbol: selectedMarket.symbol,
-                      assetClass: selectedMarket.assetClass
-                    }
-                  : null,
+                market: positionMarket,
                 account: {
                   id: account.id,
                   name: account.name
@@ -506,10 +546,34 @@ export const useStrategyLabStore = create((set) => ({
             };
           }
 
+          if (hasMarketMismatch) {
+            const markPrice = toNum(accountWallet.markPrice, toNum(accountWallet.avgEntry, normalizedPoint.price));
+            const markedWallet = markWallet(accountWallet, markPrice);
+            emitPositionPayloads.push({
+              wallet: markedWallet,
+              signal: executionSignal,
+              point: normalizedPoint,
+              strategyId: executionSignal.strategyId,
+              sourceId: sourceLabel || state.sourceId,
+              action: 'hold',
+              reason: `holding ${heldMarketSymbol || heldMarketKey} while runtime tick is ${runtimeMarketSymbol || runtimeMarketKey}`,
+              market: positionMarket,
+              account: {
+                id: account.id,
+                name: account.name
+              },
+              timestamp: timestamp + accountIndex
+            });
+            return {
+              ...account,
+              wallet: markedWallet
+            };
+          }
+
           const maxAbsUnits = clamp(Math.round(toNum(account.maxAbsUnits, state.maxAbsUnits)), 1, 80);
           const slippageBps = clamp(toNum(account.slippageBps, state.slippageBps), 0, 60);
           const execution = executeWalletAction({
-            wallet: account.wallet,
+            wallet: accountWallet,
             action: executionSignal.action,
             point: normalizedPoint,
             timestamp: timestamp + accountIndex,
@@ -520,7 +584,22 @@ export const useStrategyLabStore = create((set) => ({
             slippageBps
           });
 
-          const nextWallet = markWallet(execution.wallet, normalizedPoint.price);
+          let nextWallet = markWallet(execution.wallet, normalizedPoint.price);
+          if (Math.abs(toNum(nextWallet.units, 0)) > 1e-9) {
+            nextWallet = {
+              ...nextWallet,
+              marketKey: runtimeMarketKey,
+              symbol: runtimeMarketSymbol,
+              assetClass: runtimeMarketAssetClass
+            };
+          } else {
+            nextWallet = {
+              ...nextWallet,
+              marketKey: '',
+              symbol: '',
+              assetClass: ''
+            };
+          }
           if (execution.trade) {
             const trade = {
               ...execution.trade,
@@ -528,9 +607,9 @@ export const useStrategyLabStore = create((set) => ({
               accountName: account.name,
               strategyId: executionSignal.strategyId,
               sourceId: sourceLabel || state.sourceId,
-              marketKey: selectedMarket?.key || '',
-              symbol: selectedMarket?.symbol || '',
-              assetClass: selectedMarket?.assetClass || ''
+              marketKey: runtimeMarketKey,
+              symbol: runtimeMarketSymbol,
+              assetClass: runtimeMarketAssetClass
             };
             accountTrades.push(trade);
             emitPayloads.push({
@@ -540,13 +619,7 @@ export const useStrategyLabStore = create((set) => ({
               point: normalizedPoint,
               strategyId: executionSignal.strategyId,
               sourceId: sourceLabel || state.sourceId,
-              market: selectedMarket
-                ? {
-                    key: selectedMarket.key,
-                    symbol: selectedMarket.symbol,
-                    assetClass: selectedMarket.assetClass
-                  }
-                : null,
+              market: positionMarket,
               account: {
                 id: account.id,
                 name: account.name
@@ -564,13 +637,7 @@ export const useStrategyLabStore = create((set) => ({
               sourceId: sourceLabel || state.sourceId,
               action: execution.trade?.action || executionSignal.action || 'hold',
               reason: execution.trade?.reason || executionSignal.reason || '',
-              market: selectedMarket
-                ? {
-                    key: selectedMarket.key,
-                    symbol: selectedMarket.symbol,
-                    assetClass: selectedMarket.assetClass
-                  }
-                : null,
+              market: positionMarket,
               account: {
                 id: account.id,
                 name: account.name
@@ -623,11 +690,12 @@ export const useStrategyLabStore = create((set) => ({
                   signalCount: Number(executionSignal.signalCount) || 0,
                   triggerKind: executionSignal.triggerKind || 'price',
                   strategyId: executionSignal.strategyId,
-                  marketKey: selectedMarket?.key || '',
-                  symbol: selectedMarket?.symbol || '',
-                  assetClass: selectedMarket?.assetClass || '',
+                  marketKey: runtimeMarketKey,
+                  symbol: runtimeMarketSymbol,
+                  assetClass: runtimeMarketAssetClass,
                   executionStrategyMode,
                   executionWalletScope,
+                  executionMarketScope,
                   enabledStrategies: enabledStrategyIds,
                   changedStrategies: changedStrategies.map((signal) => signal.strategyId)
                 },
@@ -644,7 +712,9 @@ export const useStrategyLabStore = create((set) => ({
 
         return {
           ...state,
+          runtimeMarketKey,
           runtimeSeries,
+          marketRuntimeSeriesByKey,
           runtimeEquity,
           eventLog,
           tradeLog,
@@ -654,6 +724,7 @@ export const useStrategyLabStore = create((set) => ({
           enabledStrategyIds,
           executionStrategyMode,
           executionWalletScope,
+          executionMarketScope,
           lastSignalActionByStrategy: nextSignalActionMap,
           lastSignalAction: nextSignalActionMap[nextStrategyId] || executionSignal.action || 'hold',
           stepSequence
@@ -661,7 +732,7 @@ export const useStrategyLabStore = create((set) => ({
       });
 
       const nextState = useStrategyLabStore.getState();
-      const activeMarketId = selectedMarket?.key || nextState.marketKey || '';
+      const activeMarketId = executedMarketKey || nextState.runtimeMarketKey || nextState.marketKey || '';
       if (activeMarketId) {
         const tensorPoint = {
           t: toTs(point?.t || Date.now()),

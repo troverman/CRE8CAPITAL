@@ -253,7 +253,6 @@ export default function WalletPage({ snapshot }) {
   const setActivePaperAccount = useStrategyLabStore((state) => state.setActiveWalletAccount);
   const enabledByKey = useStrategyToggleStore((state) => state.enabledByKey);
   const ensureStrategies = useStrategyToggleStore((state) => state.ensureStrategies);
-  const setStrategyEnabled = useStrategyToggleStore((state) => state.setStrategyEnabled);
 
   // Local paper trading state (always available in demo mode)
   const simulatedWallet = useStrategyLabStore((state) => state.wallet);
@@ -1225,57 +1224,33 @@ export default function WalletPage({ snapshot }) {
           </div>
         </div>
         <p className="socket-status-copy">
-          This panel only controls strategy activation for runtime. Trade/equity detail lives on Wallet ID, Strategy, and Decision pages.
+          Wallet page controls runtime wallet targeting only. Strategy enable/disable and execution policy now live in Strategy Lab.
         </p>
         <div className="section-actions">
-          <button
-            type="button"
-            className="btn secondary"
-            onClick={() => {
-              for (const strategy of strategyStatusRows) {
-                setStrategyEnabled(strategy.key, true);
-              }
-              setMessage(`Enabled all ${fmtInt(strategyStatusRows.length)} strategies.`);
-            }}
-            disabled={strategyStatusRows.length === 0}
-          >
-            Enable All Strategies
-          </button>
+          <Link to="/strategy" className="btn secondary">
+            Open Strategy Lab Controls
+          </Link>
+          <Link to="/strategies" className="btn secondary">
+            Open Strategy List
+          </Link>
         </div>
-        <div className="list-stack">
-          {strategyStatusRows.map((strategy) => {
-            const selected = toStrategyKey(strategy.id) === toStrategyKey(strategyId);
-            return (
-              <article key={`wallet-strategy:${strategy.key}`} className="list-item">
-                <strong>
-                  <Link to={`/strategy/${encodeURIComponent(strategy.id || strategy.name || strategy.key)}`} className="inline-link">
-                    {strategy.name}
-                  </Link>
-                  {selected ? ' | focus' : ''}
-                </strong>
-                <p>{strategy.description || 'No description available yet.'}</p>
-                <div className="section-actions">
-                  <span className={strategy.enabled ? 'status-pill online' : 'status-pill'}>{strategy.enabled ? 'enabled' : 'disabled'}</span>
-                  <button
-                    type="button"
-                    className={strategy.enabled ? 'btn secondary' : 'btn primary'}
-                    onClick={() => {
-                      setStrategyEnabled(strategy.key, !strategy.enabled);
-                      setMessage(`${strategy.enabled ? 'Disabled' : 'Enabled'} ${strategy.name}.`);
-                    }}
-                  >
-                    {strategy.enabled ? 'Disable' : 'Enable'}
-                  </button>
-                </div>
-              </article>
-            );
-          })}
-          {strategyStatusRows.length === 0 ? <p className="action-message">No strategies detected yet.</p> : null}
-          {activeStrategyRows.length > 0 ? (
-            <p className="socket-status-copy">Active strategies: {activeStrategyRows.map((strategy) => strategy.name).join(', ')}</p>
-          ) : (
-            <p className="socket-status-copy">No active strategies yet. Enable at least one strategy for runtime.</p>
-          )}
+        <div className="strategy-lab-mini-grid">
+          <article className="strategy-lab-mini-stat">
+            <span>Focus Strategy</span>
+            <strong>{strategyStatusRows.find((strategy) => toStrategyKey(strategy.id) === toStrategyKey(strategyId))?.name || strategyId || '-'}</strong>
+          </article>
+          <article className="strategy-lab-mini-stat">
+            <span>Active Runtime Wallet</span>
+            <strong>{activePaperAccount?.name || '-'}</strong>
+          </article>
+          <article className="strategy-lab-mini-stat">
+            <span>Enabled Strategies</span>
+            <strong>{fmtInt(enabledStrategyCount)}</strong>
+          </article>
+          <article className="strategy-lab-mini-stat">
+            <span>Active Strategy Names</span>
+            <strong>{activeStrategyRows.length ? activeStrategyRows.slice(0, 3).map((strategy) => strategy.name).join(', ') : '-'}</strong>
+          </article>
         </div>
       </GlowCard>
 

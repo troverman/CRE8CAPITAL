@@ -57,12 +57,14 @@ export default function useStrategyLab({ snapshot, historyByMarket }) {
   const enabledStrategyIds = useStrategyLabStore((state) => state.enabledStrategyIds);
   const executionStrategyMode = useStrategyLabStore((state) => state.executionStrategyMode);
   const executionWalletScope = useStrategyLabStore((state) => state.executionWalletScope);
+  const executionMarketScope = useStrategyLabStore((state) => state.executionMarketScope);
   const scenarioId = useStrategyLabStore((state) => state.scenarioId);
   const marketKey = useStrategyLabStore((state) => state.marketKey);
   const intervalMs = useStrategyLabStore((state) => state.intervalMs);
   const maxAbsUnits = useStrategyLabStore((state) => state.maxAbsUnits);
   const slippageBps = useStrategyLabStore((state) => state.slippageBps);
   const cooldownMs = useStrategyLabStore((state) => state.cooldownMs);
+  const runtimeMarketKey = useStrategyLabStore((state) => state.runtimeMarketKey);
   const runtimeSeries = useStrategyLabStore((state) => state.runtimeSeries);
   const runtimeEquity = useStrategyLabStore((state) => state.runtimeEquity);
   const wallet = useStrategyLabStore((state) => state.wallet);
@@ -97,6 +99,17 @@ export default function useStrategyLab({ snapshot, historyByMarket }) {
     }
     return markets[0] || null;
   }, [marketKey, markets]);
+  const marketsByKey = useMemo(() => {
+    const map = new Map();
+    for (const market of markets) {
+      map.set(String(market.key || ''), market);
+    }
+    return map;
+  }, [markets]);
+  const runtimeMarket = useMemo(() => {
+    if (!runtimeMarketKey) return selectedMarket;
+    return marketsByKey.get(String(runtimeMarketKey)) || selectedMarket || null;
+  }, [marketsByKey, runtimeMarketKey, selectedMarket]);
 
   const supportsSocketProviders = Boolean(selectedMarket) && String(selectedMarket?.assetClass || '').toLowerCase() === 'crypto';
   const socketRuntimeEnabled = sourceId === 'market-feed' && supportsSocketProviders;
@@ -136,7 +149,9 @@ export default function useStrategyLab({ snapshot, historyByMarket }) {
     });
   }, [liveHistorySeries, selectedMarket, snapshot?.signals]);
 
+  const [marketScores, setMarketScores] = useState([]);
   const cursorRef = useRef(0);
+  const scannerCursorRef = useRef(0);
 
   useEffect(() => {
     if (marketKey) return;
@@ -149,89 +164,163 @@ export default function useStrategyLab({ snapshot, historyByMarket }) {
     resetRuntime({ price: basePrice, preserveBacktest: true });
   }, [resetRuntime, scenarioId, selectedMarket?.key, sourceId, strategyId, enabledStrategyIds]);
 
-  const buildMarketFeedPoint = useCallback(() => {
-    const now = Date.now();
-    const state = useStrategyLabStore.getState();
-    const anchor = Number(liveHistorySeries[liveHistorySeries.length - 1]?.price) || basePrice;
-    const previous = Number(state.runtimeSeries[state.runtimeSeries.length - 1]?.price) || anchor;
-    const providerPrice = Number(primaryProvider?.price);
-    const providerBid = Number(primaryProvider?.bid);
-    const providerAsk = Number(primaryProvider?.ask);
-    const providerVolume = Number(primaryProvider?.volume);
-    const providerHasPrice = Number.isFinite(providerPrice) && providerPrice > 0;
-    const providerHasBidAsk = Number.isFinite(providerBid) && Number.isFinite(providerAsk) && providerBid > 0 && providerAsk > 0;
+  const getHistorySeriesForMarket = useCallback(
+    (market) => {
+      if (!market?.key) return [];
+      if (selectedMarket?.key && market.key === selectedMarket.key) return liveHistorySeries;
+      const raw = historyByMarket?.[market.key] || [];
+      return sanitizeSeries(raw).slice(-MAX_LIVE_HISTORY);
+    },
+    [historyByMarket, liveHistorySeries, selectedMarket?.key]
+  );
 
-    let price;
-    let bid = null;
-    let ask = null;
-    let spread;
-    let volume;
+  const scannerCandidateMarkets = useMemo(() => {
+    const active = marketScores.filter((row) => row.signalAction !== 'hold');
+    const pool = active.length > 0 ? active : marketScores;
+    const mapped = pool.map((row) => marketsByKey.get(String(row.key || ''))).filter(Boolean);
+    if (mapped.length > 0) return mapped;
+    return markets.slice(0, 24);
+  }, [marketScores, marketsByKey, markets]);
 
-    if (providerHasPrice) {
-      price = providerPrice;
-      bid = providerHasBidAsk ? providerBid : null;
-      ask = providerHasBidAsk ? providerAsk : null;
-      spread = providerHasBidAsk ? ((providerAsk - providerBid) / Math.max(providerPrice, 1e-9)) * 10000 : Math.max(Number(selectedMarket?.spreadBps) || 8, 0.6);
-      volume = Math.max(Number.isFinite(providerVolume) ? providerVolume : Number(selectedMarket?.totalVolume) || 500000, 1);
-    } else {
-      const meanPull = (anchor - previous) * randBetween(0.26, 0.42);
-      const noise = anchor * randBetween(-0.0012, 0.0012);
-      price = Math.max(previous + meanPull + noise, 0.000001);
-      const spreadCenter = Math.max(Number(selectedMarket?.spreadBps) || 8, 0.6);
-      spread = Math.max(0.4, spreadCenter + randBetween(-2.1, 2.1));
-      const spreadAbs = (price * spread) / 10000;
-      bid = Math.max(price - spreadAbs / 2, 0.0000001);
-      ask = Math.max(price + spreadAbs / 2, bid + 0.0000001);
-      const volumeAnchor = Math.max(Number(selectedMarket?.totalVolume) || 500000, 1);
-      volume = Math.max(volumeAnchor * randBetween(0.0002, 0.0013), 1);
+  const lockExecutionMarketToOpenPosition = useCallback(
+    (candidateMarket) => {
+      const accountsInScope =
+        executionWalletScope === 'all-enabled'
+          ? walletAccounts.filter((account) => account?.enabled)
+          : walletAccounts.filter((account) => account?.enabled && String(account.id || '') === String(activeWalletAccountId || ''));
+      const heldAccount = accountsInScope.find((account) => {
+        const walletState = account?.wallet || {};
+        const units = Math.abs(toNum(walletState.units, 0));
+        return units > 1e-9 && Boolean(String(walletState.marketKey || ''));
+      });
+      if (!heldAccount) return candidateMarket;
+      const heldMarket = marketsByKey.get(String(heldAccount.wallet.marketKey || ''));
+      return heldMarket || candidateMarket;
+    },
+    [activeWalletAccountId, executionWalletScope, marketsByKey, walletAccounts]
+  );
+
+  const selectExecutionMarket = useCallback(() => {
+    if (!markets.length) return selectedMarket || null;
+    let candidate = selectedMarket || markets[0] || null;
+    const useScannerScope = sourceId === 'market-feed' && executionMarketScope !== 'selected-market';
+    if (useScannerScope) {
+      if (executionMarketScope === 'scanner-top') {
+        candidate = scannerCandidateMarkets[0] || candidate;
+      } else if (executionMarketScope === 'scanner-rotate') {
+        const pool = scannerCandidateMarkets.slice(0, Math.max(1, Math.min(16, scannerCandidateMarkets.length)));
+        const index = scannerCursorRef.current % Math.max(pool.length, 1);
+        scannerCursorRef.current += 1;
+        candidate = pool[index] || pool[0] || candidate;
+      }
     }
+    return lockExecutionMarketToOpenPosition(candidate);
+  }, [executionMarketScope, lockExecutionMarketToOpenPosition, markets, scannerCandidateMarkets, selectedMarket, sourceId]);
 
-    const depth =
-      primaryDepth && ((primaryDepth.bids?.length || 0) > 0 || (primaryDepth.asks?.length || 0) > 0)
-        ? {
-            bids: primaryDepth.bids || [],
-            asks: primaryDepth.asks || []
-          }
-        : null;
+  const buildMarketFeedPoint = useCallback(
+    (market) => {
+      if (!market) return null;
+      const now = Date.now();
+      const state = useStrategyLabStore.getState();
+      const marketSeriesByKey = state?.marketRuntimeSeriesByKey && typeof state.marketRuntimeSeriesByKey === 'object' ? state.marketRuntimeSeriesByKey : {};
+      const marketSeries = marketSeriesByKey[market.key] || [];
+      const historySeries = getHistorySeriesForMarket(market);
+      const anchor = Number(historySeries[historySeries.length - 1]?.price) || Number(market.referencePrice) || Number(market.price) || basePrice;
+      const previous = Number(marketSeries[marketSeries.length - 1]?.price) || anchor;
 
-    return {
-      t: now,
-      price,
-      spread: Math.max(0, spread),
-      volume,
-      bid,
-      ask,
-      depth
-    };
-  }, [basePrice, liveHistorySeries, primaryDepth, primaryProvider?.ask, primaryProvider?.bid, primaryProvider?.price, primaryProvider?.volume, selectedMarket?.spreadBps, selectedMarket?.totalVolume]);
+      const useProvider = Boolean(selectedMarket?.key) && market.key === selectedMarket.key;
+      const providerPrice = useProvider ? Number(primaryProvider?.price) : NaN;
+      const providerBid = useProvider ? Number(primaryProvider?.bid) : NaN;
+      const providerAsk = useProvider ? Number(primaryProvider?.ask) : NaN;
+      const providerVolume = useProvider ? Number(primaryProvider?.volume) : NaN;
+      const providerHasPrice = Number.isFinite(providerPrice) && providerPrice > 0;
+      const providerHasBidAsk = Number.isFinite(providerBid) && Number.isFinite(providerAsk) && providerBid > 0 && providerAsk > 0;
 
-  const buildScenarioPoint = useCallback(() => {
-    if (!scenarioSeries.length) return null;
-    const now = Date.now();
-    const index = cursorRef.current % scenarioSeries.length;
-    cursorRef.current += 1;
-    const seedPoint = scenarioSeries[index];
-    return {
-      t: now,
-      price: Number(seedPoint.price) || basePrice,
-      spread: Number(seedPoint.spread) || 0,
-      volume: Number(seedPoint.volume) || 0
-    };
-  }, [basePrice, scenarioSeries]);
+      let price;
+      let bid = null;
+      let ask = null;
+      let spread;
+      let volume;
+
+      if (providerHasPrice) {
+        price = providerPrice;
+        bid = providerHasBidAsk ? providerBid : null;
+        ask = providerHasBidAsk ? providerAsk : null;
+        spread = providerHasBidAsk ? ((providerAsk - providerBid) / Math.max(providerPrice, 1e-9)) * 10000 : Math.max(Number(market?.spreadBps) || 8, 0.6);
+        volume = Math.max(Number.isFinite(providerVolume) ? providerVolume : Number(market?.totalVolume) || 500000, 1);
+      } else {
+        const meanPull = (anchor - previous) * randBetween(0.24, 0.42);
+        const noise = anchor * randBetween(-0.0013, 0.0013);
+        price = Math.max(previous + meanPull + noise, 0.000001);
+        const spreadCenter = Math.max(Number(market?.spreadBps) || 8, 0.6);
+        spread = Math.max(0.4, spreadCenter + randBetween(-2.1, 2.1));
+        const spreadAbs = (price * spread) / 10000;
+        bid = Math.max(price - spreadAbs / 2, 0.0000001);
+        ask = Math.max(price + spreadAbs / 2, bid + 0.0000001);
+        const volumeAnchor = Math.max(Number(market?.totalVolume) || 500000, 1);
+        volume = Math.max(volumeAnchor * randBetween(0.0002, 0.0013), 1);
+      }
+
+      const depth =
+        useProvider && primaryDepth && ((primaryDepth.bids?.length || 0) > 0 || (primaryDepth.asks?.length || 0) > 0)
+          ? {
+              bids: primaryDepth.bids || [],
+              asks: primaryDepth.asks || []
+            }
+          : null;
+
+      return {
+        t: now,
+        price,
+        spread: Math.max(0, spread),
+        volume,
+        bid,
+        ask,
+        depth
+      };
+    },
+    [basePrice, getHistorySeriesForMarket, primaryDepth, primaryProvider?.ask, primaryProvider?.bid, primaryProvider?.price, primaryProvider?.volume, selectedMarket?.key]
+  );
+
+  const buildScenarioPoint = useCallback(
+    (market) => {
+      if (!scenarioSeries.length) return null;
+      const now = Date.now();
+      const index = cursorRef.current % scenarioSeries.length;
+      const previousIndex = index === 0 ? scenarioSeries.length - 1 : index - 1;
+      cursorRef.current += 1;
+      const seedPoint = scenarioSeries[index];
+      const previousSeed = scenarioSeries[previousIndex];
+      const targetSeries = getHistorySeriesForMarket(market);
+      const targetBase = Number(targetSeries[targetSeries.length - 1]?.price) || Number(market?.referencePrice) || basePrice;
+      const seedDriftPct =
+        Number(previousSeed?.price) > 0 && Number(seedPoint?.price) > 0
+          ? (Number(seedPoint.price) - Number(previousSeed.price)) / Math.max(Number(previousSeed.price), 1e-9)
+          : 0;
+      return {
+        t: now,
+        price: Math.max(targetBase * (1 + seedDriftPct), 0.000001),
+        spread: Math.max(0, Number(market?.spreadBps) || Number(seedPoint.spread) || 0),
+        volume: Math.max(1, Number(market?.totalVolume) * randBetween(0.0001, 0.0008) || Number(seedPoint.volume) || 0)
+      };
+    },
+    [basePrice, getHistorySeriesForMarket, scenarioSeries]
+  );
 
   const stepOnce = useCallback(
     ({ forceEvent = false, sourceLabel = '' } = {}) => {
-      const point = sourceId === 'market-feed' ? buildMarketFeedPoint() : buildScenarioPoint();
-      if (!point) return;
+      const executionMarket = selectExecutionMarket();
+      const point = sourceId === 'market-feed' ? buildMarketFeedPoint(executionMarket) : buildScenarioPoint(executionMarket);
+      if (!point || !executionMarket) return;
       stepRuntime({
         point,
         forceEvent,
         sourceLabel: sourceLabel || sourceId,
         signalRows: liveSignalRows,
-        selectedMarket
+        selectedMarket: executionMarket
       });
     },
-    [buildMarketFeedPoint, buildScenarioPoint, liveSignalRows, selectedMarket, sourceId, stepRuntime]
+    [buildMarketFeedPoint, buildScenarioPoint, liveSignalRows, selectExecutionMarket, sourceId, stepRuntime]
   );
 
   useEffect(() => {
@@ -309,8 +398,6 @@ export default function useStrategyLab({ snapshot, historyByMarket }) {
   useEffect(() => {
     snapshotRef.current = snapshot;
   }, [snapshot]);
-
-  const [marketScores, setMarketScores] = useState([]);
 
   useEffect(() => {
     if (!running) {
@@ -432,10 +519,11 @@ export default function useStrategyLab({ snapshot, historyByMarket }) {
   );
 
   const changeExecutionConfig = useCallback(
-    ({ strategyMode, walletScope } = {}) => {
+    ({ strategyMode, walletScope, marketScope } = {}) => {
       setExecutionConfig({
         strategyMode,
-        walletScope
+        walletScope,
+        marketScope
       });
     },
     [setExecutionConfig]
@@ -467,8 +555,10 @@ export default function useStrategyLab({ snapshot, historyByMarket }) {
     enabledStrategyIds,
     executionStrategyMode,
     executionWalletScope,
+    executionMarketScope,
     scenarioId,
     marketKey: selectedMarket?.key || '',
+    runtimeMarket,
     intervalMs: clampInterval(intervalMs),
     maxAbsUnits,
     slippageBps,

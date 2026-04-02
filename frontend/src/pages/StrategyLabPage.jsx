@@ -126,7 +126,9 @@ export default function StrategyLabPage({ snapshot, historyByMarket }) {
     enabledStrategyIds,
     executionStrategyMode,
     executionWalletScope,
+    executionMarketScope,
     scenarioId,
+    runtimeMarket,
     intervalMs,
     maxAbsUnits,
     slippageBps,
@@ -282,6 +284,12 @@ export default function StrategyLabPage({ snapshot, historyByMarket }) {
   const lastExecutionStrategyLabel = lastExecutionStrategyId ? strategyLabelMap[lastExecutionStrategyId] || lastExecutionStrategyId : '-';
   const executionStrategyModeLabel = executionStrategyMode === 'selected-only' ? 'selected-only (focus strategy)' : 'best-enabled (auto-pick)';
   const executionWalletScopeLabel = executionWalletScope === 'active-only' ? 'active-only wallet' : 'all enabled wallets';
+  const executionMarketScopeLabel =
+    executionMarketScope === 'scanner-top'
+      ? 'scanner top market'
+      : executionMarketScope === 'scanner-rotate'
+        ? 'scanner rotate top set'
+        : 'selected market only';
 
   const runtimeStrategyDetail = useMemo(() => {
     return getStrategyImplementationDetail(strategyId);
@@ -691,6 +699,7 @@ export default function StrategyLabPage({ snapshot, historyByMarket }) {
           <RuntimeExecutionControls
             strategyMode={executionStrategyMode}
             walletScope={executionWalletScope}
+            marketScope={executionMarketScope}
             onStrategyModeChange={(strategyMode) =>
               changeExecutionConfig({
                 strategyMode
@@ -699,6 +708,11 @@ export default function StrategyLabPage({ snapshot, historyByMarket }) {
             onWalletScopeChange={(walletScope) =>
               changeExecutionConfig({
                 walletScope
+              })
+            }
+            onMarketScopeChange={(marketScope) =>
+              changeExecutionConfig({
+                marketScope
               })
             }
             summaryPrefix="Runtime evaluates enabled strategies each tick. Engine mode"
@@ -720,9 +734,13 @@ export default function StrategyLabPage({ snapshot, historyByMarket }) {
               <span>Execution Pick Rule</span>
               <strong>{executionStrategyMode === 'selected-only' ? 'focus only' : 'best enabled'}</strong>
             </article>
+            <article className="strategy-lab-mini-stat">
+              <span>Market Route</span>
+              <strong>{executionMarketScopeLabel}</strong>
+            </article>
           </div>
           <p className="socket-status-copy">
-            Enabled set controls which strategies are evaluated. Execution Strategy controls which evaluated strategy is allowed to place trades.
+            Enabled set controls which strategies are evaluated. Execution controls decide strategy, wallet scope, and market routing each tick.
           </p>
           <p className="socket-status-copy">
             Enabled strategies: {enabledStrategyLabels.length ? enabledStrategyLabels.join(', ') : '-'}
@@ -741,10 +759,11 @@ export default function StrategyLabPage({ snapshot, historyByMarket }) {
             cooldownMs={cooldownMs}
             onChangeRisk={changeRisk}
             sourceId={sourceId}
-            selectedMarketSymbol={selectedMarket?.symbol}
+            selectedMarketSymbol={runtimeMarket?.symbol || selectedMarket?.symbol}
             hasLiveHistory={hasLiveHistory}
             executionStrategyModeLabel={executionStrategyModeLabel}
             executionWalletScopeLabel={executionWalletScopeLabel}
+            executionMarketScopeLabel={executionMarketScopeLabel}
           />
           <p className="socket-status-copy">{strategyDescription}</p>
         </GlowCard>
@@ -763,7 +782,7 @@ export default function StrategyLabPage({ snapshot, historyByMarket }) {
           </p>
           <p className="socket-status-copy">
             active execution account {activeExecutionAccount?.name || '-'} | drilldown account {selectedDrillAccount?.name || '-'} | selected strategy {strategyLabel} |
-            enabled set {fmtInt(enabledStrategyIds.length)}
+            enabled set {fmtInt(enabledStrategyIds.length)} | market route {executionMarketScopeLabel} | live market {runtimeMarket?.symbol || selectedMarket?.symbol || '-'}
           </p>
         </GlowCard>
       </div>

@@ -27,6 +27,7 @@ export default function StrategyListPage({ snapshot }) {
   const enabledStrategyIds = useStrategyLabStore((state) => state.enabledStrategyIds);
   const executionStrategyMode = useStrategyLabStore((state) => state.executionStrategyMode);
   const executionWalletScope = useStrategyLabStore((state) => state.executionWalletScope);
+  const executionMarketScope = useStrategyLabStore((state) => state.executionMarketScope);
   const walletAccounts = useStrategyLabStore((state) => state.walletAccounts);
   const activeWalletAccountId = useStrategyLabStore((state) => state.activeWalletAccountId);
   const setActiveWalletAccount = useStrategyLabStore((state) => state.setActiveWalletAccount);
@@ -179,7 +180,14 @@ export default function StrategyListPage({ snapshot }) {
           active wallet {activeWallet?.name || '-'} ({activeWallet?.enabled ? 'enabled' : 'paused'}) | strategy focus {selectedRuntimeStrategy?.name || strategyId || '-'} (
           {selectedRuntimeStrategy?.enabled === false ? 'disabled' : 'enabled'})
         </p>
-        <RuntimeExecutionControls strategyMode={executionStrategyMode} walletScope={executionWalletScope} showControls={false} summaryPrefix="engine mode" summarySuffix="" />
+        <RuntimeExecutionControls
+          strategyMode={executionStrategyMode}
+          walletScope={executionWalletScope}
+          marketScope={executionMarketScope}
+          showControls={false}
+          summaryPrefix="engine mode"
+          summarySuffix=""
+        />
         <div className="section-actions">
           <Link to="/wallet" className="inline-link">
             Open wallet runtime

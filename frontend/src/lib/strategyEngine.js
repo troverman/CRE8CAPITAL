@@ -673,6 +673,10 @@ export const createWalletState = (cash = DEFAULT_WALLET_CASH) => {
     cash: baseCash,
     units: 0,
     avgEntry: null,
+    marketKey: '',
+    symbol: '',
+    assetClass: '',
+    markPrice: null,
     realizedPnl: 0,
     unrealizedPnl: 0,
     equity: baseCash,
@@ -684,7 +688,9 @@ export const createWalletState = (cash = DEFAULT_WALLET_CASH) => {
 };
 
 export const markWallet = (wallet, price) => {
-  const markPrice = Math.max(toNum(price, 0), 1e-9);
+  const fallbackMark = toNum(wallet?.markPrice, toNum(wallet?.avgEntry, 0));
+  const rawMark = toNum(price, fallbackMark);
+  const markPrice = Math.max(rawMark > 0 ? rawMark : fallbackMark, 1e-9);
   const units = toNum(wallet.units, 0);
   const avgEntry = wallet.avgEntry === null ? null : toNum(wallet.avgEntry, null);
   const unrealizedPnl =
@@ -692,6 +698,7 @@ export const markWallet = (wallet, price) => {
   const equity = toNum(wallet.cash, 0) + units * markPrice;
   return {
     ...wallet,
+    markPrice,
     unrealizedPnl,
     equity
   };
