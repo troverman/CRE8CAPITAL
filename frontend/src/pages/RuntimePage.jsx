@@ -336,6 +336,67 @@ export default function RuntimePage({ snapshot }) {
     return openPositions.reduce((sum, row) => sum + toNum(row.positionNotional, 0), 0);
   }, [openPositions]);
 
+  const walletBalanceRows = useMemo(() => {
+    const equity = toNum(activeWallet?.wallet?.equity, 0);
+    const now = Date.now();
+    const rows = [];
+    const cashValue = toNum(activeWallet?.wallet?.cash, 0);
+
+    rows.push({
+      id: `cash:${activeWallet?.id || 'active'}`,
+      asset: 'USD',
+      assetClass: 'fiat',
+      amount: cashValue,
+      markPrice: 1,
+      value: cashValue,
+      allocationPct: Math.abs(equity) > 1e-9 ? (cashValue / equity) * 100 : 0,
+      updatedAt: now,
+      kind: 'cash'
+    });
+
+    const grouped = new Map();
+    for (const row of openPositions) {
+      const asset = String(row?.symbol || '-').toUpperCase();
+      const assetClass = String(row?.assetClass || 'unknown').toLowerCase();
+      const key = `${asset}|${assetClass}`;
+      const amount = toNum(row?.units, 0);
+      const markPrice = Math.max(0, toNum(row?.markPrice, 0));
+      const value = amount * markPrice;
+      const updatedAt = toNum(row?.timestamp, now);
+
+      const current = grouped.get(key) || {
+        id: `asset:${key}`,
+        asset,
+        assetClass,
+        amount: 0,
+        value: 0,
+        markPrice: 0,
+        updatedAt: 0,
+        kind: 'asset'
+      };
+
+      current.amount += amount;
+      current.value += value;
+      current.markPrice = markPrice > 0 ? markPrice : current.markPrice;
+      current.updatedAt = Math.max(current.updatedAt, updatedAt);
+      grouped.set(key, current);
+    }
+
+    for (const row of grouped.values()) {
+      const allocationPct = Math.abs(equity) > 1e-9 ? (row.value / equity) * 100 : 0;
+      rows.push({
+        ...row,
+        allocationPct
+      });
+    }
+
+    return rows.sort((a, b) => {
+      if (a.kind === 'cash' && b.kind !== 'cash') return -1;
+      if (b.kind === 'cash' && a.kind !== 'cash') return 1;
+      return Math.abs(toNum(b.value, 0)) - Math.abs(toNum(a.value, 0));
+    });
+  }, [activeWallet?.id, activeWallet?.wallet?.cash, activeWallet?.wallet?.equity, openPositions]);
+
   if (!activeWallet) {
     return (
       <section className="page-grid">
@@ -423,6 +484,43 @@ export default function RuntimePage({ snapshot }) {
           <strong>{fmtInt(walletSignals.length)}</strong>
         </GlowCard>
       </div>
+
+      <GlowCard className="panel-card">
+        <div className="section-head">
+          <h2>Wallet Balances</h2>
+          <span>
+            {activeWallet.name} | {fmtInt(walletBalanceRows.length)} assets
+          </span>
+        </div>
+        <div className="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Asset</th>
+                <th>Class</th>
+                <th>Amount</th>
+                <th>Mark</th>
+                <th>Value (USD)</th>
+                <th>Weight</th>
+                <th>Updated</th>
+              </tr>
+            </thead>
+            <tbody>
+              {walletBalanceRows.map((row) => (
+                <tr key={row.id}>
+                  <td>{row.asset}</td>
+                  <td>{row.assetClass}</td>
+                  <td>{row.kind === 'cash' ? fmtNum(row.amount, 2) : fmtNum(row.amount, 6)}</td>
+                  <td>{row.kind === 'cash' ? '1.0000' : fmtNum(row.markPrice, 4)}</td>
+                  <td className={toNum(row.value, 0) >= 0 ? 'up' : 'down'}>{fmtNum(row.value, 2)}</td>
+                  <td className={toNum(row.allocationPct, 0) >= 0 ? 'up' : 'down'}>{fmtNum(row.allocationPct, 2)}%</td>
+                  <td>{fmtTime(row.updatedAt)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </GlowCard>
 
       <GlowCard className="panel-card">
         <TabBar tabs={RUNTIME_TABS} active={activeTab} onChange={setActiveTab} />
